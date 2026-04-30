@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from routewiler._base import RoutewilerModel
 
@@ -47,16 +48,47 @@ class Payee(RoutewilerModel):
 
 
 # ---------------------------------------------------------------------------
+# x402-specific payment requirements — mirrors the wire format exactly.
+# One entry per element of the server's `accepts` array.
+# extra="ignore" so future x402 spec additions don't break parsing.
+# ---------------------------------------------------------------------------
+
+
+class X402PaymentRequirements(RoutewilerModel):
+    """One payment option from the x402 server's `accepts` array."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="ignore",  # x402 spec evolves; silently drop unknown fields
+        frozen=False,
+    )
+
+    scheme: Literal["exact", "upto", "stream"]
+    network: str  # "base" | "base-sepolia" | "polygon" | "arbitrum" | "world" | "solana"
+    max_amount_required: str  # decimal string in base units (matches wire)
+    resource: str  # the URL being protected
+    description: str = ""
+    mime_type: str = "application/json"
+    pay_to: str  # recipient address
+    max_timeout_seconds: int = 60
+    asset: str  # ERC-20 address or canonical name ("usdc", "eurc")
+    output_schema: dict[str, Any] | None = None
+    # EVM extension data: nonce, validBefore, validAfter, token name/version
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # RailRaw — discriminated union per rail
 # Each variant carries the verbatim rail payload for the adapter.
-# Adapter-side fields are typed in the rail-adapter weeks; for now the
-# payload is an open dict so the models can be constructed from raw 402 data.
 # ---------------------------------------------------------------------------
 
 
 class X402RailRaw(RoutewilerModel):
     kind: Literal["x402"]
-    payment_requirements: dict[str, Any]
+    # Full list of payment options from the wire's `accepts` array.
+    # The chosen alternative is captured in NormalizedChallenge.price at parse time.
+    accepts: list[X402PaymentRequirements]
     facilitator_hint: str | None = None
 
 
