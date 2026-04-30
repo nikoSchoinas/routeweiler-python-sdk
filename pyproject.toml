@@ -30,12 +30,17 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.7,<3",
+    "httpx>=0.27,<1",
+    "eth-account>=0.13,<1",
+    "x402[evm]>=2.6,<3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=0.24,<1",
     "pytest-cov>=5",
+    "respx>=0.21,<1",
     "ruff>=0.6",
     "mypy>=1.11",
 ]
@@ -123,6 +128,7 @@ disallow_untyped_defs = false  # test helpers may omit return annotations
 # Pytest
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
-testpaths  = ["tests"]
-addopts    = "-ra"
-pythonpath = ["src"]
+testpaths   = ["tests"]
+addopts     = "-ra"
+pythonpath  = ["src"]
+asyncio_mode = "auto"
