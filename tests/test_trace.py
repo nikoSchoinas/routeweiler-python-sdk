@@ -32,7 +32,7 @@ def _challenge() -> NormalizedChallenge:
         scheme="exact",
         nonce="n1",
         expires_at=EXPIRES,
-        raw=X402RailRaw(kind="x402", payment_requirements={}),
+        raw=X402RailRaw(kind="x402", accepts=[]),
     )
 
 
