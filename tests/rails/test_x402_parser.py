@@ -16,9 +16,7 @@ from routewiler.normalized import NormalizedChallenge, X402RailRaw
 from routewiler.rails.x402 import X402Adapter
 
 
-def _make_request(
-    method: str = "GET", url: str = "https://api.example.com/data"
-) -> httpx.Request:
+def _make_request(method: str = "GET", url: str = "https://api.example.com/data") -> httpx.Request:
     return httpx.Request(method, url)
 
 
@@ -52,8 +50,7 @@ def test_parse_single_accept(
     assert challenge.scheme == "exact"
     assert challenge.price.amount == 1000
     assert (
-        challenge.price.currency
-        == "eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        challenge.price.currency == "eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
     )
     assert "USDC" in challenge.price.human_amount
     assert challenge.payee.identifier == "0x1234567890123456789012345678901234567890"
@@ -87,10 +84,7 @@ def test_parse_nonce_from_extra(
     challenge_base_usdc_header: str,
 ) -> None:
     challenge = adapter.parse(_make_request(), _make_402(challenge_base_usdc_header))
-    assert (
-        challenge.nonce
-        == "0x0000000000000000000000000000000000000000000000000000000000000001"
-    )
+    assert challenge.nonce == "0x0000000000000000000000000000000000000000000000000000000000000001"
 
 
 def test_parse_expires_at_from_valid_before(
@@ -156,11 +150,7 @@ def test_parse_no_matching_funding(
 ) -> None:
     # Only testnet funding, mainnet challenge → NoFundingForRailError
     testnet_adapter = X402Adapter(
-        [
-            EvmFundingSource(
-                wallet=base_usdc_funding.wallet, network="base-sepolia", asset="usdc"
-            )
-        ],
+        [EvmFundingSource(wallet=base_usdc_funding.wallet, network="base-sepolia", asset="usdc")],
         _x402_client=MagicMock(),
     )
     header = base64.b64encode(json.dumps(challenge_base_usdc_dict).encode()).decode()

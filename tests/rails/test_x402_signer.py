@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -49,17 +49,19 @@ def _make_challenge(accepts_override: list | None = None) -> NormalizedChallenge
 
 
 @pytest.fixture
-def mock_x402_client() -> AsyncMock:
-    client = AsyncMock()
-    client.create_payment_payload.return_value = {
-        "x-payment": "signed-payload",
-        "signature": "0x" + "ab" * 65,
-    }
+def mock_x402_client() -> MagicMock:
+    client = MagicMock()
+    client.create_payment_payload = AsyncMock(
+        return_value={
+            "x-payment": "signed-payload",
+            "signature": "0x" + "ab" * 65,
+        }
+    )
     return client
 
 
 @pytest.fixture
-def adapter(base_usdc_funding: EvmFundingSource, mock_x402_client: AsyncMock) -> X402Adapter:
+def adapter(base_usdc_funding: EvmFundingSource, mock_x402_client: MagicMock) -> X402Adapter:
     return X402Adapter([base_usdc_funding], _x402_client=mock_x402_client)
 
 
@@ -71,7 +73,7 @@ async def test_sign_returns_string(adapter: X402Adapter) -> None:
 
 
 async def test_sign_passes_accepts_to_sdk(
-    adapter: X402Adapter, mock_x402_client: AsyncMock
+    adapter: X402Adapter, mock_x402_client: MagicMock
 ) -> None:
     challenge = _make_challenge()
     await adapter.sign(challenge)
@@ -83,9 +85,9 @@ async def test_sign_passes_accepts_to_sdk(
 
 
 async def test_sign_base64_encodes_dict_payload(
-    adapter: X402Adapter, mock_x402_client: AsyncMock
+    adapter: X402Adapter, mock_x402_client: MagicMock
 ) -> None:
-    mock_x402_client.create_payment_payload.return_value = {"foo": "bar"}
+    mock_x402_client.create_payment_payload = AsyncMock(return_value={"foo": "bar"})
     challenge = _make_challenge()
     result = await adapter.sign(challenge)
 
@@ -94,18 +96,18 @@ async def test_sign_base64_encodes_dict_payload(
 
 
 async def test_sign_returns_string_payload_as_is(
-    adapter: X402Adapter, mock_x402_client: AsyncMock
+    adapter: X402Adapter, mock_x402_client: MagicMock
 ) -> None:
-    mock_x402_client.create_payment_payload.return_value = "already-encoded-string"
+    mock_x402_client.create_payment_payload = AsyncMock(return_value="already-encoded-string")
     challenge = _make_challenge()
     result = await adapter.sign(challenge)
     assert result == "already-encoded-string"
 
 
 async def test_sign_raises_signing_error_on_sdk_failure(
-    adapter: X402Adapter, mock_x402_client: AsyncMock
+    adapter: X402Adapter, mock_x402_client: MagicMock
 ) -> None:
-    mock_x402_client.create_payment_payload.side_effect = RuntimeError("network error")
+    mock_x402_client.create_payment_payload = AsyncMock(side_effect=RuntimeError("network error"))
     challenge = _make_challenge()
     with pytest.raises(SigningError, match="x402 SDK signing failed"):
         await adapter.sign(challenge)

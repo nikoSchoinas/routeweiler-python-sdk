@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -51,8 +51,8 @@ async def test_happy_path_402_then_200(routewiler_client: Routewiler) -> None:
     with patch(
         "routewiler.rails.x402.x402Client",
     ) as mock_cls:
-        mock_instance = AsyncMock()
-        mock_instance.create_payment_payload.return_value = {"signature": "0xtest"}
+        mock_instance = MagicMock()
+        mock_instance.create_payment_payload = AsyncMock(return_value={"signature": "0xtest"})
         mock_cls.return_value = mock_instance
 
         # Re-create client so it picks up the patched x402Client
