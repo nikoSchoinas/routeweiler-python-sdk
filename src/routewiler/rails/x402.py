@@ -158,17 +158,13 @@ class X402Adapter:
             and _PAYMENT_REQUIRED_HEADER in response.headers
         )
 
-    def parse(
-        self, request: httpx.Request, response: httpx.Response
-    ) -> NormalizedChallenge:
+    def parse(self, request: httpx.Request, response: httpx.Response) -> NormalizedChallenge:
         raw_header = response.headers.get(_PAYMENT_REQUIRED_HEADER, "")
         try:
             decoded = base64.b64decode(raw_header)
             data: dict[str, Any] = json.loads(decoded)
         except Exception as exc:
-            raise ChallengeParseError(
-                f"Cannot decode PAYMENT-REQUIRED header: {exc}"
-            ) from exc
+            raise ChallengeParseError(f"Cannot decode PAYMENT-REQUIRED header: {exc}") from exc
 
         x402_version: int = int(data.get("x402Version", 1))
 
@@ -188,9 +184,7 @@ class X402Adapter:
         try:
             accepts = [X402PaymentRequirements.model_validate(pr) for pr in accepts_raw]
         except Exception as exc:
-            raise ChallengeParseError(
-                f"Invalid PaymentRequirements entry: {exc}"
-            ) from exc
+            raise ChallengeParseError(f"Invalid PaymentRequirements entry: {exc}") from exc
 
         chosen = self._select(accepts)  # raises NoFundingForRailError if no match
         raw = X402RailRaw(kind="x402", accepts=accepts, x402_version=x402_version)
@@ -201,9 +195,7 @@ class X402Adapter:
         if valid_before:
             expires_at = datetime.fromtimestamp(int(valid_before), tz=UTC)
         else:
-            expires_at = datetime.now(UTC) + timedelta(
-                seconds=chosen.max_timeout_seconds
-            )
+            expires_at = datetime.now(UTC) + timedelta(seconds=chosen.max_timeout_seconds)
 
         return NormalizedChallenge(
             rail="x402",
@@ -226,9 +218,7 @@ class X402Adapter:
         )
 
     async def sign(self, challenge: NormalizedChallenge) -> str:
-        assert isinstance(
-            challenge.raw, X402RailRaw
-        ), "sign called with non-x402 challenge"
+        assert isinstance(challenge.raw, X402RailRaw), "sign called with non-x402 challenge"
         # Reconstruct a typed PaymentRequired so the x402 SDK can select and sign.
         # Use the version captured from the original wire payload (not hardcoded 1).
         raw_dict: dict[str, Any] = {
@@ -284,9 +274,7 @@ class X402Adapter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _select(
-        self, accepts: list[X402PaymentRequirements]
-    ) -> X402PaymentRequirements:
+    def _select(self, accepts: list[X402PaymentRequirements]) -> X402PaymentRequirements:
         """Pick the first PaymentRequirements entry our funding can satisfy."""
         for pr in accepts:
             for fs in self._funding:
