@@ -21,9 +21,7 @@ class RailAdapter(Protocol):
         """Return True if this adapter recognizes the 402 challenge."""
         ...
 
-    def parse(
-        self, request: httpx.Request, response: httpx.Response
-    ) -> NormalizedChallenge:
+    def parse(self, request: httpx.Request, response: httpx.Response) -> NormalizedChallenge:
         """Decode the 402 response into a NormalizedChallenge.
 
         Raises ChallengeParseError on malformed or unsupported payloads.

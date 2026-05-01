@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 import httpx
 from x402 import parse_payment_required, x402Client
-from x402.mechanisms.evm.exact import ExactEvmScheme
+from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.evm.signers import EthAccountSigner
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
@@ -109,7 +110,22 @@ def _human_amount(asset: str, raw_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 _PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED"
-_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE"
+_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE"
+
+
+@dataclass(frozen=True)
+class SettlementInfo:
+    """Parsed content of the PAYMENT-RESPONSE header (§5.1 wire format).
+
+    All fields except `success` are optional because the spec allows a
+    facilitator to omit them (e.g. in testnet / mock scenarios).
+    """
+
+    success: bool
+    tx_hash: str | None = None
+    network_id: str | None = None
+    payer_address: str | None = None
+    amount_paid: int | None = None  # base units; None if facilitator omits it
 
 
 class X402Adapter:
@@ -130,9 +146,7 @@ class X402Adapter:
         self._funding = funding_sources
         self._x402 = _x402_client or x402Client()
         for fs in funding_sources:
-            self._x402.register(
-                "eip155:*", ExactEvmScheme(signer=EthAccountSigner(fs.wallet))
-            )
+            register_exact_evm_client(self._x402, EthAccountSigner(fs.wallet))
 
     # ------------------------------------------------------------------
     # RailAdapter protocol
@@ -156,6 +170,8 @@ class X402Adapter:
                 f"Cannot decode PAYMENT-REQUIRED header: {exc}"
             ) from exc
 
+        x402_version: int = int(data.get("x402Version", 1))
+
         # The x402 wire uses "accepts";
         if "accepts" in data:
             accepts_raw = data["accepts"]
@@ -177,7 +193,7 @@ class X402Adapter:
             ) from exc
 
         chosen = self._select(accepts)  # raises NoFundingForRailError if no match
-        raw = X402RailRaw(kind="x402", accepts=accepts)
+        raw = X402RailRaw(kind="x402", accepts=accepts, x402_version=x402_version)
 
         # Nonce and expiry live in chosen.extra for EVM schemes.
         nonce: str = chosen.extra.get("nonce") or uuid4().hex
@@ -194,7 +210,7 @@ class X402Adapter:
             resource=Resource(
                 method=request.method,
                 url=str(request.url),
-                url_encoding="raw",
+                url_encoding="raw",  # emitter overwrites this based on configured url_mode
                 original_status=402,
             ),
             price=Price(
@@ -214,9 +230,9 @@ class X402Adapter:
             challenge.raw, X402RailRaw
         ), "sign called with non-x402 challenge"
         # Reconstruct a typed PaymentRequired so the x402 SDK can select and sign.
-        # Our X402PaymentRequirements mirrors the v1 wire format (maxAmountRequired etc.).
+        # Use the version captured from the original wire payload (not hardcoded 1).
         raw_dict: dict[str, Any] = {
-            "x402Version": 1,
+            "x402Version": challenge.raw.x402_version,
             "accepts": [pr.model_dump(by_alias=True) for pr in challenge.raw.accepts],
         }
         payment_required = parse_payment_required(raw_dict)
@@ -225,12 +241,44 @@ class X402Adapter:
         except Exception as exc:
             raise SigningError(f"x402 SDK signing failed: {exc}") from exc
 
-        # SDK may return a dict or an already-encoded string.
+        # SDK returns a Pydantic model (PaymentPayload / PaymentPayloadV1), a dict,
+        # or an already-encoded string depending on version.
         if isinstance(payload, str):
             return payload
-        return base64.b64encode(
-            json.dumps(payload, separators=(",", ":")).encode()
-        ).decode()
+        if isinstance(payload, dict):
+            serialized = json.dumps(payload, separators=(",", ":"))
+        else:
+            # Pydantic model — serialize via model_dump to respect field aliases.
+            serialized = json.dumps(payload.model_dump(by_alias=True), separators=(",", ":"))
+        return base64.b64encode(serialized.encode()).decode()
+
+    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
+        """Read the PAYMENT-RESPONSE header from a successful reply.
+
+        Returns None if the header is absent or cannot be decoded — callers
+        should treat a missing settlement as `proof_value=None` in the trace.
+        """
+        raw = response.headers.get(_PAYMENT_RESPONSE_HEADER, "")
+        if not raw:
+            return None
+        try:
+            data: dict[str, Any] = json.loads(base64.b64decode(raw))
+        except Exception:
+            return None
+        amount_raw = data.get("amountPaid")
+        amount_paid: int | None = None
+        if amount_raw is not None:
+            try:
+                amount_paid = int(amount_raw)
+            except (ValueError, TypeError):
+                pass
+        return SettlementInfo(
+            success=bool(data.get("success", False)),
+            tx_hash=data.get("txHash") or data.get("transaction") or None,
+            network_id=data.get("networkId") or data.get("network") or None,
+            payer_address=data.get("payerAddress") or data.get("payer") or None,
+            amount_paid=amount_paid,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
