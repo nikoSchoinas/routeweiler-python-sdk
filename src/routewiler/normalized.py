@@ -14,9 +14,9 @@ from routewiler._base import RoutewilerModel
 # Shared type aliases
 # ---------------------------------------------------------------------------
 
-Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
+Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt", "none"]
 Scheme = Literal["exact", "upto", "stream"]
-UrlEncoding = Literal["raw", "hashed", "dropped"]
+UrlEncoding = Literal["raw", "hash", "drop"]
 
 # ---------------------------------------------------------------------------
 # Nested models
@@ -90,6 +90,7 @@ class X402RailRaw(RoutewilerModel):
     # The chosen alternative is captured in NormalizedChallenge.price at parse time.
     accepts: list[X402PaymentRequirements]
     facilitator_hint: str | None = None
+    x402_version: int = 1  # round-tripped from the wire's x402Version field
 
 
 class L402RailRaw(RoutewilerModel):

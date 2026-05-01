@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from routewiler._auth import RoutewilerAuth
+from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, ensure_default_envelope
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.rails.x402 import X402Adapter
+from routewiler.trace.emitter import TraceEmitter
+from routewiler.trace.sink_sqlite import SqliteTraceSink
 
 
 def _build_adapters(funding: list[EvmFundingSource]) -> list[Any]:
@@ -17,6 +21,13 @@ def _build_adapters(funding: list[EvmFundingSource]) -> list[Any]:
     if evm:
         adapters.append(X402Adapter(evm))
     return adapters
+
+
+def _funding_label(funding: list[EvmFundingSource]) -> str:
+    if not funding:
+        return "none"
+    f = funding[0]
+    return f"evm:{f.network}:{f.asset}"
 
 
 class Routewiler:
@@ -30,10 +41,11 @@ class Routewiler:
             resp = await c.get("https://api.vendor.com/data")
 
     Args:
-        funding: One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
-        policy:  Reserved — policy DSL added in Week 10.
-        budget_envelope: Reserved — budget enforcement added in Week 4/9.
-        trace_sink: Reserved — trace emission added in Week 3.
+        funding:         One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
+        policy:          Reserved — policy DSL added in Week 10.
+        budget_envelope: ID of the envelope to draw from. Defaults to ``"default"``.
+        trace_sink:      SQLite trace sink. Pass ``TraceSink.sqlite(path)`` to
+                         enable local tracing. Defaults to ``None`` (no tracing).
     """
 
     def __init__(
@@ -42,40 +54,78 @@ class Routewiler:
         funding: list[EvmFundingSource],
         policy: None = None,
         budget_envelope: str | None = None,
-        trace_sink: None = None,
+        trace_sink: SqliteTraceSink | None = None,
     ) -> None:
         self._funding = funding
+        self._trace_sink = trace_sink
+        envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
+
+        emitter: TraceEmitter | None = None
+        if trace_sink is not None:
+            _env_id, _env_currency = ensure_default_envelope(trace_sink.db_path)
+            emitter = TraceEmitter(
+                sink=trace_sink,
+                envelope_id=envelope_id,
+                envelope_currency=_env_currency,
+                funding_label=_funding_label(funding),
+                url_mode=trace_sink.url_mode,
+            )
+
+        self._emitter = emitter
         adapters = _build_adapters(funding)
-        auth = RoutewilerAuth(adapters)
+        auth = RoutewilerAuth(adapters, emitter=emitter)
         self._http = httpx.AsyncClient(auth=auth)
+
+    # ------------------------------------------------------------------
+    # Internal trace helper
+    # ------------------------------------------------------------------
+
+    async def _traced(self, coro: Any, ts_start: datetime) -> httpx.Response:
+        """Execute an httpx coroutine and emit a passthrough trace if needed.
+
+        The auth_flow marks paid responses with ``extensions["routewiler_emitted"]``.
+        Any response that does not carry that flag gets a passthrough trace here.
+        Errors raised by auth_flow (RailNotSupportedError, SigningError, etc.) have
+        already been traced by auth_flow, so we let them propagate without re-tracing.
+        """
+        resp: httpx.Response = await coro
+        ts_end = datetime.now(UTC)
+        if self._emitter and not resp.extensions.get("routewiler_emitted"):
+            await self._emitter.emit_passthrough(
+                request=resp.request,
+                response=resp,
+                ts_start=ts_start,
+                ts_end=ts_end,
+            )
+        return resp
 
     # ------------------------------------------------------------------
     # HTTP methods — delegate to the underlying AsyncClient
     # ------------------------------------------------------------------
 
     async def get(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.get(url, **kwargs)
+        return await self._traced(self._http.get(url, **kwargs), datetime.now(UTC))
 
     async def post(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.post(url, **kwargs)
+        return await self._traced(self._http.post(url, **kwargs), datetime.now(UTC))
 
     async def put(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.put(url, **kwargs)
+        return await self._traced(self._http.put(url, **kwargs), datetime.now(UTC))
 
     async def delete(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.delete(url, **kwargs)
+        return await self._traced(self._http.delete(url, **kwargs), datetime.now(UTC))
 
     async def patch(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.patch(url, **kwargs)
+        return await self._traced(self._http.patch(url, **kwargs), datetime.now(UTC))
 
     async def head(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.head(url, **kwargs)
+        return await self._traced(self._http.head(url, **kwargs), datetime.now(UTC))
 
     async def options(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.options(url, **kwargs)
+        return await self._traced(self._http.options(url, **kwargs), datetime.now(UTC))
 
     async def request(self, method: str, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
-        return await self._http.request(method, url, **kwargs)
+        return await self._traced(self._http.request(method, url, **kwargs), datetime.now(UTC))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -83,10 +133,12 @@ class Routewiler:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+        if self._trace_sink is not None:
+            await self._trace_sink.aclose()
 
     async def __aenter__(self) -> Routewiler:
         await self._http.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        await self._http.__aexit__(*args)
+        await self.aclose()
