@@ -13,6 +13,7 @@ from routewiler.errors import (
 from routewiler.funding import EvmFundingSource, Funding
 from routewiler.normalized import NormalizedChallenge
 from routewiler.trace.schema import TraceEvent
+from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
 
 __all__ = [
     "BudgetEnvelope",
@@ -27,6 +28,8 @@ __all__ = [
     "Routewiler",
     "RoutewilerError",
     "SigningError",
+    "SqliteTraceSink",
     "TraceEvent",
+    "TraceSink",
     "__version__",
 ]

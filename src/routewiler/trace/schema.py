@@ -25,7 +25,7 @@ class PaymentDetails(RoutewilerModel):
     """Payment proof and amounts, emitted after settlement."""
 
     proof_type: ProofType
-    proof_value: str
+    proof_value: str | None  # None when facilitator omits the on-chain proof (mock/testnet)
     amount_native: int  # rail-native base units (wei, sats, cents)
     amount_native_currency: str  # CAIP-19 / "btc-lightning" / "<iso4217>-fiat"
     amount_envelope: float | None  # None when FMV is unavailable
@@ -70,7 +70,7 @@ class TraceEvent(RoutewilerModel):
     agent_id: str | None = None
     envelope_id: str
     policy_hash: str
-    challenge: NormalizedChallenge
+    challenge: NormalizedChallenge | None  # None for passthrough and pre-parse error traces
     selected_rail: Rail
     facilitator: str | None = None
     funding_source: str
