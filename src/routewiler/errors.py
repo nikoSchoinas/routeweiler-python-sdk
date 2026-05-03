@@ -75,3 +75,31 @@ class ReceiptVerificationError(RoutewilerError):
 
 class FmvUnavailableError(PaymentError):
     """No cached FMV rate is available for the required currency pair."""
+
+
+class PolicyDeniedError(PaymentError):
+    """A policy rule with `deny: true` matched the challenge."""
+
+    def __init__(self, reason: str | None = None, rule_name: str | None = None) -> None:
+        detail = reason or rule_name or "policy denied this payment"
+        super().__init__(detail)
+        self.reason = reason
+        self.rule_name = rule_name
+
+
+class PolicyMaxPerCallExceededError(PaymentError):
+    """The challenge amount exceeds the policy's `max_per_call_minor_units` limit."""
+
+    def __init__(
+        self,
+        rule_name: str | None,
+        requested: int,
+        limit: int,
+    ) -> None:
+        super().__init__(
+            f"Rule '{rule_name}': challenge amount {requested} minor units "
+            f"exceeds max_per_call limit of {limit}."
+        )
+        self.rule_name = rule_name
+        self.requested = requested
+        self.limit = limit
