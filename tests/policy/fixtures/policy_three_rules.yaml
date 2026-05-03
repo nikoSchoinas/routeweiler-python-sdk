@@ -1,0 +1,26 @@
+# Three required rule shapes: default rail, sensitive origins, streaming/inference.
+# Comments here do NOT affect the policy_hash (hash is over the parsed model).
+version: 1
+
+default:
+  rail: x402
+
+rules:
+  - name: privacy-sensitive
+    when:
+      any:
+        - url_matches: "*.competitorapi.com/*"
+        - url_matches: "*/sensitive/*"
+    prefer: [l402, mpp-spt]
+    reason: "on-chain payment leak unacceptable"
+
+  - name: llm-inference-streaming
+    when:
+      scheme: stream
+    prefer: [mpp-tempo, mpp-spt]
+    max_per_call_minor_units: 500
+
+  - name: deny-testnet
+    when:
+      network: base-sepolia
+    deny: true
