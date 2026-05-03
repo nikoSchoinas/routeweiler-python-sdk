@@ -10,8 +10,8 @@ from uuid import uuid4
 import httpx
 
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD as _HTTP_CLIENT_ERROR_THRESHOLD
+from routewiler.budgets.fmv import fmv_for_trace as _fmv_for_trace
 from routewiler.trace.schema import (
-    FmvQuality,
     Outcome,
     OutcomeError,
     PaymentDetails,
@@ -23,23 +23,6 @@ if TYPE_CHECKING:
     from routewiler.normalized import NormalizedChallenge, UrlEncoding
     from routewiler.rails.x402 import SettlementInfo
     from routewiler.trace.sink_sqlite import SqliteTraceSink
-
-# ---------------------------------------------------------------------------
-# Known stablecoin peg assets (CAIP-19 address suffixes)
-# Maps lowercase ERC-20 address → ISO-4217 peg currency.
-# Extend as more stablecoins gain facilitator support.
-# ---------------------------------------------------------------------------
-_STABLECOIN_PEG: dict[str, str] = {
-    # USDC
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "usd",  # base mainnet
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "usd",  # base-sepolia
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "usd",  # polygon
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "usd",  # arbitrum
-    # EURC
-    "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "eur",  # base mainnet
-}
-
-_STABLECOIN_DECIMALS = 6  # USDC and EURC both use 6
 
 _POLICY_HASH_PLACEHOLDER = "none"  # replaced by real SHA-256 in Week 10
 
@@ -214,7 +197,7 @@ def _build_payment(
     currency = challenge.price.currency
     amount_native = challenge.price.amount
 
-    amount_envelope, fmv_quality = _fmv(currency, amount_native, envelope_currency)
+    amount_envelope, fmv_quality = _fmv_for_trace(currency, amount_native, envelope_currency)
 
     # Proof of payment from the settlement response.
     proof_type: str = "txid"
@@ -230,28 +213,3 @@ def _build_payment(
         fmv_quality=fmv_quality,
         settlement_latency_ms=settlement_latency_ms,
     )
-
-
-def _fmv(
-    caip19_currency: str, amount_native: int, envelope_currency: str
-) -> tuple[float | None, FmvQuality]:
-    """Compute FMV for trace emission (never on the call path).
-
-    Week 3 implements the stablecoin-peg rule only.  All other assets emit
-    ``(None, "unavailable")`` — CoinGecko + ECB integration ships when the
-    L402 adapter (sats) lands in Week 8.
-    """
-    # Extract the trailing ERC-20 address from a CAIP-19 like
-    # "eip155:8453/erc20:0x833589..."
-    address: str | None = None
-    if "/erc20:" in caip19_currency:
-        address = caip19_currency.rsplit("/erc20:", maxsplit=1)[-1].lower()
-
-    if address and address in _STABLECOIN_PEG:
-        peg_currency = _STABLECOIN_PEG[address]
-        if peg_currency == envelope_currency:
-            # 1:1 peg — USDC has 6 decimals, EURC has 6 decimals.
-            return amount_native / 10**_STABLECOIN_DECIMALS, "stablecoin_peg"
-        # Stablecoin in a different-currency envelope → fx_leg needed; defer.
-
-    return None, "unavailable"
