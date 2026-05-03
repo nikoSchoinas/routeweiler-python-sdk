@@ -192,6 +192,7 @@ async def test_url_mode_drop_strips_query_in_emitted_event(tmp_path: Path) -> No
         envelope_currency="usd",
         funding_label="evm:base-sepolia:usdc",
         url_mode="drop",
+        policy_hash="sha256:test",
     )
     await emitter.emit_error(
         request=None,  # type: ignore[arg-type]

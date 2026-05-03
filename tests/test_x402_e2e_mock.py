@@ -21,8 +21,11 @@ import respx
 
 from routewiler import Funding, Routewiler
 from routewiler.errors import RailNotSupportedError
+from routewiler.policy.dsl import compute_policy_hash, default_policy
 from routewiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_TX_HASH
+
+_DEFAULT_POLICY_HASH = compute_policy_hash(default_policy())
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,7 +123,8 @@ async def test_happy_path_returns_200_and_writes_trace(
     payload = json.loads(row["payload"])
     assert payload["payment"]["proofValue"] == MOCK_TX_HASH
     assert payload["payment"]["proofType"] == "txid"
-    assert payload["policyHash"] == "none"
+    assert payload["policyHash"] == _DEFAULT_POLICY_HASH
+    assert payload["policyHash"].startswith("sha256:")
 
 
 # ---------------------------------------------------------------------------
