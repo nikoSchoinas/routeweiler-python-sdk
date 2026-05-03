@@ -33,6 +33,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "eth-account>=0.13,<1",
     "x402[evm]>=2.6,<3",
+    "cryptography>=43,<45",
 ]
 
 [project.optional-dependencies]
@@ -108,6 +109,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = [
     "PLR2004",  # magic-value comparisons are fine in test assertions
+]
+"src/routewiler/_auth.py" = [
+    "PLR0912",  # auth flow inherently has many branches (protocol phases + error paths)
+    "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
+    "PLR2004",  # HTTP threshold constant is imported but some checkers still flag sub-expressions
 ]
 
 [tool.ruff.format]

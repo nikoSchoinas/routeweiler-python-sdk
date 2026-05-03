@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import httpx
 
-from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
+from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
+from routewiler.budgets.local import BudgetStore, Draw, amount_to_envelope_minor_units
 from routewiler.errors import RailNotSupportedError
 from routewiler.rails.base import RailAdapter
 
@@ -34,9 +36,15 @@ class RoutewilerAuth(httpx.Auth):
         adapters: list[RailAdapter],
         *,
         emitter: TraceEmitter | None = None,
+        budget_store: BudgetStore | None = None,
+        envelope_id: str | None = None,
+        envelope_currency: str | None = None,
     ) -> None:
         self._adapters = adapters
         self._emitter = emitter
+        self._budget_store = budget_store
+        self._envelope_id = envelope_id
+        self._envelope_currency = envelope_currency
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # Sync path not supported — callers must use AsyncClient.
@@ -66,8 +74,6 @@ class RoutewilerAuth(httpx.Auth):
         adapter = next((a for a in self._adapters if a.can_handle(response)), None)
         if adapter is None:
             ts_end = datetime.now(UTC)
-            # No adapter recognised this rail — emit an error trace and
-            # surface the error to the caller.
             err = RailNotSupportedError(
                 f"No rail adapter can handle the 402 from {request.url}. "
                 "Check that the server uses a supported rail (x402, L402, MPP) "
@@ -84,11 +90,68 @@ class RoutewilerAuth(httpx.Auth):
                 )
             raise err
 
+        # Phase 1: parse the 402 challenge.
         challenge = None
         try:
             challenge = adapter.parse(request, response)
+        except Exception as exc:
+            ts_end = datetime.now(UTC)
+            if self._emitter:
+                await self._emitter.emit_error(
+                    request=request,
+                    response=response,
+                    error=exc,
+                    challenge=None,
+                    ts_start=ts_start,
+                    ts_end=ts_end,
+                )
+            raise
+
+        # Phase 2: budget draw — reserve capacity before committing to payment.
+        draw: Draw | None = None
+        if (
+            self._budget_store is not None
+            and self._envelope_id is not None
+            and self._envelope_currency is not None
+        ):
+            idempotency_key = uuid4().hex
+            request_id = uuid4().hex
+            try:
+                amount_envelope = amount_to_envelope_minor_units(
+                    challenge.price.currency,
+                    challenge.price.amount,
+                    self._envelope_currency,
+                )
+                draw = await self._budget_store.draw(
+                    envelope_id=self._envelope_id,
+                    request_id=request_id,
+                    idempotency_key=idempotency_key,
+                    amount_reserved_minor_units=amount_envelope,
+                    rail_quoted=challenge.rail,
+                )
+            except Exception as exc:
+                ts_end = datetime.now(UTC)
+                if self._emitter:
+                    await self._emitter.emit_error(
+                        request=request,
+                        response=response,
+                        error=exc,
+                        challenge=challenge,
+                        ts_start=ts_start,
+                        ts_end=ts_end,
+                    )
+                raise
+
+        # Phase 3: sign the challenge.
+        payment_header: str
+        try:
             payment_header = await adapter.sign(challenge)
         except Exception as exc:
+            if draw is not None and self._budget_store is not None:
+                try:
+                    await self._budget_store.rollback(draw.id)
+                except Exception:
+                    pass  # best-effort; don't mask the sign error
             ts_end = datetime.now(UTC)
             if self._emitter:
                 await self._emitter.emit_error(
@@ -109,11 +172,47 @@ class RoutewilerAuth(httpx.Auth):
             extensions=request.extensions,
         )
         ts_retry = datetime.now(UTC)
-        final_response = yield retry
+        try:
+            final_response = yield retry
+        except Exception as exc:
+            if draw is not None and self._budget_store is not None:
+                try:
+                    await self._budget_store.rollback(draw.id)
+                except Exception:
+                    pass
+            raise exc
         ts_end = datetime.now(UTC)
 
         # Tag the final response so the passthrough hook skips it.
         final_response.extensions["routewiler_emitted"] = True
+
+        # Phase 4: confirm or rollback the draw based on the final HTTP status.
+        if draw is not None and self._budget_store is not None:
+            if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+                settlement = None
+                if hasattr(adapter, "parse_settlement"):
+                    settlement = adapter.parse_settlement(final_response)
+                # Prefer facilitator-reported amount; fall back to reserved (correct
+                # for x402 'exact' scheme where reserved == settled by definition).
+                settled_native = (
+                    settlement.amount_paid
+                    if (settlement and settlement.amount_paid is not None)
+                    else challenge.price.amount
+                )
+                try:
+                    settled_envelope = amount_to_envelope_minor_units(
+                        challenge.price.currency,
+                        settled_native,
+                        self._envelope_currency,  # type: ignore[arg-type]
+                    )
+                    await self._budget_store.confirm(draw.id, settled_envelope)
+                except Exception:
+                    pass  # best-effort: trace still emits, cap stays reserved until reaper
+            else:
+                try:
+                    await self._budget_store.rollback(draw.id)
+                except Exception:
+                    pass
 
         if self._emitter:
             settlement = None

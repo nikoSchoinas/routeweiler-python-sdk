@@ -1,9 +1,14 @@
 __version__ = "0.0.0"
 
+from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import BudgetEnvelope, DrawReceipt
 from routewiler.client import Routewiler
 from routewiler.errors import (
+    BudgetExceededError,
     ChallengeParseError,
+    EnvelopeExpiredError,
+    EnvelopeFrozenError,
+    EnvelopeNotFoundError,
     NoFundingForRailError,
     PaymentError,
     RailNotSupportedError,
@@ -17,8 +22,13 @@ from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
 
 __all__ = [
     "BudgetEnvelope",
+    "BudgetExceededError",
+    "BudgetStore",
     "ChallengeParseError",
     "DrawReceipt",
+    "EnvelopeExpiredError",
+    "EnvelopeFrozenError",
+    "EnvelopeNotFoundError",
     "EvmFundingSource",
     "Funding",
     "NoFundingForRailError",
