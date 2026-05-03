@@ -24,8 +24,6 @@ if TYPE_CHECKING:
     from routewiler.rails.x402 import SettlementInfo
     from routewiler.trace.sink_sqlite import SqliteTraceSink
 
-_POLICY_HASH_PLACEHOLDER = "none"  # replaced by real SHA-256 in Week 10
-
 
 class TraceEmitter:
     """Assembles TraceEvent instances and delegates persistence to a sink."""
@@ -37,12 +35,14 @@ class TraceEmitter:
         envelope_currency: str,
         funding_label: str,
         url_mode: UrlEncoding,
+        policy_hash: str,
     ) -> None:
         self._sink = sink
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
         self._funding_label = funding_label
         self._url_mode = url_mode
+        self._policy_hash = policy_hash
 
     # ------------------------------------------------------------------
     # Public emit helpers
@@ -73,7 +73,7 @@ class TraceEmitter:
         event = TraceEvent(
             request_id=request_id,
             envelope_id=self._envelope_id,
-            policy_hash=_POLICY_HASH_PLACEHOLDER,
+            policy_hash=self._policy_hash,
             challenge=challenge,
             selected_rail=challenge.rail,
             funding_source=self._funding_label,
@@ -103,7 +103,7 @@ class TraceEmitter:
         event = TraceEvent(
             request_id=_request_id(),
             envelope_id=self._envelope_id,
-            policy_hash=_POLICY_HASH_PLACEHOLDER,
+            policy_hash=self._policy_hash,
             challenge=None,
             selected_rail=None,
             funding_source=self._funding_label,
@@ -142,7 +142,7 @@ class TraceEmitter:
         event = TraceEvent(
             request_id=_request_id(),
             envelope_id=self._envelope_id,
-            policy_hash=_POLICY_HASH_PLACEHOLDER,
+            policy_hash=self._policy_hash,
             challenge=challenge,
             selected_rail=rail,
             funding_source=self._funding_label,
