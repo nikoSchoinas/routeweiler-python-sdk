@@ -55,3 +55,23 @@ class EnvelopeFrozenError(PaymentError):
 
 class EnvelopeExpiredError(PaymentError):
     """Envelope expires_at is in the past."""
+
+
+class KeystoreError(RoutewilerError):
+    """Base for keystore failures."""
+
+
+class KeystoreNotFoundError(KeystoreError):
+    """No key file exists for the given envelope id."""
+
+
+class KeystoreAlreadyExistsError(KeystoreError):
+    """A key file already exists for the given envelope id; will not overwrite."""
+
+
+class ReceiptVerificationError(RoutewilerError):
+    """Ed25519 signature on a DrawReceipt is invalid or the payload was tampered with."""
+
+
+class FmvUnavailableError(PaymentError):
+    """No cached FMV rate is available for the required currency pair."""
