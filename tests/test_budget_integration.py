@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from routewiler import BudgetExceededError, Funding, Routewiler
+from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore, ensure_default_envelope
 from routewiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_CHALLENGE_B64, MOCK_TX_HASH
@@ -54,6 +55,7 @@ def _make_client(
     transport: httpx.ASGITransport,
     db_path: Path,
     budget_envelope: str | None = None,
+    keystore_root: Path | None = None,
 ) -> Routewiler:
     """Build a Routewiler client backed by the given ASGI transport and DB.
 
@@ -83,6 +85,8 @@ def _make_client(
         kwargs = {}
         if budget_envelope is not None:
             kwargs["budget_envelope"] = budget_envelope
+        if keystore_root is not None:
+            kwargs["keystore_root"] = keystore_root
 
         client = Routewiler(
             funding=[Funding.base_sepolia_usdc(wallet=test_account)],
@@ -174,9 +178,11 @@ async def test_second_call_blocked_when_cap_exhausted(
     before the retry reaches the mock server (enforcement is pre-pay).
     """
     # Create a 1-cent envelope so the first call exhausts it entirely.
+    keystore_root = tmp_trace_db_path.parent / "keys"
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
     await sink.aclose()  # close immediately; we only needed the DDL
-    store = BudgetStore(tmp_trace_db_path)
+    keystore = EnvelopeKeystore(root=keystore_root)
+    store = BudgetStore(tmp_trace_db_path, keystore)
     await store.create_envelope(
         "tiny_env",
         cap_minor_units=1,
@@ -186,7 +192,7 @@ async def test_second_call_blocked_when_cap_exhausted(
     )
     await store.aclose()
 
-    client = _make_client(test_account, mock_x402_app, tmp_trace_db_path, "tiny_env")
+    client = _make_client(test_account, mock_x402_app, tmp_trace_db_path, "tiny_env", keystore_root)
 
     # First call succeeds and settles 1 cent (= the entire cap).
     resp = await client.get("http://mock/protected")
@@ -267,8 +273,9 @@ async def test_draw_idempotency_no_double_count(tmp_trace_db_path: Path) -> None
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
     await sink.aclose()
 
-    ensure_default_envelope(tmp_trace_db_path)
-    store = BudgetStore(tmp_trace_db_path)
+    keystore = EnvelopeKeystore(root=tmp_trace_db_path.parent / "keys2")
+    ensure_default_envelope(tmp_trace_db_path, keystore)
+    store = BudgetStore(tmp_trace_db_path, keystore)
     await store.create_envelope(
         "idem_env",
         cap_minor_units=1,  # only 1 cent available
@@ -293,7 +300,7 @@ async def test_draw_idempotency_no_double_count(tmp_trace_db_path: Path) -> None
     )
     await store.aclose()
 
-    # Same draw_id returned; cap not double-charged.
-    assert draw_a.id == draw_b.id
+    # Same receipt_id returned; cap not double-charged.
+    assert draw_a.receipt_id == draw_b.receipt_id
     draws = _draw_rows(tmp_trace_db_path)
     assert len(draws) == 1

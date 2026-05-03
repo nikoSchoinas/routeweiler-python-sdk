@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
+from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore, ensure_default_envelope
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
@@ -142,11 +143,17 @@ def mock_x402_app() -> httpx.ASGITransport:
 
 
 @pytest.fixture
-async def tmp_budget_store(tmp_trace_db_path: Path) -> AsyncGenerator[BudgetStore, None]:
+def tmp_keystore(tmp_path: Path) -> EnvelopeKeystore:
+    """An EnvelopeKeystore backed by a temp directory."""
+    return EnvelopeKeystore(root=tmp_path / "keys")
+
+
+@pytest.fixture
+async def tmp_budget_store(
+    tmp_trace_db_path: Path, tmp_keystore: EnvelopeKeystore
+) -> AsyncGenerator[BudgetStore, None]:
     """A BudgetStore backed by a fresh temp DB, with the default envelope seeded."""
-    # ensure_default_envelope creates the budget tables and seeds the default row.
-    # tmp_trace_sink is not needed here — its DDL (trace_events) is created separately.
-    ensure_default_envelope(tmp_trace_db_path)
-    store = BudgetStore(tmp_trace_db_path)
+    ensure_default_envelope(tmp_trace_db_path, tmp_keystore)
+    store = BudgetStore(tmp_trace_db_path, tmp_keystore)
     yield store
     await store.aclose()

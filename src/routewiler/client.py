@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from routewiler._auth import RoutewilerAuth
+from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
 from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding.evm import EvmFundingSource
@@ -60,6 +62,7 @@ class Routewiler:
         policy: None = None,
         budget_envelope: str | None = None,
         trace_sink: SqliteTraceSink | None = None,
+        keystore_root: Path | None = None,
     ) -> None:
         self._funding = funding
         self._trace_sink = trace_sink
@@ -70,10 +73,15 @@ class Routewiler:
         envelope_currency: str | None = None
 
         if trace_sink is not None:
+            keystore = (
+                EnvelopeKeystore()
+                if keystore_root is None
+                else EnvelopeKeystore(root=keystore_root)
+            )
             # Seed the default envelope row (idempotent INSERT OR IGNORE).
-            ensure_default_envelope(trace_sink.db_path)
+            ensure_default_envelope(trace_sink.db_path, keystore)
 
-            budget_store = BudgetStore(trace_sink.db_path)
+            budget_store = BudgetStore(trace_sink.db_path, keystore)
 
             # Resolve the envelope's declared currency from the DB.
             envelope_currency = budget_store.get_currency_sync(envelope_id)
@@ -165,8 +173,14 @@ class Routewiler:
         if self._trace_sink is not None:
             await self._trace_sink.aclose()
 
+    async def start(self) -> None:
+        """Start background tasks (reaper). Called automatically by __aenter__."""
+        if self._budget_store is not None:
+            await self._budget_store.start()
+
     async def __aenter__(self) -> Routewiler:
         await self._http.__aenter__()
+        await self.start()
         return self
 
     async def __aexit__(self, *args: Any) -> None:
