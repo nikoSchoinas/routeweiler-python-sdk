@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from routewiler.budgets.local import (
-    BudgetStore,
-    Draw,
-    amount_to_envelope_minor_units,
-)
+from routewiler.budgets.fmv import amount_to_envelope_minor_units
+from routewiler.budgets.keystore import EnvelopeKeystore
+from routewiler.budgets.local import BudgetStore
+from routewiler.budgets.receipts import canonical_payload
+from routewiler.budgets.receipts import verify as verify_receipt
+from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
     BudgetExceededError,
     EnvelopeExpiredError,
     EnvelopeFrozenError,
     EnvelopeNotFoundError,
-    PaymentError,
+    FmvUnavailableError,
+    KeystoreAlreadyExistsError,
 )
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ async def _draw(
     envelope_id: str = "env_test",
     amount: int = 100,
     ikey: str | None = None,
-) -> Draw:
+) -> DrawReceipt:
     return await store.draw(
         envelope_id=envelope_id,
         request_id="req_" + (ikey or "a"),
@@ -74,36 +78,57 @@ _EURC_BASE = "eip155:8453/erc20:0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42"
 
 def test_fmv_usdc_to_usd_exact_cent() -> None:
     # 10000 base units = 0.01 USDC = 1 cent
-    assert amount_to_envelope_minor_units(_USDC_BASE, 10000, "usd") == 1
+    result, _ = amount_to_envelope_minor_units(_USDC_BASE, 10000, "usd")
+    assert result == 1
 
 
 def test_fmv_usdc_to_usd_sub_cent_rounds_up() -> None:
     # 1000 base units = 0.001 USDC = 0.1 cents → ceiling → 1 cent
-    assert amount_to_envelope_minor_units(_USDC_SEPOLIA, 1000, "usd") == 1
+    result, _ = amount_to_envelope_minor_units(_USDC_SEPOLIA, 1000, "usd")
+    assert result == 1
 
 
 def test_fmv_usdc_to_usd_one_dollar() -> None:
     # 1_000_000 base units = 1 USDC = 100 cents
-    assert amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "usd") == 100
+    result, _ = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "usd")
+    assert result == 100
 
 
 def test_fmv_eurc_to_eur() -> None:
-    assert amount_to_envelope_minor_units(_EURC_BASE, 10000, "eur") == 1
+    result, _ = amount_to_envelope_minor_units(_EURC_BASE, 10000, "eur")
+    assert result == 1
+
+
+def test_fmv_usdc_to_usd_returns_quality() -> None:
+    result, quality = amount_to_envelope_minor_units(_USDC_BASE, 10000, "usd")
+    assert result == 1
+    assert quality == "stablecoin_peg"
 
 
 def test_fmv_unsupported_asset_raises() -> None:
-    with pytest.raises(PaymentError, match="FMV conversion"):
+    with pytest.raises(FmvUnavailableError):
         amount_to_envelope_minor_units("eip155:1/erc20:0xdeadbeef", 1000, "usd")
 
 
-def test_fmv_usdc_in_eur_envelope_raises() -> None:
-    # USDC pegs to USD, not EUR — requires FX leg, not yet supported
-    with pytest.raises(PaymentError, match="FMV conversion"):
-        amount_to_envelope_minor_units(_USDC_BASE, 1000, "eur")
+def test_fmv_usdc_in_eur_envelope_uses_ecb_fallback() -> None:
+    # No snapshot_rates -> falls back to ECB stub USD->EUR rate (0.92 with 5% buffer)
+    result, quality = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur")
+    assert result == 97  # 1 USDC * 0.92 * 1.05 * 100 -> ceiling -> 97 cents
+    assert quality == "fx_leg"
 
 
-def test_fmv_non_erc20_raises() -> None:
-    with pytest.raises(PaymentError, match="FMV conversion"):
+def test_fmv_usdc_in_eur_envelope_with_snapshot() -> None:
+    rates = {"usd->eur": Decimal("0.92")}
+    result, quality = amount_to_envelope_minor_units(
+        _USDC_BASE, 1_000_000, "eur", snapshot_rates=rates
+    )
+    # 1 USDC * 0.92 EUR/USD * 1.05 buffer * 100 cents/EUR = 96.6 -> 97 cents
+    assert result == 97
+    assert quality == "fx_leg"
+
+
+def test_fmv_non_erc20_sats_raises_without_snapshot() -> None:
+    with pytest.raises(FmvUnavailableError):
         amount_to_envelope_minor_units("btc-lightning", 50000, "usd")
 
 
@@ -123,10 +148,71 @@ async def test_create_envelope_inserts_row(
     assert row[1] == 1000
 
 
+async def test_create_envelope_writes_fmv_snapshot(
+    tmp_budget_store: BudgetStore, tmp_trace_db_path: Path
+) -> None:
+    await _make_envelope(tmp_budget_store)
+    conn = sqlite3.connect(str(tmp_trace_db_path))
+    snap = conn.execute(
+        "SELECT rates_json FROM envelope_fmv_snapshots WHERE envelope_id='env_test'"
+    ).fetchone()
+    conn.close()
+    assert snap is not None
+    rates = json.loads(snap[0])
+    assert "usd->usd" in rates
+
+
 async def test_create_envelope_duplicate_raises(tmp_budget_store: BudgetStore) -> None:
     await _make_envelope(tmp_budget_store)
-    with pytest.raises(sqlite3.IntegrityError):
+    # Normal duplicate: keystore already has the key file → KeystoreAlreadyExistsError
+    # fires before the DB insert is even attempted.
+    with pytest.raises(KeystoreAlreadyExistsError):
         await _make_envelope(tmp_budget_store)
+
+
+async def test_create_envelope_no_orphan_key_on_db_failure(
+    tmp_budget_store: BudgetStore,
+    tmp_trace_db_path: Path,
+    tmp_keystore: EnvelopeKeystore,
+) -> None:
+    """If the DB row already exists but no key file does (e.g. key was manually deleted),
+    create_envelope must not leave an orphan key file behind on the IntegrityError path.
+    """
+    # Seed a DB row directly without going through create_envelope (no key file created).
+    conn = sqlite3.connect(str(tmp_trace_db_path))
+    now = datetime.now(UTC)
+    conn.execute(
+        """INSERT INTO envelopes
+           (id, cap_minor_units, cap_currency, allowed_rails, allowed_origins_glob,
+            status, created_at, expires_at, counter_public_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "env_orphan",
+            1000,
+            "usd",
+            json.dumps(["x402"]),
+            json.dumps(["*"]),
+            "active",
+            now.isoformat(),
+            (now + timedelta(days=30)).isoformat(),
+            "",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # Now create_envelope will: create key file → fail DB insert (IntegrityError) → delete key.
+    with pytest.raises(sqlite3.IntegrityError):
+        await tmp_budget_store.create_envelope(
+            "env_orphan",
+            cap_minor_units=1000,
+            cap_currency="usd",
+            allowed_rails=["x402"],
+            ttl_seconds=3600,
+        )
+
+    # No orphan key file must remain.
+    assert not tmp_keystore.exists("env_orphan"), "orphan key file must be cleaned up"
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +222,11 @@ async def test_create_envelope_duplicate_raises(tmp_budget_store: BudgetStore) -
 
 async def test_draw_under_cap_succeeds(tmp_budget_store: BudgetStore) -> None:
     await _make_envelope(tmp_budget_store, cap=1000)
-    draw = await _draw(tmp_budget_store, amount=100)
-    assert isinstance(draw, Draw)
-    assert draw.amount_reserved_minor_units == 100
-    assert draw.rail_quoted == "x402"
+    receipt = await _draw(tmp_budget_store, amount=100)
+    assert isinstance(receipt, DrawReceipt)
+    assert receipt.amount_reserved_minor_units == 100
+    assert receipt.rail_quoted == "x402"
+    verify_receipt(receipt)  # signature must be valid
 
 
 async def test_draw_over_cap_raises_budget_exceeded(tmp_budget_store: BudgetStore) -> None:
@@ -153,9 +240,35 @@ async def test_draw_over_cap_raises_budget_exceeded(tmp_budget_store: BudgetStor
 
 async def test_draw_idempotent_returns_existing_draw(tmp_budget_store: BudgetStore) -> None:
     await _make_envelope(tmp_budget_store)
-    draw_a = await _draw(tmp_budget_store, amount=100, ikey="same_key")
-    draw_b = await _draw(tmp_budget_store, amount=100, ikey="same_key")
-    assert draw_a.id == draw_b.id
+    receipt_a = await _draw(tmp_budget_store, amount=100, ikey="same_key")
+    receipt_b = await _draw(tmp_budget_store, amount=100, ikey="same_key")
+    assert receipt_a.receipt_id == receipt_b.receipt_id
+
+
+async def test_draw_idempotent_receipt_is_byte_identical(tmp_budget_store: BudgetStore) -> None:
+    """Two draws with the same idempotency_key but different request_ids must return
+    byte-identical receipts (§8.2: "return the existing receipt unchanged").
+    The original request_id is preserved so canonical_payload and signature match.
+    """
+    await _make_envelope(tmp_budget_store)
+    receipt_a = await tmp_budget_store.draw(
+        envelope_id="env_test",
+        request_id="req_first",
+        idempotency_key="idm_byte",
+        amount_reserved_minor_units=100,
+        rail_quoted="x402",
+    )
+    receipt_b = await tmp_budget_store.draw(
+        envelope_id="env_test",
+        request_id="req_second",  # different request_id — must be ignored on replay
+        idempotency_key="idm_byte",
+        amount_reserved_minor_units=100,
+        rail_quoted="x402",
+    )
+    assert receipt_a.receipt_id == receipt_b.receipt_id
+    assert receipt_a.request_id == receipt_b.request_id  # original stored value used
+    assert canonical_payload(receipt_a) == canonical_payload(receipt_b)
+    assert receipt_a.signature == receipt_b.signature
 
 
 async def test_draw_idempotent_does_not_double_count(
@@ -221,8 +334,8 @@ async def test_confirm_marks_settled(
     tmp_budget_store: BudgetStore, tmp_trace_db_path: Path
 ) -> None:
     await _make_envelope(tmp_budget_store)
-    draw = await _draw(tmp_budget_store, amount=100)
-    await tmp_budget_store.confirm(draw.id, 100)
+    receipt = await _draw(tmp_budget_store, amount=100)
+    await tmp_budget_store.confirm(receipt.receipt_id, 100)
     rows = _draw_rows(tmp_trace_db_path)
     assert rows[0]["state"] == "settled"
     assert rows[0]["amount_settled_minor_units"] == 100
@@ -234,11 +347,11 @@ async def test_confirm_uses_settled_amount_against_cap(
 ) -> None:
     # Reserved + settled both count against the cap (§8.3).
     await _make_envelope(tmp_budget_store, cap=200)
-    draw_a = await _draw(tmp_budget_store, amount=100, ikey="a")
-    await tmp_budget_store.confirm(draw_a.id, 100)
+    receipt_a = await _draw(tmp_budget_store, amount=100, ikey="a")
+    await tmp_budget_store.confirm(receipt_a.receipt_id, 100)
     # 100 settled; 100 remaining
-    draw_b = await _draw(tmp_budget_store, amount=100, ikey="b")
-    assert draw_b.amount_reserved_minor_units == 100
+    receipt_b = await _draw(tmp_budget_store, amount=100, ikey="b")
+    assert receipt_b.amount_reserved_minor_units == 100
     # 100 settled + 100 reserved = 200; no room for more
     with pytest.raises(BudgetExceededError):
         await _draw(tmp_budget_store, amount=1, ikey="c")
@@ -253,19 +366,19 @@ async def test_rollback_marks_rolled_back(
     tmp_budget_store: BudgetStore, tmp_trace_db_path: Path
 ) -> None:
     await _make_envelope(tmp_budget_store)
-    draw = await _draw(tmp_budget_store, amount=100)
-    await tmp_budget_store.rollback(draw.id)
+    receipt = await _draw(tmp_budget_store, amount=100)
+    await tmp_budget_store.rollback(receipt.receipt_id)
     rows = _draw_rows(tmp_trace_db_path)
     assert rows[0]["state"] == "rolled_back"
 
 
 async def test_rollback_frees_capacity(tmp_budget_store: BudgetStore) -> None:
     await _make_envelope(tmp_budget_store, cap=100)
-    draw = await _draw(tmp_budget_store, amount=100, ikey="a")
+    receipt = await _draw(tmp_budget_store, amount=100, ikey="a")
     # Cap exhausted — next draw would fail
     with pytest.raises(BudgetExceededError):
         await _draw(tmp_budget_store, amount=1, ikey="b")
     # After rollback, capacity is freed
-    await tmp_budget_store.rollback(draw.id)
-    draw2 = await _draw(tmp_budget_store, amount=100, ikey="c")
-    assert draw2.amount_reserved_minor_units == 100
+    await tmp_budget_store.rollback(receipt.receipt_id)
+    receipt2 = await _draw(tmp_budget_store, amount=100, ikey="c")
+    assert receipt2.amount_reserved_minor_units == 100

@@ -3,22 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import logging
 import os
 import sqlite3
-from dataclasses import dataclass
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import TypedDict
-from uuid import uuid4
+from typing import TypedDict, cast
 
+from routewiler._constants import CLOCK_SKEW_BUFFER_SECONDS, REAPER_INTERVAL_SECONDS
+from routewiler.budgets.fmv import capture_fmv_snapshot as _capture_fmv_snapshot
+from routewiler.budgets.keystore import EnvelopeKeystore
+from routewiler.budgets.receipts import issue as _issue_receipt
+from routewiler.budgets.receipts import uuid7
+from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
     BudgetExceededError,
     EnvelopeExpiredError,
     EnvelopeFrozenError,
     EnvelopeNotFoundError,
-    PaymentError,
 )
+from routewiler.normalized import Rail
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_ENVELOPE_ID = "default"
 _DEFAULT_CAP_USD = 100
@@ -53,12 +63,19 @@ CREATE TABLE IF NOT EXISTS draws (
     rail_quoted                 TEXT    NOT NULL,
     state                       TEXT    NOT NULL,   -- 'reserved' | 'settled' | 'rolled_back'
     issued_at                   TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at                  TEXT    NOT NULL,   -- ISO-8601 UTC
+    expires_at                  TEXT    NOT NULL,   -- ISO-8601 UTC (+30s clock-skew buffer, §8.4)
     settled_at                  TEXT,               -- ISO-8601 UTC; set on confirm
     UNIQUE (envelope_id, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS draws_envelope_state ON draws (envelope_id, state);
+
+CREATE TABLE IF NOT EXISTS envelope_fmv_snapshots (
+    envelope_id  TEXT    PRIMARY KEY REFERENCES envelopes(id),
+    captured_at  TEXT    NOT NULL,   -- ISO-8601 UTC
+    rates_json   TEXT    NOT NULL,   -- JSON object {"sats->usd": "0.00065", ...}
+    quality_json TEXT    NOT NULL    -- JSON object {"sats->usd": "coingecko_simple", ...}
+);
 """
 
 
@@ -70,9 +87,6 @@ def _ensure_budget_schema(conn: sqlite3.Connection) -> None:
 
 # ---------------------------------------------------------------------------
 # _EnvelopeRow — typed dict for SQLite envelope INSERT parameters.
-# Values are the serialized (SQL-ready) forms: datetimes as ISO-8601 strings,
-# Rail lists as JSON strings. counter_public_key is omitted and filled by the
-# column DEFAULT until Phase 1 W1 (Ed25519 key generation).
 # ---------------------------------------------------------------------------
 
 
@@ -85,80 +99,21 @@ class _EnvelopeRow(TypedDict):
     status: str
     created_at: str  # ISO-8601 UTC
     expires_at: str  # ISO-8601 UTC
+    counter_public_key: str
 
 
 # ---------------------------------------------------------------------------
-# FMV: stablecoin-peg conversion (same asset set as trace/emitter.py)
-# Week 4 supports only this path; CoinGecko + ECB integration ships in Week 8.
+# Default draw TTL — §8.4: "default 2x p99 settlement latency".
+# The 30-second clock-skew buffer (CLOCK_SKEW_BUFFER_SECONDS) is added on top
+# at insert time so the durable record includes the full intended window.
 # ---------------------------------------------------------------------------
 
-_STABLECOIN_PEG: dict[str, str] = {
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "usd",  # USDC base mainnet
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "usd",  # USDC base-sepolia
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "usd",  # USDC polygon
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "usd",  # USDC arbitrum
-    "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "eur",  # EURC base mainnet
-}
-_STABLECOIN_DECIMALS = 6
-# Minor units per major unit for each envelope currency.
-_MINOR_PER_MAJOR: dict[str, int] = {"usd": 100, "eur": 100, "gbp": 100, "jpy": 1}
-
-
-def amount_to_envelope_minor_units(
-    rail_currency: str, amount_native: int, envelope_currency: str
-) -> int:
-    """Convert rail-native base units to envelope minor units (ceiling rounding).
-
-    Only the stablecoin-peg case is supported at Week 4 (USDC→USD, EURC→EUR).
-    Ceiling rounding ensures the cap is never silently breached by sub-cent fractions.
-    Raises PaymentError for assets requiring CoinGecko / ECB conversion (Week 8+).
-    """
-    address: str | None = None
-    if "/erc20:" in rail_currency:
-        address = rail_currency.rsplit("/erc20:", maxsplit=1)[-1].lower()
-
-    if address and address in _STABLECOIN_PEG:
-        peg = _STABLECOIN_PEG[address]
-        if peg == envelope_currency.lower():
-            minor_per_major: int = _MINOR_PER_MAJOR.get(peg, 100)
-            divisor: int = 10**_STABLECOIN_DECIMALS
-            # Exact ceiling: (a * b + d - 1) // d
-            return (amount_native * minor_per_major + divisor - 1) // divisor
-
-    raise PaymentError(
-        f"Budget enforcement requires FMV conversion for asset '{rail_currency}' "
-        f"in envelope currency '{envelope_currency}'. "
-        "Only USDC/EURC stablecoin peg is supported at Week 4; "
-        "CoinGecko + ECB integration ships in Week 8."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Draw — lightweight in-memory record returned by BudgetStore.draw()
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Draw:
-    """In-memory record of a reserved draw. Replaces a full DrawReceipt at Week 4.
-
-    DrawReceipt (with Ed25519 signature) ships in Week 9.
-    """
-
-    id: str
-    envelope_id: str
-    idempotency_key: str
-    amount_reserved_minor_units: int
-    rail_quoted: str
-    issued_at: datetime
-    expires_at: datetime
+_DEFAULT_DRAW_TTL_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
 # BudgetStore
 # ---------------------------------------------------------------------------
-
-_DEFAULT_DRAW_TTL_SECONDS = 120
 
 
 class BudgetStore:
@@ -167,10 +122,14 @@ class BudgetStore:
     Uses BEGIN IMMEDIATE transactions for atomic cap-check + insert.
     Budget enforcement is always local (§8 — no hosted counter at MVP).
     Initialises the envelopes and draws tables on construction (idempotent).
+
+    The reaper task (§8.3) is started by calling ``await store.start()`` once
+    the event loop is running (e.g. from ``Routewiler.__aenter__``).
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, keystore: EnvelopeKeystore) -> None:
         self._db_path = db_path
+        self._keystore = keystore
         self._conn = sqlite3.connect(
             str(db_path), check_same_thread=False, isolation_level=None, timeout=10.0
         )
@@ -178,6 +137,49 @@ class BudgetStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         _ensure_budget_schema(self._conn)
         self._lock = asyncio.Lock()
+        self._reaper_task: asyncio.Task[None] | None = None
+        self._closed = False
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Start the reaper background task. Idempotent."""
+        if self._reaper_task is None or self._reaper_task.done():
+            self._reaper_task = asyncio.create_task(self._reap_loop(), name="routewiler-reaper")
+
+    async def _reap_loop(self) -> None:
+        """Roll back stale reserved draws every REAPER_INTERVAL_SECONDS seconds (§8.3)."""
+        while True:
+            await asyncio.sleep(REAPER_INTERVAL_SECONDS)
+            try:
+                async with self._lock:
+                    rolled = await asyncio.to_thread(self._reap_sync)
+                    if rolled:
+                        _log.debug("Reaper rolled back %d stale draw(s).", rolled)
+            except Exception:
+                _log.exception("Reaper iteration failed; will retry.")
+
+    def _reap_sync(self) -> int:
+        """Transition all expired reserved draws to rolled_back. Returns rowcount."""
+        now = datetime.now(UTC).isoformat()
+        cursor = self._conn.execute(
+            "UPDATE draws SET state='rolled_back' WHERE state='reserved' AND expires_at < ?",
+            (now,),
+        )
+        return cursor.rowcount
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._reaper_task is not None:
+            self._reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._reaper_task
+        async with self._lock:
+            await asyncio.to_thread(self._conn.close)
 
     # ------------------------------------------------------------------
     # Synchronous helpers (safe to call from a synchronous constructor)
@@ -193,9 +195,25 @@ class BudgetStore:
         ).fetchone()
         return str(row[0]) if row else None
 
+    def load_fmv_snapshot_sync(self, envelope_id: str) -> dict[str, Decimal] | None:
+        """Return the stored FMV snapshot rates for an envelope, or None if absent."""
+        row = self._conn.execute(
+            "SELECT rates_json FROM envelope_fmv_snapshots WHERE envelope_id = ?",
+            (envelope_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        raw: dict[str, str] = json.loads(str(row[0]))
+        return {k: Decimal(v) for k, v in raw.items()}
+
     # ------------------------------------------------------------------
     # Async public API
     # ------------------------------------------------------------------
+
+    async def load_fmv_snapshot(self, envelope_id: str) -> dict[str, Decimal] | None:
+        """Async wrapper for load_fmv_snapshot_sync."""
+        async with self._lock:
+            return await asyncio.to_thread(self.load_fmv_snapshot_sync, envelope_id)
 
     async def create_envelope(
         self,
@@ -208,9 +226,18 @@ class BudgetStore:
         ttl_seconds: int,
         owner_agent_id: str | None = None,
     ) -> None:
-        """Insert a new envelope row. Raises sqlite3.IntegrityError on duplicate id."""
+        """Insert a new envelope row and create the Ed25519 keypair.
+
+        Raises sqlite3.IntegrityError on duplicate id.
+        """
         now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=ttl_seconds)
+
+        # Create keypair before the DB insert so that the public key is available.
+        private_key = self._keystore.create(envelope_id)
+        pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+
+        snapshot_rates, snapshot_quality = _capture_fmv_snapshot(cap_currency)
         row: _EnvelopeRow = {
             "id": envelope_id,
             "cap_minor_units": cap_minor_units,
@@ -220,24 +247,55 @@ class BudgetStore:
             "status": "active",
             "created_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
+            "counter_public_key": pub_key_b64,
         }
-        async with self._lock:
-            await asyncio.to_thread(self._create_envelope_sync, row)
+        try:
+            async with self._lock:
+                await asyncio.to_thread(
+                    self._create_envelope_sync,
+                    row,
+                    now.isoformat(),
+                    snapshot_rates,
+                    snapshot_quality,
+                )
+        except sqlite3.IntegrityError:
+            # Roll back the key file so the envelope can be retried or diagnosed clearly.
+            self._keystore.delete(envelope_id)
+            raise
 
-    def _create_envelope_sync(self, row: _EnvelopeRow) -> None:
+    def _create_envelope_sync(
+        self,
+        row: _EnvelopeRow,
+        captured_at: str,
+        snapshot_rates: dict[str, Decimal],
+        snapshot_quality: dict[str, str],
+    ) -> None:
         self._conn.execute(
             """
             INSERT INTO envelopes (
                 id, cap_minor_units, cap_currency,
                 allowed_rails, allowed_origins_glob,
-                status, created_at, expires_at
+                status, created_at, expires_at, counter_public_key
             ) VALUES (
                 :id, :cap_minor_units, :cap_currency,
                 :allowed_rails, :allowed_origins_glob,
-                :status, :created_at, :expires_at
+                :status, :created_at, :expires_at, :counter_public_key
             )
             """,
             row,
+        )
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO envelope_fmv_snapshots
+                (envelope_id, captured_at, rates_json, quality_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                captured_at,
+                json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
+                json.dumps(snapshot_quality),
+            ),
         )
 
     async def draw(
@@ -247,12 +305,12 @@ class BudgetStore:
         request_id: str,
         idempotency_key: str,
         amount_reserved_minor_units: int,
-        rail_quoted: str,
+        rail_quoted: Rail,
         ttl_seconds: int = _DEFAULT_DRAW_TTL_SECONDS,
-    ) -> Draw:
-        """Atomically reserve capacity from the envelope.
+    ) -> DrawReceipt:
+        """Atomically reserve capacity from the envelope and return a signed receipt.
 
-        Implements §8.2:  BEGIN IMMEDIATE → cap check → idempotency → INSERT → COMMIT.
+        Implements §8.2: BEGIN IMMEDIATE → cap check → idempotency → INSERT → COMMIT.
         Raises BudgetExceededError, EnvelopeNotFoundError, EnvelopeFrozenError,
         or EnvelopeExpiredError on rejection.
         """
@@ -274,23 +332,26 @@ class BudgetStore:
         request_id: str,
         idempotency_key: str,
         amount_reserved_minor_units: int,
-        rail_quoted: str,
+        rail_quoted: Rail,
         ttl_seconds: int,
-    ) -> Draw:
+    ) -> DrawReceipt:
         conn = self._conn
         now = datetime.now(UTC)
-        expires = now + timedelta(seconds=ttl_seconds)
+        # Include clock-skew buffer so the reaper doesn't fire before the
+        # active path can confirm/rollback (§8.4).
+        expires = now + timedelta(seconds=ttl_seconds + CLOCK_SKEW_BUFFER_SECONDS)
 
         conn.execute("BEGIN IMMEDIATE")
         try:
-            # Load envelope
+            # Load envelope (cap, status, expiry, public key).
             env_row = conn.execute(
-                "SELECT cap_minor_units, status, expires_at FROM envelopes WHERE id = ?",
+                "SELECT cap_minor_units, status, expires_at, cap_currency, counter_public_key "
+                "FROM envelopes WHERE id = ?",
                 (envelope_id,),
             ).fetchone()
             if env_row is None:
                 raise EnvelopeNotFoundError(f"Envelope '{envelope_id}' not found.")
-            cap, status, env_expires_raw = env_row
+            cap, status, env_expires_raw, cap_currency, pub_key_b64 = env_row
 
             if status != "active":
                 raise EnvelopeFrozenError(
@@ -303,27 +364,35 @@ class BudgetStore:
                     f"Envelope '{envelope_id}' expired at {env_expires_raw}."
                 )
 
-            # Idempotency short-circuit
+            # Idempotency short-circuit — return a re-signed receipt for the same draw.
+            # request_id is re-read from the stored row so the receipt is byte-identical
+            # to the one returned on the original call (§8.2: "return the existing receipt
+            # unchanged").
             existing = conn.execute(
-                "SELECT id, amount_reserved_minor_units, rail_quoted, issued_at, expires_at "
+                "SELECT id, request_id, amount_reserved_minor_units, rail_quoted, "
+                "issued_at, expires_at "
                 "FROM draws WHERE envelope_id = ? AND idempotency_key = ?",
                 (envelope_id, idempotency_key),
             ).fetchone()
             if existing is not None:
                 conn.execute("COMMIT")
-                ex_id, ex_amt, ex_rail, ex_issued, ex_exp = existing
-                return Draw(
-                    id=str(ex_id),
+                ex_id, ex_req_id, ex_amt, ex_rail, ex_issued, ex_exp = existing
+                private_key = self._keystore.load(envelope_id)
+                return _issue_receipt(
+                    private_key=private_key,
+                    public_key_b64=str(pub_key_b64),
+                    receipt_id=str(ex_id),
                     envelope_id=envelope_id,
+                    request_id=str(ex_req_id),
                     idempotency_key=idempotency_key,
                     amount_reserved_minor_units=int(ex_amt),
-                    rail_quoted=str(ex_rail),
+                    amount_reserved_currency=cap_currency,
+                    rail_quoted=cast(Rail, str(ex_rail)),
                     issued_at=datetime.fromisoformat(str(ex_issued)),
                     expires_at=datetime.fromisoformat(str(ex_exp)),
                 )
 
             # Cap check: reserved + settled must not exceed cap after this draw.
-            # Both 'reserved' and 'settled' draws count against the cap (§8.3).
             reserved: int = conn.execute(
                 "SELECT COALESCE(SUM(amount_reserved_minor_units), 0) FROM draws "
                 "WHERE envelope_id = ? AND state = 'reserved'",
@@ -343,7 +412,7 @@ class BudgetStore:
                     available_minor_units=available,
                 )
 
-            draw_id = uuid4().hex
+            draw_id = uuid7()
             conn.execute(
                 """
                 INSERT INTO draws (
@@ -364,11 +433,17 @@ class BudgetStore:
                 ),
             )
             conn.execute("COMMIT")
-            return Draw(
-                id=draw_id,
+
+            private_key = self._keystore.load(envelope_id)
+            return _issue_receipt(
+                private_key=private_key,
+                public_key_b64=str(pub_key_b64),
+                receipt_id=draw_id,
                 envelope_id=envelope_id,
+                request_id=request_id,
                 idempotency_key=idempotency_key,
                 amount_reserved_minor_units=amount_reserved_minor_units,
+                amount_reserved_currency=cap_currency,
                 rail_quoted=rail_quoted,
                 issued_at=now,
                 expires_at=expires,
@@ -404,17 +479,13 @@ class BudgetStore:
             (draw_id,),
         )
 
-    async def aclose(self) -> None:
-        async with self._lock:
-            await asyncio.to_thread(self._conn.close)
-
 
 # ---------------------------------------------------------------------------
 # ensure_default_envelope — seeds the 'default' row on first client construction
 # ---------------------------------------------------------------------------
 
 
-def ensure_default_envelope(db_path: Path) -> tuple[str, str]:
+def ensure_default_envelope(db_path: Path, keystore: EnvelopeKeystore) -> tuple[str, str]:
     """Idempotently insert the 'default' envelope row; return (id, cap_currency).
 
     Cap:            ROUTEWILER_DEFAULT_CAP_USD env var (default 100 USD → 10000 cents).
@@ -432,6 +503,13 @@ def ensure_default_envelope(db_path: Path) -> tuple[str, str]:
     now = datetime.now(UTC)
     expires_at = now + timedelta(days=_DEFAULT_TTL_DAYS)
 
+    # Generate keypair if it doesn't exist yet (idempotent).
+    if not keystore.exists(DEFAULT_ENVELOPE_ID):
+        private_key = keystore.create(DEFAULT_ENVELOPE_ID)
+        pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+    else:
+        pub_key_b64 = keystore.public_key_b64(DEFAULT_ENVELOPE_ID)
+
     row: _EnvelopeRow = {
         "id": DEFAULT_ENVELOPE_ID,
         "cap_minor_units": cap_minor,
@@ -441,8 +519,10 @@ def ensure_default_envelope(db_path: Path) -> tuple[str, str]:
         "status": "active",
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
+        "counter_public_key": pub_key_b64,
     }
 
+    snapshot_rates, snapshot_quality = _capture_fmv_snapshot("usd")
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     try:
         _ensure_budget_schema(conn)
@@ -451,15 +531,30 @@ def ensure_default_envelope(db_path: Path) -> tuple[str, str]:
             INSERT OR IGNORE INTO envelopes (
                 id, cap_minor_units, cap_currency,
                 allowed_rails, allowed_origins_glob,
-                status, created_at, expires_at
+                status, created_at, expires_at, counter_public_key
             ) VALUES (
                 :id, :cap_minor_units, :cap_currency,
                 :allowed_rails, :allowed_origins_glob,
-                :status, :created_at, :expires_at
+                :status, :created_at, :expires_at, :counter_public_key
             )
             """,
             row,
         )
+        # Write FMV snapshot only when the envelope row was actually inserted.
+        if conn.execute("SELECT changes()").fetchone()[0]:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO envelope_fmv_snapshots
+                    (envelope_id, captured_at, rates_json, quality_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    DEFAULT_ENVELOPE_ID,
+                    now.isoformat(),
+                    json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
+                    json.dumps(snapshot_quality),
+                ),
+            )
         conn.commit()
         result = conn.execute(
             "SELECT id, cap_currency FROM envelopes WHERE id = ?", (DEFAULT_ENVELOPE_ID,)
