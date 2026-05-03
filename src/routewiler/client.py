@@ -13,6 +13,8 @@ from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
 from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding.evm import EvmFundingSource
+from routewiler.policy.dsl import PolicyFile, compute_policy_hash, default_policy
+from routewiler.policy.engine import PolicyEngine
 from routewiler.rails.x402 import X402Adapter
 from routewiler.trace.emitter import TraceEmitter
 from routewiler.trace.sink_sqlite import SqliteTraceSink
@@ -45,7 +47,8 @@ class Routewiler:
 
     Args:
         funding:         One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
-        policy:          Reserved — policy DSL added in Week 10.
+        policy:          Optional policy file (``PolicyFile("policy.yaml")``). When omitted,
+                         the built-in default policy is used (prefer x402, no rules).
         budget_envelope: ID of the envelope to draw from. Defaults to ``"default"``.
                          The envelope must exist in the database (use BudgetStore.create_envelope
                          to create custom envelopes before constructing the client).
@@ -59,7 +62,7 @@ class Routewiler:
         self,
         *,
         funding: list[EvmFundingSource],
-        policy: None = None,
+        policy: PolicyFile | None = None,
         budget_envelope: str | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
@@ -67,6 +70,13 @@ class Routewiler:
         self._funding = funding
         self._trace_sink = trace_sink
         envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
+
+        # Build the policy engine and compute the hash regardless of trace_sink.
+        _policy_doc = policy.document if policy is not None else default_policy()
+        _policy_hash = (
+            policy.policy_hash if policy is not None else compute_policy_hash(_policy_doc)
+        )
+        policy_engine = PolicyEngine(_policy_doc)
 
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
@@ -97,6 +107,7 @@ class Routewiler:
                 envelope_currency=envelope_currency,
                 funding_label=_funding_label(funding),
                 url_mode=trace_sink.url_mode,
+                policy_hash=_policy_hash,
             )
 
         self._budget_store = budget_store
@@ -108,6 +119,7 @@ class Routewiler:
             budget_store=budget_store,
             envelope_id=envelope_id if budget_store is not None else None,
             envelope_currency=envelope_currency,
+            policy_engine=policy_engine,
         )
         self._http = httpx.AsyncClient(auth=auth)
 

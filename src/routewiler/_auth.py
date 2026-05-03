@@ -14,7 +14,12 @@ from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYME
 from routewiler.budgets.fmv import amount_to_envelope_minor_units
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
-from routewiler.errors import RailNotSupportedError
+from routewiler.errors import (
+    PolicyDeniedError,
+    PolicyMaxPerCallExceededError,
+    RailNotSupportedError,
+)
+from routewiler.policy.engine import PolicyEngine
 from routewiler.rails.base import RailAdapter
 
 if TYPE_CHECKING:
@@ -43,12 +48,14 @@ class RoutewilerAuth(httpx.Auth):
         budget_store: BudgetStore | None = None,
         envelope_id: str | None = None,
         envelope_currency: str | None = None,
+        policy_engine: PolicyEngine | None = None,
     ) -> None:
         self._adapters = adapters
         self._emitter = emitter
         self._budget_store = budget_store
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
+        self._policy_engine = policy_engine
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # Sync path not supported — callers must use AsyncClient.
@@ -111,6 +118,27 @@ class RoutewilerAuth(httpx.Auth):
                 )
             raise
 
+        # Phase 1b: policy evaluation — single evaluate() call covers both gates.
+        decision = (
+            self._policy_engine.evaluate(challenge) if self._policy_engine is not None else None
+        )
+        if decision is not None and decision.deny:
+            ts_end = datetime.now(UTC)
+            deny_err = PolicyDeniedError(
+                reason=decision.reason,
+                rule_name=decision.rule_name,
+            )
+            if self._emitter:
+                await self._emitter.emit_error(
+                    request=request,
+                    response=response,
+                    error=deny_err,
+                    challenge=challenge,
+                    ts_start=ts_start,
+                    ts_end=ts_end,
+                )
+            raise deny_err
+
         # Phase 2: budget draw — reserve capacity before committing to payment.
         receipt: DrawReceipt | None = None
         if (
@@ -128,6 +156,19 @@ class RoutewilerAuth(httpx.Auth):
                     self._envelope_currency,
                     snapshot_rates=snapshot,
                 )
+                # Policy max_per_call gate — checked after FMV conversion so the
+                # limit is expressed in the same currency as the envelope cap.
+                # Raises inside the try so the outer except handles emit.
+                if (
+                    decision is not None
+                    and decision.max_per_call_minor_units is not None
+                    and amount_envelope > decision.max_per_call_minor_units
+                ):
+                    raise PolicyMaxPerCallExceededError(
+                        rule_name=decision.rule_name,
+                        requested=amount_envelope,
+                        limit=decision.max_per_call_minor_units,
+                    )
                 receipt = await self._budget_store.draw(
                     envelope_id=self._envelope_id,
                     request_id=request_id,
