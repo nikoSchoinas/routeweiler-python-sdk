@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import httpx
@@ -24,6 +25,7 @@ except ModuleNotFoundError:
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
+from routewiler.budgets.local import BudgetStore, ensure_default_envelope
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
 from tests.fixtures.x402_mock_server import mock_x402_app as _mock_x402_app
@@ -137,3 +139,14 @@ def tmp_trace_sink(tmp_trace_db_path: Path) -> SqliteTraceSink:
 def mock_x402_app() -> httpx.ASGITransport:
     """httpx transport backed by the in-process mock x402 Starlette app."""
     return httpx.ASGITransport(app=_mock_x402_app)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+async def tmp_budget_store(tmp_trace_db_path: Path) -> AsyncGenerator[BudgetStore, None]:
+    """A BudgetStore backed by a fresh temp DB, with the default envelope seeded."""
+    # ensure_default_envelope creates the budget tables and seeds the default row.
+    # tmp_trace_sink is not needed here — its DDL (trace_events) is created separately.
+    ensure_default_envelope(tmp_trace_db_path)
+    store = BudgetStore(tmp_trace_db_path)
+    yield store
+    await store.aclose()

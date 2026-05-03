@@ -67,7 +67,7 @@ def _rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
 
 
 async def test_schema_migration_creates_tables(tmp_trace_db_path: Path) -> None:
-    """TraceSink.sqlite creates trace_events and envelopes tables on first open."""
+    """TraceSink.sqlite creates the trace_events table on first open."""
     sink = TraceSink.sqlite(tmp_trace_db_path)
     await sink.aclose()
 
@@ -78,7 +78,8 @@ async def test_schema_migration_creates_tables(tmp_trace_db_path: Path) -> None:
     }
     conn.close()
     assert "trace_events" in tables
-    assert "envelopes" in tables
+    # envelopes and draws are owned by BudgetStore, not SqliteTraceSink.
+    assert "envelopes" not in tables
 
 
 async def test_emit_writes_row(tmp_trace_db_path: Path) -> None:
@@ -126,14 +127,14 @@ async def test_emit_idempotent_on_duplicate_request_id(tmp_trace_db_path: Path) 
 
 
 async def test_passthrough_event_no_challenge(tmp_trace_db_path: Path) -> None:
-    """Passthrough TraceEvent (challenge=None, selected_rail='none') is stored correctly."""
+    """Passthrough TraceEvent (challenge=None, selected_rail=None) is stored correctly."""
     sink = TraceSink.sqlite(tmp_trace_db_path)
     event = TraceEvent(
         request_id="req_passthrough",
         envelope_id="default",
         policy_hash="none",
         challenge=None,
-        selected_rail="none",
+        selected_rail=None,
         funding_source="evm:base:usdc",
         payment=None,
         outcome=Outcome(http_status=200, service_delivered=True, service_latency_ms=5),
@@ -145,7 +146,7 @@ async def test_passthrough_event_no_challenge(tmp_trace_db_path: Path) -> None:
     await sink.aclose()
 
     rows = _rows(tmp_trace_db_path)
-    assert rows[0]["selected_rail"] == "none"
+    assert rows[0]["selected_rail"] is None
     payload = json.loads(rows[0]["payload"])
     assert payload["challenge"] is None
 

@@ -133,7 +133,7 @@ async def test_passthrough_writes_trace(
     mock_x402_app: httpx.ASGITransport,
     tmp_trace_db_path: Path,
 ) -> None:
-    """Non-402 response produces a passthrough trace with selected_rail='none'."""
+    """Non-402 response produces a passthrough trace with selected_rail=None."""
     client = _make_client(test_account, mock_x402_app, tmp_trace_db_path)
 
     resp = await client.get("http://mock/free")
@@ -144,7 +144,7 @@ async def test_passthrough_writes_trace(
     assert len(rows) == 1
     row = rows[0]
 
-    assert row["selected_rail"] == "none"
+    assert row["selected_rail"] is None
     assert row["http_status"] == 200
     assert row["service_delivered"] == 1
     payload = json.loads(row["payload"])
@@ -184,7 +184,7 @@ async def test_unsupported_rail_writes_error_trace(
     rows = _trace_rows(tmp_trace_db_path)
     assert len(rows) == 1
     row = rows[0]
-    assert row["selected_rail"] == "none"
+    assert row["selected_rail"] is None
     assert row["http_status"] == 402
     assert row["service_delivered"] == 0
     payload = json.loads(row["payload"])
