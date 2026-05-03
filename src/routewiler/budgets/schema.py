@@ -40,6 +40,8 @@ class BudgetEnvelope(RoutewilerModel):
     reserved_minor_units: int = 0
     settled_minor_units: int = 0
     status: EnvelopeStatus = "active"
+    # Ed25519 public key (base64-encoded); populated by budgets/keystore.py in Phase 1 W1.
+    counter_public_key: str = ""
 
 
 # ---------------------------------------------------------------------------

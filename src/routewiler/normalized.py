@@ -14,7 +14,7 @@ from routewiler._base import RoutewilerModel
 # Shared type aliases
 # ---------------------------------------------------------------------------
 
-Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt", "none"]
+Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
 Scheme = Literal["exact", "upto", "stream"]
 UrlEncoding = Literal["raw", "hash", "drop"]
 
