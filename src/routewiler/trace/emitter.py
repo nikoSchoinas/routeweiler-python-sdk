@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 
+from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD as _HTTP_CLIENT_ERROR_THRESHOLD
 from routewiler.trace.schema import (
     FmvQuality,
     Outcome,
@@ -41,8 +42,6 @@ _STABLECOIN_PEG: dict[str, str] = {
 _STABLECOIN_DECIMALS = 6  # USDC and EURC both use 6
 
 _POLICY_HASH_PLACEHOLDER = "none"  # replaced by real SHA-256 in Week 10
-
-_HTTP_CLIENT_ERROR_THRESHOLD = 400  # HTTP status codes below this are considered successful
 
 
 class TraceEmitter:
@@ -123,7 +122,7 @@ class TraceEmitter:
             envelope_id=self._envelope_id,
             policy_hash=_POLICY_HASH_PLACEHOLDER,
             challenge=None,
-            selected_rail="none",
+            selected_rail=None,
             funding_source=self._funding_label,
             payment=None,
             outcome=outcome,
@@ -156,7 +155,7 @@ class TraceEmitter:
         )
         if challenge is not None:
             challenge = _apply_url_mode(challenge, self._url_mode)
-        rail = challenge.rail if challenge is not None else "none"
+        rail = challenge.rail if challenge is not None else None
         event = TraceEvent(
             request_id=_request_id(),
             envelope_id=self._envelope_id,

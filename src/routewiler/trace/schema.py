@@ -71,7 +71,7 @@ class TraceEvent(RoutewilerModel):
     envelope_id: str
     policy_hash: str
     challenge: NormalizedChallenge | None  # None for passthrough and pre-parse error traces
-    selected_rail: Rail
+    selected_rail: Rail | None  # None for passthrough and pre-rail-selection error traces
     facilitator: str | None = None
     funding_source: str
     payment: PaymentDetails | None

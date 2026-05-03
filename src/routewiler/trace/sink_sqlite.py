@@ -12,21 +12,10 @@ if TYPE_CHECKING:
     from routewiler.trace.schema import TraceEvent
 
 _DDL = """
-CREATE TABLE IF NOT EXISTS envelopes (
-    id                  TEXT PRIMARY KEY,
-    cap_minor_units     INTEGER NOT NULL,
-    cap_currency        TEXT    NOT NULL,
-    allowed_rails       TEXT    NOT NULL,   -- JSON array
-    allowed_origins_glob TEXT   NOT NULL,   -- JSON array
-    status              TEXT    NOT NULL,
-    created_at          TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at          TEXT    NOT NULL    -- ISO-8601 UTC
-);
-
 CREATE TABLE IF NOT EXISTS trace_events (
     request_id              TEXT    PRIMARY KEY,
     envelope_id             TEXT    NOT NULL,
-    selected_rail           TEXT    NOT NULL,
+    selected_rail           TEXT,               -- NULL for passthrough / pre-rail-selection errors
     facilitator             TEXT,
     http_status             INTEGER NOT NULL,
     service_delivered       INTEGER NOT NULL,   -- 0 | 1
