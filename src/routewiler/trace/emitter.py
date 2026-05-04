@@ -20,6 +20,7 @@ from routewiler.trace.schema import (
 )
 
 if TYPE_CHECKING:
+    from routewiler.credentials.schema import CredentialRecord, ManualHoldReason
     from routewiler.normalized import NormalizedChallenge, Rail, UrlEncoding
     from routewiler.rails.base import PaymentResult, SettlementInfo
     from routewiler.trace.sink_sqlite import SqliteTraceSink
@@ -120,6 +121,40 @@ class TraceEmitter:
             reconciliation=Reconciliation(vat_applicable=False),
             timestamp_start=ts_start,
             timestamp_end=ts_end,
+        )
+        await self._sink.emit(event)
+
+    async def emit_credential_manual_hold(
+        self,
+        *,
+        credential: CredentialRecord,
+        reason: ManualHoldReason,
+        ts: datetime,
+    ) -> None:
+        """Emit a trace event when a credential enters MANUAL_HOLD terminal state.
+
+        The hosted dashboard queries `payload->>'credential_state' = 'manual_hold'`
+        (§6.6) to populate the manual-hold tab.
+        """
+        event = TraceEvent(
+            request_id=_request_id(),
+            agent_id=self._agent_id,
+            envelope_id=self._envelope_id,
+            policy_hash=self._policy_hash,
+            challenge=None,
+            selected_rail=credential.rail,
+            funding_source=self._funding_label,
+            payment=None,
+            outcome=Outcome(
+                http_status=0,
+                service_delivered=False,
+                service_latency_ms=0,
+            ),
+            reconciliation=Reconciliation(vat_applicable=False),
+            timestamp_start=ts,
+            timestamp_end=ts,
+            credential_id=credential.credential_id,
+            credential_state="manual_hold",
         )
         await self._sink.emit(event)
 
