@@ -11,6 +11,8 @@ import httpx
 from routewiler._auth import RoutewilerAuth
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
+from routewiler.credentials.recovery import CredentialRecoverer, NoOpRecoveryStrategy
+from routewiler.credentials.store import CredentialStore
 from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
@@ -99,6 +101,8 @@ class Routewiler:
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
         envelope_currency: str | None = None
+        credential_store: CredentialStore | None = None
+        recoverer: CredentialRecoverer | None = None
 
         if trace_sink is not None:
             keystore = (
@@ -129,7 +133,15 @@ class Routewiler:
                 agent_id=agent_id,
             )
 
+            credential_store = CredentialStore(trace_sink.db_path)
+            recoverer = CredentialRecoverer(
+                store=credential_store,
+                strategy=NoOpRecoveryStrategy(),
+                emitter=emitter,
+            )
+
         self._budget_store = budget_store
+        self._credential_store = credential_store
         self._emitter = emitter
         adapters = _build_adapters(funding)
         router = Router(adapters)
@@ -145,6 +157,8 @@ class Routewiler:
             envelope_id=envelope_id if budget_store is not None else None,
             envelope_currency=envelope_currency,
             policy_engine=policy_engine,
+            credential_store=credential_store,
+            recoverer=recoverer,
         )
         self._http = httpx.AsyncClient(auth=auth)
 
@@ -207,6 +221,8 @@ class Routewiler:
         await self._http.aclose()
         if self._budget_store is not None:
             await self._budget_store.aclose()
+        if self._credential_store is not None:
+            await self._credential_store.aclose()
         if self._trace_sink is not None:
             await self._trace_sink.aclose()
 

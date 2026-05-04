@@ -14,6 +14,7 @@ import httpx
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
+from routewiler.credentials.schema import CredentialState
 from routewiler.errors import (
     NoFeasibleRailError,
     PolicyDeniedError,
@@ -26,6 +27,9 @@ from routewiler.routing.router import Router
 from routewiler.routing.sticky import StickyCache, StickyKey
 
 if TYPE_CHECKING:
+    from routewiler.credentials.recovery import CredentialRecoverer
+    from routewiler.credentials.schema import CredentialRecord
+    from routewiler.credentials.store import CredentialStore
     from routewiler.normalized import Rail
     from routewiler.trace.emitter import TraceEmitter
 
@@ -56,6 +60,8 @@ class RoutewilerAuth(httpx.Auth):
         envelope_id: str | None = None,
         envelope_currency: str | None = None,
         policy_engine: PolicyEngine | None = None,
+        credential_store: CredentialStore | None = None,
+        recoverer: CredentialRecoverer | None = None,
     ) -> None:
         self._router = router
         self._sticky_cache = sticky_cache
@@ -67,6 +73,8 @@ class RoutewilerAuth(httpx.Auth):
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
         self._policy_engine = policy_engine
+        self._credential_store = credential_store
+        self._recoverer = recoverer
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # Sync path not supported — callers must use AsyncClient.
@@ -233,6 +241,25 @@ class RoutewilerAuth(httpx.Auth):
                 attempt += 1
                 continue
 
+            # -----------------------------------------------------------------
+            # Persist credential before the retry so a crash mid-retry leaves a
+            # recoverable PERSISTED row (§9.2 — "before the retry is attempted").
+            # -----------------------------------------------------------------
+            credential_record: CredentialRecord | None = None
+            if payment_result.credential is not None and self._credential_store is not None:
+                try:
+                    credential_record = await self._credential_store.persist(
+                        request_id=request_id,
+                        rail=adapter.rail,
+                        challenge_url=str(request.url),
+                        payload=payment_result.credential,
+                        expires_at=challenge.expires_at,
+                    )
+                except Exception:
+                    _log.exception(
+                        "Credential persistence failed; retry proceeds without recovery tracking."
+                    )
+
             # Build the retry request, adding the payment header if present.
             retry_headers = dict(request.headers)
             if payment_result.header_name is not None and payment_result.header_value is not None:
@@ -260,6 +287,13 @@ class RoutewilerAuth(httpx.Auth):
                         _log.exception(
                             "Rollback failed after transport error; draw will expire via reaper."
                         )
+                if credential_record is not None and self._recoverer is not None:
+                    try:
+                        await self._recoverer.attempt_recovery(
+                            credential_record.credential_id, last_response=None
+                        )
+                    except Exception:
+                        _log.exception("Credential recovery attempt failed after transport error.")
                 ts_end = datetime.now(UTC)
                 if self._emitter:
                     await self._emitter.emit_error(
@@ -304,6 +338,32 @@ class RoutewilerAuth(httpx.Auth):
                         _log.exception(
                             "Rollback failed after error response; draw will expire via reaper."
                         )
+
+            # -----------------------------------------------------------------
+            # Credential lifecycle transitions (independent of budget enforcement).
+            # -----------------------------------------------------------------
+            if credential_record is not None:
+                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+                    # 2xx: credential is consumed — mark REDEEMED.
+                    if self._credential_store is not None:
+                        try:
+                            await self._credential_store.transition(
+                                credential_record.credential_id,
+                                to_state=CredentialState.REDEEMED,
+                            )
+                        except Exception:
+                            _log.exception(
+                                "Credential REDEEMED transition failed; credential stays PERSISTED."
+                            )
+                elif self._recoverer is not None:
+                    # 4xx/5xx: attempt recovery (NoOp → MANUAL_HOLD in Week 10).
+                    try:
+                        await self._recoverer.attempt_recovery(
+                            credential_record.credential_id,
+                            last_response=final_response,
+                        )
+                    except Exception:
+                        _log.exception("Credential recovery attempt failed.")
 
             # Update sticky cache on successful payment.
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
