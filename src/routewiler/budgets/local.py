@@ -16,6 +16,7 @@ from typing import TypedDict, cast
 
 from routewiler._constants import CLOCK_SKEW_BUFFER_SECONDS, REAPER_INTERVAL_SECONDS
 from routewiler.budgets.fmv import capture_fmv_snapshot as _capture_fmv_snapshot
+from routewiler.budgets.fmv_provider import FmvProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.receipts import issue as _issue_receipt
 from routewiler.budgets.receipts import uuid7
@@ -25,6 +26,7 @@ from routewiler.errors import (
     EnvelopeExpiredError,
     EnvelopeFrozenError,
     EnvelopeNotFoundError,
+    FmvUnavailableError,
 )
 from routewiler.normalized import Rail
 
@@ -133,10 +135,12 @@ class BudgetStore:
         keystore: EnvelopeKeystore,
         *,
         reaper_interval_seconds: float = REAPER_INTERVAL_SECONDS,
+        fmv_provider: FmvProvider | None = None,
     ) -> None:
         self._db_path = db_path
         self._keystore = keystore
         self._reaper_interval_seconds = reaper_interval_seconds
+        self._fmv_provider = fmv_provider
         self._conn = sqlite3.connect(
             str(db_path), check_same_thread=False, isolation_level=None, timeout=10.0
         )
@@ -244,7 +248,21 @@ class BudgetStore:
         private_key = self._keystore.create(envelope_id)
         pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
 
-        snapshot_rates, snapshot_quality = _capture_fmv_snapshot(cap_currency)
+        sats_rates: dict[str, Decimal] | None = None
+        if self._fmv_provider is not None:
+            try:
+                rate = await self._fmv_provider.fetch_btc_to(cap_currency)
+                sats_rates = {f"sats->{cap_currency.lower()}": rate}
+            except FmvUnavailableError:
+                _log.warning(
+                    "FMV provider unavailable at envelope creation; "
+                    "sats→%s rate omitted from snapshot.",
+                    cap_currency,
+                )
+
+        snapshot_rates, snapshot_quality = _capture_fmv_snapshot(
+            cap_currency, sats_rates=sats_rates
+        )
         row: _EnvelopeRow = {
             "id": envelope_id,
             "cap_minor_units": cap_minor_units,
@@ -521,7 +539,7 @@ def ensure_default_envelope(db_path: Path, keystore: EnvelopeKeystore) -> tuple[
         "id": DEFAULT_ENVELOPE_ID,
         "cap_minor_units": cap_minor,
         "cap_currency": "usd",
-        "allowed_rails": json.dumps(["x402", "l402", "mpp-tempo", "mpp-spt"]),
+        "allowed_rails": json.dumps(["x402"]),  # expanded per-rail as adapters are registered
         "allowed_origins_glob": json.dumps(["*"]),
         "status": "active",
         "created_at": now.isoformat(),
