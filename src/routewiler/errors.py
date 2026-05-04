@@ -107,3 +107,15 @@ class PolicyMaxPerCallExceededError(PaymentError):
 
 class NoFeasibleRailError(PaymentError):
     """No rail remains after policy, funding, and failover filters are applied."""
+
+
+class ChallengeExpiredError(ChallengeParseError):
+    """The BOLT-11 invoice or L402 macaroon `valid_until` caveat is already expired."""
+
+
+class InvoicePaymentError(PaymentError):
+    """Lightning node returned a terminal payment failure (no_route, channel offline, etc.)."""
+
+
+class PreimageMismatchError(PaymentError):
+    """sha256(preimage) != invoice payment_hash; the node returned a corrupt preimage."""
