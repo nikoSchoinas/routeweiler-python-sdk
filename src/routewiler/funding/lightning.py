@@ -60,9 +60,7 @@ class LightningFundingSource:
     async def create(
         cls,
         client: LightningNodeClient,
-        network: Literal[
-            "bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"
-        ],
+        network: Literal["bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"],
         *,
         max_fee_msat: int = 1000,
     ) -> LightningFundingSource:
@@ -75,9 +73,7 @@ class LightningFundingSource:
             max_fee_msat=max_fee_msat,
         )
 
-    async def pay_invoice(
-        self, bolt11: str, *, max_fee_msat: int | None = None
-    ) -> bytes:
+    async def pay_invoice(self, bolt11: str, *, max_fee_msat: int | None = None) -> bytes:
         """Delegate to the underlying client, applying the per-source fee cap."""
         fee = max_fee_msat if max_fee_msat is not None else self.max_fee_msat
         return await self.client.pay_invoice(bolt11, max_fee_msat=fee)

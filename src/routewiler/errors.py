@@ -119,3 +119,24 @@ class InvoicePaymentError(PaymentError):
 
 class PreimageMismatchError(PaymentError):
     """sha256(preimage) != invoice payment_hash; the node returned a corrupt preimage."""
+
+
+class CredentialError(PaymentError):
+    """Base for credential store failures."""
+
+
+class CredentialNotFoundError(CredentialError):
+    """No credential row matches the given id."""
+
+
+class InvalidCredentialTransitionError(CredentialError):
+    """Attempted state transition is not allowed by the §9.1 state machine."""
+
+
+class CredentialManualHoldError(CredentialError):
+    """Raised when a credential reaches MANUAL_HOLD terminal state."""
+
+    def __init__(self, credential_id: str, reason: str) -> None:
+        super().__init__(f"Credential '{credential_id}' entered MANUAL_HOLD (reason={reason!r}).")
+        self.credential_id = credential_id
+        self.reason = reason
