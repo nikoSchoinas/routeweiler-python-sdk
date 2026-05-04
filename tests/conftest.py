@@ -22,13 +22,18 @@ try:
         load_dotenv(_ENV_FILE, override=False)
 except ModuleNotFoundError:
     pass
+
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore, ensure_default_envelope
 from routewiler.funding.evm import EvmFundingSource
+from routewiler.funding.lightning import LightningFundingSource
 from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
+from tests.fixtures.fake_lnd import FakeLndClient
+from tests.fixtures.l402_mock_server import MOCK_PREIMAGE
+from tests.fixtures.l402_mock_server import mock_l402_app as _mock_l402_app
 from tests.fixtures.x402_mock_server import mock_x402_app as _mock_x402_app
 
 # ---------------------------------------------------------------------------
@@ -140,6 +145,22 @@ def tmp_trace_sink(tmp_trace_db_path: Path) -> SqliteTraceSink:
 def mock_x402_app() -> httpx.ASGITransport:
     """httpx transport backed by the in-process mock x402 Starlette app."""
     return httpx.ASGITransport(app=_mock_x402_app)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def mock_l402_app() -> httpx.ASGITransport:
+    """httpx transport backed by the in-process mock L402 Starlette app."""
+    return httpx.ASGITransport(app=_mock_l402_app)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def lightning_funding() -> LightningFundingSource:
+    """A LightningFundingSource wired to a FakeLndClient for unit tests."""
+    return LightningFundingSource(
+        client=FakeLndClient(preimage=MOCK_PREIMAGE),
+        network="bitcoin-regtest",
+        node_pubkey="03" + "ab" * 32,
+    )
 
 
 @pytest.fixture
