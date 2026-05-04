@@ -103,3 +103,7 @@ class PolicyMaxPerCallExceededError(PaymentError):
         self.rule_name = rule_name
         self.requested = requested
         self.limit = limit
+
+
+class NoFeasibleRailError(PaymentError):
+    """No rail remains after policy, funding, and failover filters are applied."""
