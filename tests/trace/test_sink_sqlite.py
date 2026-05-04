@@ -41,7 +41,7 @@ def _make_event(request_id: str = "req_001") -> TraceEvent:
     return TraceEvent(
         request_id=request_id,
         envelope_id="default",
-        policy_hash="none",
+        policy_hash="sha256:" + "0" * 64,
         challenge=challenge,
         selected_rail="x402",
         funding_source="evm:base-sepolia:usdc",
@@ -132,7 +132,7 @@ async def test_passthrough_event_no_challenge(tmp_trace_db_path: Path) -> None:
     event = TraceEvent(
         request_id="req_passthrough",
         envelope_id="default",
-        policy_hash="none",
+        policy_hash="sha256:" + "0" * 64,
         challenge=None,
         selected_rail=None,
         funding_source="evm:base:usdc",

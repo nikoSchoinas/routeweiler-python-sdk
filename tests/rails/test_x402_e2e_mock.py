@@ -128,7 +128,7 @@ async def test_happy_path_returns_200_and_writes_trace(
 
 
 # ---------------------------------------------------------------------------
-# Passthrough: 200 direct → trace with selected_rail="none"
+# Passthrough: 200 direct → trace with selected_rail=None
 # ---------------------------------------------------------------------------
 
 

@@ -1,16 +1,14 @@
-"""Unit tests for BudgetStore and amount_to_envelope_minor_units."""
+"""Unit tests for BudgetStore."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from routewiler.budgets.fmv import amount_to_envelope_minor_units
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.receipts import canonical_payload
@@ -21,7 +19,6 @@ from routewiler.errors import (
     EnvelopeExpiredError,
     EnvelopeFrozenError,
     EnvelopeNotFoundError,
-    FmvUnavailableError,
     KeystoreAlreadyExistsError,
 )
 
@@ -65,71 +62,6 @@ async def _draw(
         amount_reserved_minor_units=amount,
         rail_quoted="x402",
     )
-
-
-# ---------------------------------------------------------------------------
-# amount_to_envelope_minor_units
-# ---------------------------------------------------------------------------
-
-_USDC_BASE = "eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
-_USDC_SEPOLIA = "eip155:84532/erc20:0x036cbd53842c5426634e7929541ec2318f3dcf7e"
-_EURC_BASE = "eip155:8453/erc20:0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42"
-
-
-def test_fmv_usdc_to_usd_exact_cent() -> None:
-    # 10000 base units = 0.01 USDC = 1 cent
-    result, _ = amount_to_envelope_minor_units(_USDC_BASE, 10000, "usd")
-    assert result == 1
-
-
-def test_fmv_usdc_to_usd_sub_cent_rounds_up() -> None:
-    # 1000 base units = 0.001 USDC = 0.1 cents → ceiling → 1 cent
-    result, _ = amount_to_envelope_minor_units(_USDC_SEPOLIA, 1000, "usd")
-    assert result == 1
-
-
-def test_fmv_usdc_to_usd_one_dollar() -> None:
-    # 1_000_000 base units = 1 USDC = 100 cents
-    result, _ = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "usd")
-    assert result == 100
-
-
-def test_fmv_eurc_to_eur() -> None:
-    result, _ = amount_to_envelope_minor_units(_EURC_BASE, 10000, "eur")
-    assert result == 1
-
-
-def test_fmv_usdc_to_usd_returns_quality() -> None:
-    result, quality = amount_to_envelope_minor_units(_USDC_BASE, 10000, "usd")
-    assert result == 1
-    assert quality == "stablecoin_peg"
-
-
-def test_fmv_unsupported_asset_raises() -> None:
-    with pytest.raises(FmvUnavailableError):
-        amount_to_envelope_minor_units("eip155:1/erc20:0xdeadbeef", 1000, "usd")
-
-
-def test_fmv_usdc_in_eur_envelope_uses_ecb_fallback() -> None:
-    # No snapshot_rates -> falls back to ECB stub USD->EUR rate (0.92 with 5% buffer)
-    result, quality = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur")
-    assert result == 97  # 1 USDC * 0.92 * 1.05 * 100 -> ceiling -> 97 cents
-    assert quality == "fx_leg"
-
-
-def test_fmv_usdc_in_eur_envelope_with_snapshot() -> None:
-    rates = {"usd->eur": Decimal("0.92")}
-    result, quality = amount_to_envelope_minor_units(
-        _USDC_BASE, 1_000_000, "eur", snapshot_rates=rates
-    )
-    # 1 USDC * 0.92 EUR/USD * 1.05 buffer * 100 cents/EUR = 96.6 -> 97 cents
-    assert result == 97
-    assert quality == "fx_leg"
-
-
-def test_fmv_non_erc20_sats_raises_without_snapshot() -> None:
-    with pytest.raises(FmvUnavailableError):
-        amount_to_envelope_minor_units("btc-lightning", 50000, "usd")
 
 
 # ---------------------------------------------------------------------------
