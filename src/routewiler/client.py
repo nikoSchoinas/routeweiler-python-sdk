@@ -11,7 +11,9 @@ import httpx
 from routewiler._auth import RoutewilerAuth
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
-from routewiler.credentials.recovery import CredentialRecoverer, NoOpRecoveryStrategy
+from routewiler.credentials.manifest_strategy import ManifestRecoveryStrategy
+from routewiler.credentials.manifests.loader import ManifestRegistry
+from routewiler.credentials.recovery import CredentialRecoverer, RecoveryStrategy
 from routewiler.credentials.store import CredentialStore
 from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding import FundingSource
@@ -81,9 +83,12 @@ class Routewiler:
         keystore_root: Path | None = None,
         agent_id: str | None = None,
         session_id: str | None = None,
+        recovery_strategy: RecoveryStrategy | None = None,
+        manifest_paths: list[Path] | None = None,
     ) -> None:
         self._funding = funding
         self._trace_sink = trace_sink
+        self._recovery_http: httpx.AsyncClient | None = None
         envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
 
         # Build the policy engine and compute the hash regardless of trace_sink.
@@ -134,9 +139,29 @@ class Routewiler:
             )
 
             credential_store = CredentialStore(trace_sink.db_path)
+
+            # Build the recovery strategy: user-supplied takes precedence.
+            # Default: ManifestRecoveryStrategy with bundled manifests (or overridden paths).
+            # A separate plain httpx.AsyncClient is used so recovery calls never trigger
+            # Routewiler's own auth flow (we're replaying an existing credential, not paying).
+            _effective_strategy: RecoveryStrategy
+            if recovery_strategy is not None:
+                _effective_strategy = recovery_strategy
+            else:
+                self._recovery_http = httpx.AsyncClient()
+                registry = (
+                    ManifestRegistry.from_paths(manifest_paths)
+                    if manifest_paths
+                    else ManifestRegistry.from_bundled()
+                )
+                _effective_strategy = ManifestRecoveryStrategy(
+                    registry=registry,
+                    client=self._recovery_http,
+                )
+
             recoverer = CredentialRecoverer(
                 store=credential_store,
-                strategy=NoOpRecoveryStrategy(),
+                strategy=_effective_strategy,
                 emitter=emitter,
             )
 
@@ -173,8 +198,18 @@ class Routewiler:
         Any response that does not carry that flag gets a passthrough trace here.
         Errors raised by auth_flow (RailNotSupportedError, SigningError, etc.) have
         already been traced by auth_flow, so we let them propagate without re-tracing.
+
+        If split-URL recovery succeeded, the auth_flow stashes the recovered 2xx on
+        ``extensions["routewiler_recovered_response"]``.  We substitute it here so the
+        caller receives the actual fulfilment response, not the original 4xx.
         """
         resp: httpx.Response = await coro
+        # Substitute the recovered response if split-URL recovery succeeded.
+        recovered: httpx.Response | None = resp.extensions.pop(
+            "routewiler_recovered_response", None
+        )
+        if recovered is not None:
+            resp = recovered
         ts_end = datetime.now(UTC)
         if self._emitter and not resp.extensions.get("routewiler_emitted"):
             await self._emitter.emit_passthrough(
@@ -219,6 +254,8 @@ class Routewiler:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+        if self._recovery_http is not None:
+            await self._recovery_http.aclose()
         if self._budget_store is not None:
             await self._budget_store.aclose()
         if self._credential_store is not None:

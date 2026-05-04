@@ -317,10 +317,56 @@ class RoutewilerAuth(httpx.Auth):
             final_response.extensions["routewiler_emitted"] = True
 
             # -----------------------------------------------------------------
-            # Phase 4: confirm or rollback the draw based on the final HTTP status.
+            # Phase 4a: Credential lifecycle transitions.
+            # Split-URL recovery runs here — BEFORE the budget confirm/rollback —
+            # so that a successful recovery substitutes the canonical response that
+            # drives the budget decision (confirm on 2xx, rollback on 4xx/5xx).
+            # CredentialRecoverer handles all state transitions internally:
+            #   PERSISTED → RECOVERING → REDEEMED | MANUAL_HOLD
+            # -----------------------------------------------------------------
+            # ``budget_response`` is the response we use for budget and trace.
+            # A successful split-URL recovery replaces it with the recovered 2xx.
+            budget_response = final_response
+
+            if credential_record is not None:
+                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+                    # Direct 2xx from the original retry — credential is consumed.
+                    if self._credential_store is not None:
+                        try:
+                            await self._credential_store.transition(
+                                credential_record.credential_id,
+                                to_state=CredentialState.REDEEMED,
+                            )
+                        except Exception:
+                            _log.exception(
+                                "Credential REDEEMED transition failed; credential stays PERSISTED."
+                            )
+                elif self._recoverer is not None:
+                    # 4xx/5xx: attempt split-URL recovery.
+                    # On success the recoverer transitions REDEEMED internally.
+                    # On exhaustion it transitions MANUAL_HOLD and emits a trace event.
+                    try:
+                        outcome = await self._recoverer.attempt_recovery(
+                            credential_record.credential_id,
+                            last_response=final_response,
+                        )
+                        if outcome.succeeded and outcome.response is not None:
+                            # Tag the recovered response so _traced() does not double-emit.
+                            outcome.response.extensions["routewiler_emitted"] = True
+                            # Signal client._traced() to return this response to the caller.
+                            final_response.extensions["routewiler_recovered_response"] = (
+                                outcome.response
+                            )
+                            # Use the recovered 2xx for budget confirm and trace emission.
+                            budget_response = outcome.response
+                    except Exception:
+                        _log.exception("Credential recovery attempt failed.")
+
+            # -----------------------------------------------------------------
+            # Phase 4b: confirm or rollback the draw based on post-recovery status.
             # -----------------------------------------------------------------
             if receipt is not None and self._budget_store is not None:
-                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+                if budget_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
                     # Use the reserved amount as the settled amount.  For x402 'exact' scheme
                     # reserved == settled by definition.  For 'upto' scheme this is
                     # conservative (may count more than actually settled); a proper FMV
@@ -339,47 +385,22 @@ class RoutewilerAuth(httpx.Auth):
                             "Rollback failed after error response; draw will expire via reaper."
                         )
 
-            # -----------------------------------------------------------------
-            # Credential lifecycle transitions (independent of budget enforcement).
-            # -----------------------------------------------------------------
-            if credential_record is not None:
-                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-                    # 2xx: credential is consumed — mark REDEEMED.
-                    if self._credential_store is not None:
-                        try:
-                            await self._credential_store.transition(
-                                credential_record.credential_id,
-                                to_state=CredentialState.REDEEMED,
-                            )
-                        except Exception:
-                            _log.exception(
-                                "Credential REDEEMED transition failed; credential stays PERSISTED."
-                            )
-                elif self._recoverer is not None:
-                    # 4xx/5xx: attempt recovery (NoOp → MANUAL_HOLD in Week 10).
-                    try:
-                        await self._recoverer.attempt_recovery(
-                            credential_record.credential_id,
-                            last_response=final_response,
-                        )
-                    except Exception:
-                        _log.exception("Credential recovery attempt failed.")
-
             # Update sticky cache on successful payment.
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
 
             if self._emitter:
-                settlement = await adapter.confirm(payment_result, final_response)
+                settlement = await adapter.confirm(payment_result, budget_response)
                 await self._emitter.emit_paid(
                     request=request,
                     challenge=challenge,
                     payment_result=payment_result,
                     settlement=settlement,
-                    final_response=final_response,
+                    final_response=budget_response,
                     ts_start=ts_start,
                     ts_retry=ts_retry,
                     ts_end=ts_end,
                     fallback_from=choice.fallback_from,
+                    snapshot_rates=fmv_snapshot,
                 )
 
             return  # success — exit the failover loop
