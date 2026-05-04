@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from routewiler.errors import NoFeasibleRailError, PolicyDeniedError, RailNotSupportedError
+from routewiler.policy.dsl import DefaultBlock, PolicyDocument
 from routewiler.policy.engine import PolicyDecision, PolicyEngine
 from routewiler.routing.router import (
-    DEFAULT_LATENCY_P50_MS,
-    DEFAULT_RELIABILITY,
     DEFAULT_WEIGHTS,
     Router,
     ScoringWeights,
@@ -34,10 +32,9 @@ def _request(url: str = "http://mock/resource") -> httpx.Request:
 
 def _policy_engine_prefer(*rails: str) -> PolicyEngine:
     """Build a PolicyEngine that returns prefer=rails for any challenge."""
-    from routewiler.policy.dsl import PolicyDocument, DefaultBlock
-    from routewiler.policy.engine import PolicyEngine
-
-    doc = PolicyDocument(version=1, default=DefaultBlock(rail=rails[0] if rails else "x402"), rules=[])
+    doc = PolicyDocument(
+        version=1, default=DefaultBlock(rail=rails[0] if rails else "x402"), rules=[]
+    )
 
     class _Fixed(PolicyEngine):
         def evaluate(self, challenge):  # type: ignore[override]
@@ -53,9 +50,6 @@ def _policy_engine_prefer(*rails: str) -> PolicyEngine:
 
 
 def _deny_engine() -> PolicyEngine:
-    from routewiler.policy.dsl import PolicyDocument, DefaultBlock
-    from routewiler.policy.engine import PolicyEngine
-
     doc = PolicyDocument(version=1, default=DefaultBlock(rail="x402"), rules=[])
 
     class _Deny(PolicyEngine):
@@ -273,7 +267,9 @@ class TestRouterPolicyFiltering:
             await router.decide(
                 request=_request(),
                 response=_402_response(),
-                policy_engine=_policy_engine_prefer("l402"),  # only l402 preferred, but x402 available
+                policy_engine=_policy_engine_prefer(
+                    "l402"
+                ),  # only l402 preferred, but x402 available
                 funding=[],
                 envelope_currency=None,
                 fmv_snapshot=None,

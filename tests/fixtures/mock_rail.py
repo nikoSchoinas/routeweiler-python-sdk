@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, Sequence
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 
 from routewiler.funding.evm import EvmFundingSource
-
-# Sentinel object returned by match_funding when the test does not supply a real
-# EvmFundingSource.  The router only checks truthiness (None vs. non-None), so
-# any non-None value satisfies the contract.
-_MOCK_FUNDING_SENTINEL: Any = MagicMock(name="MockFundingSource")
 from routewiler.normalized import (
     NormalizedChallenge,
     Payee,
@@ -24,6 +20,11 @@ from routewiler.normalized import (
     X402RailRaw,
 )
 from routewiler.rails.base import RailAdapter, SettlementInfo
+
+# Sentinel object returned by match_funding when the test does not supply a real
+# EvmFundingSource.  The router only checks truthiness (None vs. non-None), so
+# any non-None value satisfies the contract.
+_MOCK_FUNDING_SENTINEL: Any = MagicMock(name="MockFundingSource")
 
 
 def make_mock_challenge(

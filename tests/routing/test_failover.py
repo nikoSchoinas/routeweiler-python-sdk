@@ -11,18 +11,20 @@ Uses MockRailAdapter to simulate sign failures and verifies that:
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from eth_account import Account
 
 from routewiler._auth import RoutewilerAuth, _make_idempotency_key
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore, ensure_default_envelope
-from routewiler.errors import NoFeasibleRailError, SigningError
+from routewiler.errors import NoFeasibleRailError
+from routewiler.funding.evm import EvmFundingSource
 from routewiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
 from routewiler.policy.engine import PolicyEngine
 from routewiler.routing.router import Router
@@ -59,25 +61,25 @@ def _x402_first_policy() -> PolicyEngine:
 
 
 def _402_response() -> httpx.Response:
-    import base64
-    import json as _json
     challenge = {
-        "accepts": [{
-            "scheme": "exact",
-            "network": "base-sepolia",
-            "maxAmountRequired": "1000",
-            "resource": "http://mock/resource",
-            "description": "",
-            "mimeType": "application/json",
-            "payTo": "0xdeadbeef",
-            "maxTimeoutSeconds": 60,
-            "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
-            "extra": {"nonce": "0xabc", "validBefore": 9_999_999_999, "validAfter": 0},
-        }]
+        "accepts": [
+            {
+                "scheme": "exact",
+                "network": "base-sepolia",
+                "maxAmountRequired": "1000",
+                "resource": "http://mock/resource",
+                "description": "",
+                "mimeType": "application/json",
+                "payTo": "0xdeadbeef",
+                "maxTimeoutSeconds": 60,
+                "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+                "extra": {"nonce": "0xabc", "validBefore": 9_999_999_999, "validAfter": 0},
+            }
+        ]
     }
     return httpx.Response(
         402,
-        headers={"PAYMENT-REQUIRED": base64.b64encode(_json.dumps(challenge).encode()).decode()},
+        headers={"PAYMENT-REQUIRED": base64.b64encode(json.dumps(challenge).encode()).decode()},
     )
 
 
@@ -111,10 +113,6 @@ def _build_auth(
     *,
     policy_engine: PolicyEngine | None = None,
 ) -> tuple[RoutewilerAuth, StickyCache]:
-    from eth_account import Account
-
-    from routewiler.funding.evm import EvmFundingSource
-
     key = EnvelopeKeystore(root=db_path.parent / "keys")
     ensure_default_envelope(db_path, key)
     store = BudgetStore(db_path, key)
@@ -176,21 +174,19 @@ class TestMakeIdempotencyKey:
 
 class TestFailoverOnSignError:
     @pytest.mark.anyio
-    async def test_primary_sign_fails_falls_over_to_secondary(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_primary_sign_fails_falls_over_to_secondary(self, tmp_path: Path) -> None:
         """First adapter's sign raises; second adapter signs and succeeds."""
         db_path = tmp_path / "traces.db"
 
         failing = MockRailAdapter(rail="x402", sign_result=None)
         healthy = MockRailAdapter(rail="l402", sign_result="mock-l402-header")
 
-        auth, sticky = _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
+        auth, _ = _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
 
         # Build a fake async auth flow by driving it manually.
         # We simulate: first yield returns 402; second yield (retry) returns 200.
         gen = auth.async_auth_flow(_request())
-        req = await gen.__anext__()
+        await gen.__anext__()
 
         # First yield gives back the original request — send 402.
         try:

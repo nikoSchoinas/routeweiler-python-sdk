@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import httpx
 
@@ -37,7 +38,7 @@ class RailAdapter(Protocol):
     """
 
     rail: Rail
-    """Rail identity (e.g. ``"x402"``) — used by the router to map policy prefer lists to adapters."""
+    """Rail identity (e.g. ``"x402"``) — maps policy prefer lists to adapters."""
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True if this adapter recognizes the 402 challenge."""

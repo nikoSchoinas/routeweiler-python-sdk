@@ -1,4 +1,4 @@
-"""Routing engine — routeDecision(challenge, policy, funding) -> Rail.
+"""Routing engine - routeDecision(challenge, policy, funding) -> Rail.
 
 Implements §7.1 (static scoring), §7.2 (sticky routing), and §7.3 (failover)
 of the Routewiler technical plan.
@@ -13,19 +13,21 @@ accumulates (post-MVP).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import httpx
 
 from routewiler.budgets.fmv import amount_to_envelope_minor_units
 from routewiler.errors import NoFeasibleRailError, PolicyDeniedError, RailNotSupportedError
 from routewiler.normalized import NormalizedChallenge, Rail
+from routewiler.policy.engine import PolicyDecision
 
 if TYPE_CHECKING:
     from routewiler.funding.evm import EvmFundingSource
-    from routewiler.policy.engine import PolicyDecision, PolicyEngine
+    from routewiler.policy.engine import PolicyEngine
     from routewiler.rails.base import RailAdapter
 
 _log = logging.getLogger(__name__)
@@ -125,7 +127,7 @@ class RoutingChoice:
 
 
 class Router:
-    """Implements §7.1–§7.3 of the technical plan.
+    """Implements §7.1-§7.3 of the technical plan.
 
     The router is constructed once per ``Routewiler`` instance and called on
     every 402 response.  It is stateless w.r.t. routing decisions — the sticky
@@ -185,8 +187,7 @@ class Router:
         """
         # Step 1: detect
         can_handle = [
-            a for a in self._adapters
-            if a.can_handle(response) and a.rail not in excluded_rails
+            a for a in self._adapters if a.can_handle(response) and a.rail not in excluded_rails
         ]
         if not can_handle:
             if not excluded_rails:
@@ -195,29 +196,24 @@ class Router:
                     "Check that the server uses a supported rail (x402, L402, MPP) "
                     "and that you have configured the matching funding source."
                 )
-            raise NoFeasibleRailError(
-                f"All available rails have been exhausted for {request.url}."
-            )
+            raise NoFeasibleRailError(f"All available rails have been exhausted for {request.url}.")
 
         # Step 2: parse each candidate (swallow per-adapter failures)
-        parsed: list[tuple[RailAdapter, NormalizedChallenge]] = []
-        for adapter in can_handle:
-            try:
-                challenge = adapter.parse(request, response)
-                parsed.append((adapter, challenge))
-            except Exception:
-                _log.debug("Adapter %r failed to parse 402 from %s; skipping.", adapter.rail, request.url)
-
+        parsed = _parse_candidates(can_handle, request, response)
         if not parsed:
             raise NoFeasibleRailError(
                 f"All candidate adapters failed to parse the 402 from {request.url}."
             )
 
-        # Steps 3–4: policy filter
+        # Steps 3-4: policy filter
         policy_filtered: list[tuple[RailAdapter, NormalizedChallenge, PolicyDecision]] = []
         last_deny: PolicyDecision | None = None
         for adapter, challenge in parsed:
-            decision = policy_engine.evaluate(challenge) if policy_engine is not None else _default_decision()
+            decision = (
+                policy_engine.evaluate(challenge)
+                if policy_engine is not None
+                else _default_decision()
+            )
             if decision.deny:
                 last_deny = decision
                 _log.debug("Adapter %r denied by policy rule %r.", adapter.rail, decision.rule_name)
@@ -260,15 +256,17 @@ class Router:
                 envelope_currency=envelope_currency,
                 fmv_snapshot=fmv_snapshot,
             )
-            candidates.append((
-                Candidate(
-                    adapter=adapter,
-                    challenge=challenge,
-                    quote_envelope_minor_units=quote,
-                    policy_decision=decision,
-                ),
-                decision,
-            ))
+            candidates.append(
+                (
+                    Candidate(
+                        adapter=adapter,
+                        challenge=challenge,
+                        quote_envelope_minor_units=quote,
+                        policy_decision=decision,
+                    ),
+                    decision,
+                )
+            )
 
         # Step 7 & 8: score and apply sticky shortcut
         winner = _select_winner(
@@ -317,7 +315,9 @@ def _select_winner(
         for candidate, _decision in candidates:
             if candidate.adapter.rail == sticky_rail:
                 # Compute score for diagnostics even though we don't use it for selection.
-                breakdown = _score_breakdown(candidate, candidates, weights, latency_p50_ms, reliability)
+                breakdown = _score_breakdown(
+                    candidate, candidates, weights, latency_p50_ms, reliability
+                )
                 return _ScoredCandidate(
                     candidate=candidate,
                     score=sum(breakdown.values()),
@@ -328,7 +328,9 @@ def _select_winner(
     scored = [
         _ScoredCandidate(
             candidate=c,
-            score=sum(_score_breakdown(c, candidates, weights, latency_p50_ms, reliability).values()),
+            score=sum(
+                _score_breakdown(c, candidates, weights, latency_p50_ms, reliability).values()
+            ),
             score_breakdown=_score_breakdown(c, candidates, weights, latency_p50_ms, reliability),
         )
         for c, _ in candidates
@@ -351,11 +353,7 @@ def _score_breakdown(
 
     quotes = [c.quote_envelope_minor_units for c, _ in all_candidates]
     max_quote = max(quotes) if quotes else 0
-    cost_score = (
-        1.0 - candidate.quote_envelope_minor_units / max_quote
-        if max_quote > 0
-        else 1.0
-    )
+    cost_score = 1.0 - candidate.quote_envelope_minor_units / max_quote if max_quote > 0 else 1.0
 
     p50s = [latency_p50_ms.get(c.adapter.rail, 5000) for c, _ in all_candidates]
     max_p50 = max(p50s) if p50s else 1
@@ -366,9 +364,7 @@ def _score_breakdown(
 
     reliability_score = reliability.get(rail, 0.5)
 
-    privacy_fit_score = (
-        1.0 if decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
-    )
+    privacy_fit_score = 1.0 if decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
 
     return {
         "cost": weights.cost * cost_score,
@@ -376,6 +372,23 @@ def _score_breakdown(
         "reliability": weights.reliability * reliability_score,
         "privacy": weights.privacy * privacy_fit_score,
     }
+
+
+def _parse_candidates(
+    adapters: list[RailAdapter],
+    request: httpx.Request,
+    response: httpx.Response,
+) -> list[tuple[RailAdapter, NormalizedChallenge]]:
+    parsed = []
+    for adapter in adapters:
+        try:
+            challenge = adapter.parse(request, response)
+            parsed.append((adapter, challenge))
+        except Exception:
+            _log.debug(
+                "Adapter %r failed to parse 402 from %s; skipping.", adapter.rail, request.url
+            )
+    return parsed
 
 
 def _fmv_quote(
@@ -408,9 +421,6 @@ def _fmv_quote(
 
 
 def _default_decision() -> PolicyDecision:
-    """Fallback policy decision when no policy engine is configured."""
-    from routewiler.policy.engine import PolicyDecision  # local import avoids cycle
-
     return PolicyDecision(
         rule_name=None,
         deny=False,
