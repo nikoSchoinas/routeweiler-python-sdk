@@ -1,5 +1,7 @@
 """Credential store — persists rail credentials and manages the recovery state machine."""
 
+from routewiler.credentials.manifest_strategy import ManifestRecoveryStrategy
+from routewiler.credentials.manifests import ManifestRegistry, ServiceShape, ServiceShapeStep
 from routewiler.credentials.recovery import (
     CredentialRecoverer,
     NoOpRecoveryStrategy,
@@ -14,8 +16,12 @@ __all__ = [
     "CredentialRecoverer",
     "CredentialState",
     "CredentialStore",
+    "ManifestRecoveryStrategy",
+    "ManifestRegistry",
     "ManualHoldReason",
     "NoOpRecoveryStrategy",
     "RecoveryOutcome",
     "RecoveryStrategy",
+    "ServiceShape",
+    "ServiceShapeStep",
 ]
