@@ -24,7 +24,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import os
+import sqlite3
+from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -34,6 +38,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from routewiler import Routewiler
+from routewiler.budgets.fmv_provider import CoinGeckoProvider
+from routewiler.budgets.keystore import EnvelopeKeystore
+from routewiler.budgets.local import BudgetStore, ensure_default_envelope
 from routewiler.funding.lightning import LightningFundingSource, LndClient
 from routewiler.trace.sink_sqlite import TraceSink
 
@@ -162,3 +169,77 @@ class TestL402LivePolar:
         data = response.json()
         assert data["rail"] == "l402"
         assert data["live"] is True
+
+    async def test_real_lightning_payment_draws_usd_envelope(
+        self,
+        polar_payer_source: LightningFundingSource,
+        polar_l402_server: httpx.ASGITransport,
+        tmp_path: pytest.TempPathFactory,
+    ) -> None:
+        """Live L402 payment draws from a USD envelope, verifying FMV budget enforcement.
+
+        The sats→USD rate is read from ROUTEWILER_TEST_SATS_USD if set (e.g.
+        ``ROUTEWILER_TEST_SATS_USD=0.00065``), otherwise fetched live from CoinGecko.
+        """
+        db_path: Path = tmp_path / "polar-usd-test.db"  # type: ignore[operator]
+        keystore_root: Path = tmp_path / "polar-usd-keys"  # type: ignore[operator]
+        keystore = EnvelopeKeystore(root=keystore_root)
+        ensure_default_envelope(db_path, keystore)
+
+        # Use an env-override rate if provided so CI doesn't need a live CoinGecko call;
+        # fall back to real CoinGecko for manual Polar runs.
+        env_rate = os.environ.get("ROUTEWILER_TEST_SATS_USD")
+
+        class _StaticProvider:
+            async def fetch_btc_to(self, currency: str) -> Decimal:
+                return Decimal(env_rate)  # type: ignore[arg-type]
+
+        fmv_provider = _StaticProvider() if env_rate else CoinGeckoProvider()
+
+        setup_store = BudgetStore(db_path, keystore, fmv_provider=fmv_provider)
+        await setup_store.create_envelope(
+            "polar-usd",
+            cap_minor_units=1_000_000,  # $10 000.00
+            cap_currency="usd",
+            allowed_rails=["l402"],
+            ttl_seconds=3600,
+        )
+        await setup_store.aclose()
+
+        sink = TraceSink.sqlite(db_path, url_mode="raw")
+        client = Routewiler(
+            funding=[polar_payer_source],
+            trace_sink=sink,
+            budget_envelope="polar-usd",
+            keystore_root=keystore_root,
+        )
+        client._http = httpx.AsyncClient(
+            auth=client._http.auth,
+            event_hooks=client._http.event_hooks,
+            transport=polar_l402_server,
+        )
+
+        response = await client.get("http://polar-mock/protected")
+        await client.aclose()
+
+        assert response.status_code == 200
+
+        # Verify the draw row was created with a positive USD amount.
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        draws = conn.execute("SELECT * FROM draws WHERE envelope_id = 'polar-usd'").fetchall()
+        conn.close()
+        assert len(draws) == 1
+        assert draws[0]["state"] == "settled"
+        assert draws[0]["amount_reserved_minor_units"] > 0
+
+        # Verify the trace event records a non-null amount_envelope with coingecko_simple quality.
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        traces = conn.execute("SELECT * FROM trace_events WHERE selected_rail = 'l402'").fetchall()
+        conn.close()
+        assert len(traces) == 1
+        payload = json.loads(traces[0]["payload"])
+        assert payload["payment"]["fmvQuality"] == "coingecko_simple"
+        assert payload["payment"]["amountEnvelope"] is not None
+        assert payload["payment"]["amountEnvelopeCurrency"] == "usd"
