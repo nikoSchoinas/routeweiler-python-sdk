@@ -20,8 +20,8 @@ from routewiler.trace.schema import (
 )
 
 if TYPE_CHECKING:
-    from routewiler.normalized import NormalizedChallenge, UrlEncoding
-    from routewiler.rails.x402 import SettlementInfo
+    from routewiler.normalized import NormalizedChallenge, Rail, UrlEncoding
+    from routewiler.rails.base import SettlementInfo
     from routewiler.trace.sink_sqlite import SqliteTraceSink
 
 
@@ -36,6 +36,7 @@ class TraceEmitter:
         funding_label: str,
         url_mode: UrlEncoding,
         policy_hash: str,
+        agent_id: str | None = None,
     ) -> None:
         self._sink = sink
         self._envelope_id = envelope_id
@@ -43,6 +44,7 @@ class TraceEmitter:
         self._funding_label = funding_label
         self._url_mode = url_mode
         self._policy_hash = policy_hash
+        self._agent_id = agent_id
 
     # ------------------------------------------------------------------
     # Public emit helpers
@@ -58,6 +60,7 @@ class TraceEmitter:
         ts_start: datetime,
         ts_retry: datetime,
         ts_end: datetime,
+        fallback_from: Rail | None = None,
     ) -> None:
         request_id = _request_id()
         settlement_ms = _ms(ts_retry, ts_end)
@@ -72,10 +75,12 @@ class TraceEmitter:
         )
         event = TraceEvent(
             request_id=request_id,
+            agent_id=self._agent_id,
             envelope_id=self._envelope_id,
             policy_hash=self._policy_hash,
             challenge=challenge,
             selected_rail=challenge.rail,
+            fallback_from=fallback_from,
             funding_source=self._funding_label,
             payment=payment,
             outcome=outcome,
@@ -124,6 +129,7 @@ class TraceEmitter:
         challenge: NormalizedChallenge | None,
         ts_start: datetime,
         ts_end: datetime,
+        fallback_from: Rail | None = None,
     ) -> None:
         http_status = response.status_code if response is not None else 0
         service_ms = _ms(ts_start, ts_end)
@@ -141,10 +147,12 @@ class TraceEmitter:
         rail = challenge.rail if challenge is not None else None
         event = TraceEvent(
             request_id=_request_id(),
+            agent_id=self._agent_id,
             envelope_id=self._envelope_id,
             policy_hash=self._policy_hash,
             challenge=challenge,
             selected_rail=rail,
+            fallback_from=fallback_from,
             funding_source=self._funding_label,
             payment=None,
             outcome=outcome,

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS trace_events (
     request_id              TEXT    PRIMARY KEY,
     envelope_id             TEXT    NOT NULL,
     selected_rail           TEXT,               -- NULL for passthrough / pre-rail-selection errors
+    fallback_from           TEXT,               -- NULL when no failover occurred
     facilitator             TEXT,
     http_status             INTEGER NOT NULL,
     service_delivered       INTEGER NOT NULL,   -- 0 | 1
@@ -34,6 +35,9 @@ CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
     ON trace_events (envelope_id, ts_start DESC);
 """
 
+# Migration: add fallback_from column to existing databases that pre-date W7.
+_MIGRATION_ADD_FALLBACK_FROM = "ALTER TABLE trace_events ADD COLUMN fallback_from TEXT"
+
 
 class SqliteTraceSink:
     """Append-only SQLite writer for TraceEvent records.
@@ -51,6 +55,7 @@ class SqliteTraceSink:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_DDL)
         self._conn.commit()
+        _migrate_fallback_from(self._conn)
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -76,13 +81,13 @@ class SqliteTraceSink:
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO trace_events (
-                    request_id, envelope_id, selected_rail, facilitator,
+                    request_id, envelope_id, selected_rail, fallback_from, facilitator,
                     http_status, service_delivered,
                     amount_native, amount_native_currency,
                     amount_envelope, amount_envelope_currency, fmv_quality,
                     ts_start, ts_end, shipped_at, payload
                 ) VALUES (
-                    :request_id, :envelope_id, :selected_rail, :facilitator,
+                    :request_id, :envelope_id, :selected_rail, :fallback_from, :facilitator,
                     :http_status, :service_delivered,
                     :amount_native, :amount_native_currency,
                     :amount_envelope, :amount_envelope_currency, :fmv_quality,
@@ -110,6 +115,7 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
         "request_id": event.request_id,
         "envelope_id": event.envelope_id,
         "selected_rail": event.selected_rail,
+        "fallback_from": event.fallback_from,
         "facilitator": event.facilitator,
         "http_status": event.outcome.http_status,
         "service_delivered": int(event.outcome.service_delivered),
@@ -121,6 +127,17 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
         "ts_start": event.timestamp_start.isoformat(),
         "ts_end": event.timestamp_end.isoformat(),
     }
+
+
+def _migrate_fallback_from(conn: sqlite3.Connection) -> None:
+    """Add fallback_from column to existing trace_events tables (idempotent)."""
+    existing = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(trace_events)")
+    }
+    if "fallback_from" not in existing:
+        conn.execute(_MIGRATION_ADD_FALLBACK_FROM)
+        conn.commit()
 
 
 class TraceSink:
