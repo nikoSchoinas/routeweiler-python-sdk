@@ -197,6 +197,14 @@ def fmv_for_trace(
                 amount_major = amount_native / divisor
                 return float(Decimal(str(amount_major)) * rate), "fx_leg"
 
+    # Sats / native BTC (e.g. "btc-lightning") — informational only, no 5% buffer.
+    if "sats" in caip19_currency.lower() or "btc" in caip19_currency.lower():
+        if snapshot_rates:
+            key = f"sats->{env_cur}"
+            rate = snapshot_rates.get(key)
+            if rate is not None:
+                return float(Decimal(str(amount_native)) * rate), "coingecko_simple"
+
     return None, "unavailable"
 
 

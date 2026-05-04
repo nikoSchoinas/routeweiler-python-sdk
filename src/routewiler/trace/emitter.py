@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
@@ -63,6 +64,7 @@ class TraceEmitter:
         ts_retry: datetime,
         ts_end: datetime,
         fallback_from: Rail | None = None,
+        snapshot_rates: dict[str, Decimal] | None = None,
     ) -> None:
         request_id = _request_id()
         settlement_ms = _ms(ts_retry, ts_end)
@@ -70,7 +72,12 @@ class TraceEmitter:
 
         challenge = _apply_url_mode(challenge, self._url_mode)
         payment = _build_payment(
-            challenge, payment_result, settlement, settlement_ms, self._envelope_currency
+            challenge,
+            payment_result,
+            settlement,
+            settlement_ms,
+            self._envelope_currency,
+            snapshot_rates,
         )
         outcome = Outcome(
             http_status=final_response.status_code,
@@ -240,11 +247,14 @@ def _build_payment(
     settlement: SettlementInfo | None,
     settlement_latency_ms: int,
     envelope_currency: str,
+    snapshot_rates: dict[str, Decimal] | None = None,
 ) -> PaymentDetails:
     currency = challenge.price.currency
     amount_native = challenge.price.amount
 
-    amount_envelope, fmv_quality = _fmv_for_trace(currency, amount_native, envelope_currency)
+    amount_envelope, fmv_quality = _fmv_for_trace(
+        currency, amount_native, envelope_currency, snapshot_rates
+    )
 
     # proof_value: prefer the value already in payment_result (e.g. L402 preimage),
     # fall back to the txid from settlement (x402).
