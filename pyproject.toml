@@ -51,10 +51,10 @@ dev = [
     "types-PyYAML>=6",
 ]
 
-# [project.urls] — add once the GitHub repo is public
-# Homepage = "https://github.com/..."
-# Repository = "https://github.com/..."
-# Issues = "https://github.com/.../issues"
+[project.urls]
+Homepage   = "https://github.com/nikoSchoinas/routewiler-python-sdk"
+Repository = "https://github.com/nikoSchoinas/routewiler-python-sdk"
+Issues     = "https://github.com/nikoSchoinas/routewiler-python-sdk/issues"
 
 # ---------------------------------------------------------------------------
 # Hatch — version source

@@ -1,4 +1,4 @@
-__version__ = "0.0.0"
+__version__ = "0.1.0.dev0"
 
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import BudgetEnvelope, DrawReceipt
