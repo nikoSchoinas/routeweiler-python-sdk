@@ -140,3 +140,12 @@ class CredentialManualHoldError(CredentialError):
         super().__init__(f"Credential '{credential_id}' entered MANUAL_HOLD (reason={reason!r}).")
         self.credential_id = credential_id
         self.reason = reason
+
+
+class ManifestParseError(CredentialError):
+    """A service-shape manifest YAML is malformed, fails schema validation, or contains an
+    invalid id_extractor (unknown prefix, bad regex)."""
+
+
+class ManifestNotFoundError(CredentialError):
+    """No loaded service-shape manifest matches the given URL's domain."""
