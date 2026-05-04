@@ -6,7 +6,7 @@ import base64
 import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import httpx
@@ -16,7 +16,12 @@ from x402.mechanisms.evm.signers import EthAccountSigner
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.assets import ASSETS, ASSETS_BY_ADDRESS, CANONICAL_ADDRESSES, CHAIN_IDS
-from routewiler.errors import ChallengeParseError, NoFundingForRailError, SigningError
+from routewiler.errors import (
+    ChallengeExpiredError,
+    ChallengeParseError,
+    NoFundingForRailError,
+    SigningError,
+)
 from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.normalized import (
@@ -30,6 +35,9 @@ from routewiler.normalized import (
     X402RailRaw,
 )
 from routewiler.rails.base import PaymentResult, SettlementInfo
+
+if TYPE_CHECKING:
+    from routewiler.budgets.schema import DrawReceipt
 
 # Re-export SettlementInfo so existing importers of this module are unaffected.
 __all__ = ["PaymentResult", "SettlementInfo", "X402Adapter"]
@@ -72,14 +80,28 @@ def _human_amount(asset: str, raw_str: str) -> str:
     return f"{human:g} {symbol}"
 
 
+def _find_match(
+    accepts: list[X402PaymentRequirements],
+    funding: Sequence[FundingSource],
+) -> tuple[X402PaymentRequirements, EvmFundingSource] | None:
+    """Return the first (PaymentRequirements, EvmFundingSource) pair that matches, or None."""
+    for pr in accepts:
+        for fs in funding:
+            if not isinstance(fs, EvmFundingSource):
+                continue
+            if pr.network != fs.network:
+                continue
+            if _resolve_asset(pr.network, pr.asset) == _resolve_asset(fs.network, fs.asset):
+                return pr, fs
+    return None
+
+
 # ---------------------------------------------------------------------------
 # X402Adapter
 # ---------------------------------------------------------------------------
 
 _PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED"
 _PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE"
-
-
 _PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE"
 
 
@@ -155,13 +177,18 @@ class X402Adapter:
         else:
             expires_at = datetime.now(UTC) + timedelta(seconds=chosen.max_timeout_seconds)
 
+        if expires_at <= datetime.now(UTC):
+            raise ChallengeExpiredError(
+                f"x402 challenge already expired at {expires_at.isoformat()}"
+            )
+
         return NormalizedChallenge(
             rail="x402",
             resource=Resource(
                 method=request.method,
                 url=str(request.url),
                 url_encoding="raw",  # emitter overwrites this based on configured url_mode
-                original_status=402,
+                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
             ),
             price=Price(
                 amount=int(chosen.max_amount_required),
@@ -208,22 +235,13 @@ class X402Adapter:
         """Return the first funding source that can satisfy this x402 challenge."""
         if not isinstance(challenge.raw, X402RailRaw):
             return None
-        for pr in challenge.raw.accepts:
-            for fs in funding:
-                if not isinstance(fs, EvmFundingSource):
-                    continue
-                if pr.network != fs.network:
-                    continue
-                pr_asset = _resolve_asset(pr.network, pr.asset)
-                fs_asset = _resolve_asset(fs.network, fs.asset)
-                if pr_asset == fs_asset:
-                    return fs
-        return None
+        match = _find_match(challenge.raw.accepts, funding)
+        return match[1] if match is not None else None
 
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: Any = None,  # DrawReceipt | None — unused for x402
+        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Sign the x402 challenge and return a PaymentResult with the header."""
         header_value = await self.sign(challenge)
@@ -232,7 +250,7 @@ class X402Adapter:
             header_value=header_value,
             credential=None,
             proof_type=self.proof_type,
-            proof_value=None,  # filled by confirm() from PAYMENT-RESPONSE
+            proof_value=None,  # emitter falls back to settlement.tx_hash from PAYMENT-RESPONSE
         )
 
     async def confirm(
@@ -241,10 +259,7 @@ class X402Adapter:
         response: httpx.Response,
     ) -> SettlementInfo | None:
         """Read PAYMENT-RESPONSE header from the server's successful reply."""
-        settlement = self.parse_settlement(response)
-        if settlement is not None and settlement.tx_hash is not None:
-            return settlement
-        return settlement
+        return self.parse_settlement(response)
 
     def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
         """Read the PAYMENT-RESPONSE header from a successful reply.
@@ -280,16 +295,10 @@ class X402Adapter:
 
     def _select(self, accepts: list[X402PaymentRequirements]) -> X402PaymentRequirements:
         """Pick the first PaymentRequirements entry our funding can satisfy."""
-        for pr in accepts:
-            for fs in self._funding:
-                if pr.network != fs.network:
-                    continue
-                # Match: canonical name OR resolved address.
-                pr_asset = _resolve_asset(pr.network, pr.asset)
-                fs_asset = _resolve_asset(fs.network, fs.asset)
-                if pr_asset == fs_asset:
-                    return pr
-        raise NoFundingForRailError(
-            f"No funding source matches any of the {len(accepts)} offered payment options. "
-            f"Available: {[(fs.network, fs.asset) for fs in self._funding]}"
-        )
+        match = _find_match(accepts, self._funding)
+        if match is None:
+            raise NoFundingForRailError(
+                f"No funding source matches any of the {len(accepts)} offered payment options. "
+                f"Available: {[(fs.network, fs.asset) for fs in self._funding]}"
+            )
+        return match[0]

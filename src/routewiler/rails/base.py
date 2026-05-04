@@ -47,9 +47,10 @@ class PaymentResult:
                        ``{"macaroon": ..., "preimage": ...}`` for L402);
                        ``None`` for x402.
         proof_type:    Category of payment proof produced by this rail.
-        proof_value:   Proof string (preimage hex for L402; x402 fills this
-                       via ``confirm()`` after the server returns the
-                       PAYMENT-RESPONSE header; ``None`` until then).
+        proof_value:   Proof string (preimage hex for L402, set directly in
+                       ``pay()``).  For x402, ``pay()`` sets this to ``None``
+                       and ``emitter._build_payment`` falls back to
+                       ``settlement.tx_hash`` from the PAYMENT-RESPONSE header.
     """
 
     header_name: str | None

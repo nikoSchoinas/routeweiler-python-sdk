@@ -19,7 +19,7 @@ import hashlib
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -45,8 +45,15 @@ from routewiler.rails._bolt11 import Bolt11DecodeError, DecodedBolt11
 from routewiler.rails._bolt11 import decode as bolt11_decode
 from routewiler.rails.base import PaymentResult, SettlementInfo
 
+if TYPE_CHECKING:
+    from routewiler.budgets.schema import DrawReceipt
+
 # Accepted WWW-Authenticate scheme names (same protocol, two names)
 _ACCEPTED_SCHEMES = {"l402", "lsat"}
+
+# Header name constants
+_WWW_AUTHENTICATE_HEADER = "WWW-Authenticate"
+_AUTHORIZATION_HEADER = "Authorization"
 
 # Maps BOLT-11 HRP prefix → LightningFundingSource.network value.
 # Longer prefixes must come first to avoid "lnbc" matching "lnbcrt" prematurely.
@@ -168,8 +175,8 @@ class L402Adapter:
     rail: Rail = "l402"
     proof_type: ProofType = "preimage"
 
-    def __init__(self, lightning_sources: list[LightningFundingSource]) -> None:
-        self._sources = lightning_sources
+    def __init__(self, funding_sources: list[LightningFundingSource]) -> None:
+        self._funding = funding_sources
 
     # ------------------------------------------------------------------
     # RailAdapter protocol
@@ -178,7 +185,7 @@ class L402Adapter:
     def can_handle(self, response: httpx.Response) -> bool:
         if response.status_code != HTTP_STATUS_PAYMENT_REQUIRED:
             return False
-        www_auth = response.headers.get("WWW-Authenticate", "")
+        www_auth = response.headers.get(_WWW_AUTHENTICATE_HEADER, "")
         scheme = www_auth.strip().split(None, 1)[0].lower() if www_auth.strip() else ""
         return scheme in _ACCEPTED_SCHEMES
 
@@ -189,7 +196,7 @@ class L402Adapter:
             ChallengeParseError:   Malformed header, invalid macaroon, or bad BOLT-11.
             ChallengeExpiredError: Invoice or macaroon valid_until is already past.
         """
-        www_auth = response.headers.get("WWW-Authenticate", "")
+        www_auth = response.headers.get(_WWW_AUTHENTICATE_HEADER, "")
         parsed = _parse_www_authenticate(www_auth)
         if parsed is None:
             raise ChallengeParseError(f"Cannot parse WWW-Authenticate as L402/LSAT: {www_auth!r}")
@@ -253,7 +260,7 @@ class L402Adapter:
                 human_amount=f"{sats:,} sats",
             ),
             payee=Payee(
-                identifier=inv.payee_pubkey_hex or "",
+                identifier=inv.payee_pubkey_hex or inv.payment_hash_hex,
                 metadata={"description": inv.description} if inv.description else None,
             ),
             scheme="exact",  # L402 has no upto/stream modes
@@ -281,7 +288,7 @@ class L402Adapter:
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: Any = None,  # DrawReceipt | None — unused in payment, kept for protocol
+        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Pay the BOLT-11 invoice and return a PaymentResult with the Authorization header.
 
@@ -304,10 +311,10 @@ class L402Adapter:
         macaroon_b64 = challenge.raw.macaroon
 
         # Locate the funding source (match_funding is cheap, call inline)
-        source = self.match_funding(challenge, self._sources)
+        source = self.match_funding(challenge, self._funding)
         if source is None:
             target = _invoice_network(bolt11)
-            available = [s.network for s in self._sources]
+            available = [s.network for s in self._funding]
             raise NoFundingForRailError(
                 f"No LightningFundingSource for network {target!r}. Available: {available}"
             )
@@ -335,7 +342,7 @@ class L402Adapter:
         }
 
         return PaymentResult(
-            header_name="Authorization",
+            header_name=_AUTHORIZATION_HEADER,
             header_value=auth_value,
             credential=credential,
             proof_type=self.proof_type,  # "preimage"
