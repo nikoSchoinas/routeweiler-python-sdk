@@ -15,82 +15,42 @@ from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.evm.signers import EthAccountSigner
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
+from routewiler.assets import ASSETS, ASSETS_BY_ADDRESS, CANONICAL_ADDRESSES, CHAIN_IDS
 from routewiler.errors import ChallengeParseError, NoFundingForRailError, SigningError
+from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.normalized import (
     NormalizedChallenge,
     Payee,
     Price,
+    ProofType,
     Rail,
     Resource,
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routewiler.rails.base import SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo
 
 # Re-export SettlementInfo so existing importers of this module are unaffected.
-__all__ = ["SettlementInfo", "X402Adapter"]
-
-# ---------------------------------------------------------------------------
-# Asset resolution helpers
-# ---------------------------------------------------------------------------
-
-# Maps (network, canonical_name) → lowercase contract address.
-# Extended in later weeks as more networks/assets are supported.
-_CANONICAL_ADDRESS: dict[tuple[str, str], str] = {
-    ("base", "usdc"): "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-    ("base-sepolia", "usdc"): "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
-    ("base", "eurc"): "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42",
-    ("polygon", "usdc"): "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
-    ("arbitrum", "usdc"): "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
-}
-
-# EIP-155 chain IDs for EVM networks.
-_CHAIN_ID: dict[str, int] = {
-    "base": 8453,
-    "base-sepolia": 84532,
-    "polygon": 137,
-    "arbitrum": 42161,
-    "world": 480,
-    "ethereum": 1,
-}
-
-# Token decimals and display symbols for known assets.
-_DECIMALS: dict[str, int] = {
-    "usdc": 6,
-    "eurc": 6,
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6,
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": 6,
-    "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": 6,
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": 6,
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": 6,
-}
-_SYMBOL: dict[str, str] = {
-    "usdc": "USDC",
-    "eurc": "EURC",
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "USDC",
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "USDC",
-    "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "EURC",
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "USDC",
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",
-}
+__all__ = ["PaymentResult", "SettlementInfo", "X402Adapter"]
 
 
 def _resolve_asset(network: str, asset: str) -> str:
     """Return the lowercase ERC-20 address for a given (network, asset) pair.
 
     If `asset` is already an address (starts with "0x"), return it as-is.
-    Otherwise look up the canonical address; fall back to `asset` unchanged.
+    Otherwise look up the canonical address in the asset registry; fall back
+    to `asset` unchanged.
     """
     a = asset.lower()
     if a.startswith("0x"):
         return a
-    return _CANONICAL_ADDRESS.get((network, a), a)
+    return CANONICAL_ADDRESSES.get((network, a), a)
 
 
 def _to_caip19(network: str, asset: str) -> str:
     """Format a CAIP-19 currency identifier for the given EVM network + asset."""
-    chain_id = _CHAIN_ID.get(network)
+    chain_id = CHAIN_IDS.get(network)
     if chain_id is None:
         return f"{network}/{asset.lower()}"
     address = _resolve_asset(network, asset)
@@ -104,8 +64,10 @@ def _human_amount(asset: str, raw_str: str) -> str:
         raw = int(raw_str)
     except (ValueError, TypeError):
         return f"{raw_str} {asset}"
-    decimals = _DECIMALS.get(asset_lower, 18)
-    symbol = _SYMBOL.get(asset_lower, asset[:8])
+    # Look up by canonical name first, then by address, then fall back to 18.
+    meta = ASSETS.get(asset_lower) or ASSETS_BY_ADDRESS.get(asset_lower)
+    decimals = meta.decimals if meta else 18
+    symbol = meta.symbol if meta else asset[:8]
     human = raw / 10**decimals
     return f"{human:g} {symbol}"
 
@@ -118,6 +80,9 @@ _PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED"
 _PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE"
 
 
+_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE"
+
+
 class X402Adapter:
     """Rail adapter for the x402 v2 protocol.
 
@@ -128,6 +93,7 @@ class X402Adapter:
     """
 
     rail: Rail = "x402"
+    proof_type: ProofType = "txid"
 
     def __init__(
         self,
@@ -237,7 +203,7 @@ class X402Adapter:
     def match_funding(
         self,
         challenge: NormalizedChallenge,
-        funding: Sequence[EvmFundingSource],
+        funding: Sequence[FundingSource],
     ) -> EvmFundingSource | None:
         """Return the first funding source that can satisfy this x402 challenge."""
         if not isinstance(challenge.raw, X402RailRaw):
@@ -253,6 +219,32 @@ class X402Adapter:
                 if pr_asset == fs_asset:
                     return fs
         return None
+
+    async def pay(
+        self,
+        challenge: NormalizedChallenge,
+        receipt: Any = None,  # DrawReceipt | None — unused for x402
+    ) -> PaymentResult:
+        """Sign the x402 challenge and return a PaymentResult with the header."""
+        header_value = await self.sign(challenge)
+        return PaymentResult(
+            header_name=_PAYMENT_SIGNATURE_HEADER,
+            header_value=header_value,
+            credential=None,
+            proof_type=self.proof_type,
+            proof_value=None,  # filled by confirm() from PAYMENT-RESPONSE
+        )
+
+    async def confirm(
+        self,
+        result: PaymentResult,
+        response: httpx.Response,
+    ) -> SettlementInfo | None:
+        """Read PAYMENT-RESPONSE header from the server's successful reply."""
+        settlement = self.parse_settlement(response)
+        if settlement is not None and settlement.tx_hash is not None:
+            return settlement
+        return settlement
 
     def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
         """Read the PAYMENT-RESPONSE header from a successful reply.

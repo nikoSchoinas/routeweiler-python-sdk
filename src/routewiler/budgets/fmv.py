@@ -23,26 +23,24 @@ from decimal import ROUND_CEILING, Decimal
 from typing import TYPE_CHECKING
 
 from routewiler._constants import FMV_BUFFER
+from routewiler.assets import ASSETS_BY_ADDRESS
 from routewiler.errors import FmvUnavailableError
 
 if TYPE_CHECKING:
     from routewiler.trace.schema import FmvQuality
 
 # ---------------------------------------------------------------------------
-# Stablecoin peg tables — single source of truth (previously duplicated in
-# budgets/local.py and trace/emitter.py).
+# Derived stablecoin peg tables — computed from the central asset registry.
+# Adding a new stablecoin only requires an entry in assets.py.
 # ---------------------------------------------------------------------------
 
-# Maps lowercase ERC-20 address suffix → ISO-4217 peg currency.
 STABLECOIN_PEG: dict[str, str] = {
-    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "usd",  # USDC base mainnet
-    "0x036cbd53842c5426634e7929541ec2318f3dcf7e": "usd",  # USDC base-sepolia
-    "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "usd",  # USDC polygon
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "usd",  # USDC arbitrum
-    "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42": "eur",  # EURC base mainnet
+    addr: meta.peg_currency
+    for addr, meta in ASSETS_BY_ADDRESS.items()
+    if meta.peg_currency is not None
 }
 
-STABLECOIN_DECIMALS = 6  # USDC and EURC both use 6 decimal places
+STABLECOIN_DECIMALS = 6  # USDC and EURC both use 6 decimal places (held constant for now)
 
 # Minor units per major unit for each envelope currency.
 MINOR_PER_MAJOR: dict[str, int] = {"usd": 100, "eur": 100, "gbp": 100, "jpy": 1}
@@ -211,14 +209,21 @@ def fmv_for_trace(
 
 def capture_fmv_snapshot(
     cap_currency: str,
+    *,
+    sats_rates: dict[str, Decimal] | None = None,
 ) -> tuple[dict[str, Decimal], dict[str, str]]:
     """Return the initial FMV snapshot rates and quality flags for a new envelope.
 
     Populates all ECB-stub fiat-to-fiat pairs that include ``cap_currency`` as the
     destination, plus the identity pair ``<cur>-><cur> = 1``.
 
+    ``sats_rates`` is an optional dict of pre-fetched per-satoshi rates keyed as
+    ``"sats-><currency>"`` (e.g. ``{"sats->usd": Decimal("0.00000065")}``).  When
+    provided they are merged into the snapshot with ``fmv_quality="coingecko_simple"``.
+    When omitted the snapshot has no sats entries; cap enforcement on BTC/L402 rails
+    will raise ``FmvUnavailableError`` until a snapshot with sats rates is available.
+
     Returns ``(rates_dict, quality_dict)`` keyed as ``"<from>-><to>"``.
-    CoinGecko sats rates are NOT populated yet — that integration ships later.
     """
     env_cur = cap_currency.lower()
     rates: dict[str, Decimal] = {}
@@ -233,5 +238,10 @@ def capture_fmv_snapshot(
         if dst == env_cur:
             rates[f"{src}->{dst}"] = rate
             quality[f"{src}->{dst}"] = "fx_leg"
+
+    if sats_rates:
+        for key, rate in sats_rates.items():
+            rates[key] = rate
+            quality[key] = "coingecko_simple"
 
     return rates, quality
