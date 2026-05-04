@@ -127,9 +127,16 @@ class BudgetStore:
     the event loop is running (e.g. from ``Routewiler.__aenter__``).
     """
 
-    def __init__(self, db_path: Path, keystore: EnvelopeKeystore) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        keystore: EnvelopeKeystore,
+        *,
+        reaper_interval_seconds: float = REAPER_INTERVAL_SECONDS,
+    ) -> None:
         self._db_path = db_path
         self._keystore = keystore
+        self._reaper_interval_seconds = reaper_interval_seconds
         self._conn = sqlite3.connect(
             str(db_path), check_same_thread=False, isolation_level=None, timeout=10.0
         )
@@ -150,9 +157,9 @@ class BudgetStore:
             self._reaper_task = asyncio.create_task(self._reap_loop(), name="routewiler-reaper")
 
     async def _reap_loop(self) -> None:
-        """Roll back stale reserved draws every REAPER_INTERVAL_SECONDS seconds (§8.3)."""
+        """Roll back stale reserved draws periodically (§8.3)."""
         while True:
-            await asyncio.sleep(REAPER_INTERVAL_SECONDS)
+            await asyncio.sleep(self._reaper_interval_seconds)
             try:
                 async with self._lock:
                     rolled = await asyncio.to_thread(self._reap_sync)
