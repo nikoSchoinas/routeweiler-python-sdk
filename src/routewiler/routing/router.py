@@ -52,6 +52,9 @@ DEFAULT_RELIABILITY: dict[str, float] = {
     "mpp-spt": 0.90,
 }
 
+_FALLBACK_LATENCY_MS = 5000
+_FALLBACK_RELIABILITY = 0.5
+
 # Inherent privacy scores per rail — used when no policy prefer is set.
 # Higher = more private (lightning > on-chain EVM for obvious reasons).
 _INHERENT_PRIVACY: dict[str, float] = {
@@ -370,14 +373,14 @@ def _score_breakdown(
         q = candidate.quote_envelope_minor_units
         cost_score = 1.0 - q / max_quote if max_quote > 0 else 1.0
 
-    p50s = [latency_p50_ms.get(c.adapter.rail, 5000) for c, _ in all_candidates]
+    p50s = [latency_p50_ms.get(c.adapter.rail, _FALLBACK_LATENCY_MS) for c, _ in all_candidates]
     max_p50 = max(p50s) if p50s else 1
-    my_p50 = latency_p50_ms.get(rail, 5000)
+    my_p50 = latency_p50_ms.get(rail, _FALLBACK_LATENCY_MS)
     # When all candidates share the same latency (or there is only one), relative
     # score is 1.0 — mirroring the cost branch's treatment of max_quote == 0.
     latency_score = 1.0 - my_p50 / max_p50 if max_p50 > 0 and len(set(p50s)) > 1 else 1.0
 
-    reliability_score = reliability.get(rail, 0.5)
+    reliability_score = reliability.get(rail, _FALLBACK_RELIABILITY)
 
     privacy_fit_score = 1.0 if decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
 

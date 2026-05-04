@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 from routewiler.normalized import Rail
 
+_DEFAULT_STICKY_TTL = timedelta(minutes=10)
+
 
 @dataclass(frozen=True)
 class StickyKey:
@@ -40,7 +42,7 @@ class StickyCache:
     challenge's `expires_at` timestamp — both are passed to `remember`.
     """
 
-    def __init__(self, ttl: timedelta = timedelta(minutes=10)) -> None:
+    def __init__(self, ttl: timedelta = _DEFAULT_STICKY_TTL) -> None:
         self._ttl = ttl
         self._entries: dict[StickyKey, _StickyEntry] = {}
 
