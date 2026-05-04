@@ -111,12 +111,12 @@ class LndClient:
     timeout_seconds: int = 60
 
     def _make_client(self) -> object:
-        """Construct an lnd_grpc.Client lazily (imported inside to avoid hard dep at module load).
+        """Construct an lndgrpc.LNDClient lazily (imported inside to avoid hard dep at module load).
 
         The lazy import keeps lnd-grpc-client optional at module load time.
         """
         try:
-            import lnd_grpc  # type: ignore[import-not-found]  # noqa: PLC0415
+            import lndgrpc  # type: ignore[import-not-found]  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 "lnd-grpc-client is required for L402 payments. "
@@ -124,20 +124,19 @@ class LndClient:
             ) from exc
 
         kwargs: dict[str, object] = {
-            "grpc_host": self.grpc_host,
-            "grpc_port": str(self.grpc_port),
+            "ip_address": f"{self.grpc_host}:{self.grpc_port}",
         }
         if self.macaroon_path is not None:
-            kwargs["macaroon_path"] = self.macaroon_path
+            kwargs["macaroon_filepath"] = self.macaroon_path
         elif self.macaroon_hex is not None:
-            kwargs["macaroon_hexstring"] = self.macaroon_hex
+            kwargs["macaroon"] = bytes.fromhex(self.macaroon_hex)
 
         if self.tls_cert_path is not None:
-            kwargs["tls_cert_path"] = self.tls_cert_path
+            kwargs["cert_filepath"] = self.tls_cert_path
         elif self.tls_cert_pem is not None:
-            kwargs["tls_cert_string"] = self.tls_cert_pem
+            kwargs["cert"] = self.tls_cert_pem.encode() if isinstance(self.tls_cert_pem, str) else self.tls_cert_pem
 
-        return lnd_grpc.Client(**kwargs)
+        return lndgrpc.LNDClient(**kwargs)
 
     async def pay_invoice(self, bolt11: str, *, max_fee_msat: int) -> bytes:
         """Pay the invoice via LND's routerrpc.SendPaymentV2 (streaming RPC).
@@ -156,17 +155,16 @@ class LndClient:
         client = self._make_client()
 
         def _send() -> bytes:
-            response_iter = client.router.send_payment_v2(  # type: ignore[attr-defined]
+            payments = client.send_payment_v2(  # type: ignore[attr-defined]
                 payment_request=bolt11,
-                max_fee_msat=max_fee_msat,
+                fee_limit_msat=max_fee_msat,
                 timeout_seconds=self.timeout_seconds,
                 allow_self_payment=False,
             )
-            for payment in response_iter:
+            for payment in payments:
                 status = payment.status
                 if status == _LND_STATUS_SUCCEEDED:
                     raw = payment.payment_preimage
-                    # lnd-grpc-client returns preimage as hex string or bytes depending on version
                     if isinstance(raw, str):
                         return bytes.fromhex(raw)
                     return bytes(raw)
