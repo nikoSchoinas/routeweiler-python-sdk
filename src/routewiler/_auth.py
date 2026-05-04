@@ -213,7 +213,8 @@ class RoutewilerAuth(httpx.Auth):
             except Exception:
                 _log.warning(
                     "Sign failed for rail %r on attempt %d; rolling back and trying next rail.",
-                    adapter.rail, attempt,
+                    adapter.rail,
+                    attempt,
                 )
                 if receipt is not None and self._budget_store is not None:
                     try:

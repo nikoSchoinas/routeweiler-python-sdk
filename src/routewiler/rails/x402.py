@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, Sequence
+from typing import Any
 from uuid import uuid4
 
 import httpx

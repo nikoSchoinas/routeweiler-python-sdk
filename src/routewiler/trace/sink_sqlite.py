@@ -131,10 +131,7 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
 
 def _migrate_fallback_from(conn: sqlite3.Connection) -> None:
     """Add fallback_from column to existing trace_events tables (idempotent)."""
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(trace_events)")
-    }
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(trace_events)")}
     if "fallback_from" not in existing:
         conn.execute(_MIGRATION_ADD_FALLBACK_FROM)
         conn.commit()

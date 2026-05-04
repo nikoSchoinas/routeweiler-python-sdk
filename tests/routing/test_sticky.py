@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from routewiler.routing.sticky import StickyCache, StickyKey
 
 
-def _key(origin: str = "http://mock:80", agent_id: str | None = None, session_id: str | None = None) -> StickyKey:
+def _key(
+    origin: str = "http://mock:80", agent_id: str | None = None, session_id: str | None = None
+) -> StickyKey:
     return StickyKey(origin=origin, agent_id=agent_id, session_id=session_id)
 
 

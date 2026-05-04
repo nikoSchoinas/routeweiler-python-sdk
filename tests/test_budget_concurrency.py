@@ -482,25 +482,19 @@ async def test_concurrent_rollback_and_confirm_idempotent(
     await s.aclose()
 
     conn = sqlite3.connect(str(db))
-    row = conn.execute(
-        "SELECT state FROM draws WHERE id=?", (receipt.receipt_id,)
-    ).fetchone()
+    row = conn.execute("SELECT state FROM draws WHERE id=?", (receipt.receipt_id,)).fetchone()
     conn.close()
 
     assert row[0] in {"settled", "rolled_back"}
 
     # Verify the state doesn't flip back — read twice under no further writes.
     conn2 = sqlite3.connect(str(db))
-    row2 = conn2.execute(
-        "SELECT state FROM draws WHERE id=?", (receipt.receipt_id,)
-    ).fetchone()
+    row2 = conn2.execute("SELECT state FROM draws WHERE id=?", (receipt.receipt_id,)).fetchone()
     conn2.close()
     assert row2[0] == row[0]
 
 
-async def test_double_confirm_is_noop(
-    tmp_path: Path, tmp_keystore: EnvelopeKeystore
-) -> None:
+async def test_double_confirm_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     """Confirming an already-settled draw is a no-op: state stays 'settled'."""
     db = tmp_path / "dbl_confirm.db"
     ensure_default_envelope(db, tmp_keystore)
@@ -533,9 +527,7 @@ async def test_double_confirm_is_noop(
     assert int(row[1]) == 10  # original amount, not 999
 
 
-async def test_double_rollback_is_noop(
-    tmp_path: Path, tmp_keystore: EnvelopeKeystore
-) -> None:
+async def test_double_rollback_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     """Rolling back an already-rolled-back draw is a no-op."""
     db = tmp_path / "dbl_rollback.db"
     ensure_default_envelope(db, tmp_keystore)
