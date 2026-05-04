@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
@@ -66,7 +66,6 @@ class TraceEmitter:
         fallback_from: Rail | None = None,
         snapshot_rates: dict[str, Decimal] | None = None,
     ) -> None:
-        request_id = _request_id()
         settlement_ms = _ms(ts_retry, ts_end)
         total_ms = _ms(ts_start, ts_end)
 
@@ -85,17 +84,12 @@ class TraceEmitter:
             service_latency_ms=settlement_ms,
         )
         event = TraceEvent(
-            request_id=request_id,
-            agent_id=self._agent_id,
-            envelope_id=self._envelope_id,
-            policy_hash=self._policy_hash,
+            **self._base_event_kwargs(),
             challenge=challenge,
             selected_rail=challenge.rail,
             fallback_from=fallback_from,
-            funding_source=self._funding_label,
             payment=payment,
             outcome=outcome,
-            reconciliation=Reconciliation(vat_applicable=False),
             timestamp_start=ts_start,
             timestamp_end=ts_end,
         )
@@ -117,15 +111,11 @@ class TraceEmitter:
             service_latency_ms=service_ms,
         )
         event = TraceEvent(
-            request_id=_request_id(),
-            envelope_id=self._envelope_id,
-            policy_hash=self._policy_hash,
+            **self._base_event_kwargs(),
             challenge=None,
             selected_rail=None,
-            funding_source=self._funding_label,
             payment=None,
             outcome=outcome,
-            reconciliation=Reconciliation(vat_applicable=False),
             timestamp_start=ts_start,
             timestamp_end=ts_end,
         )
@@ -144,20 +134,15 @@ class TraceEmitter:
         (§6.6) to populate the manual-hold tab.
         """
         event = TraceEvent(
-            request_id=_request_id(),
-            agent_id=self._agent_id,
-            envelope_id=self._envelope_id,
-            policy_hash=self._policy_hash,
+            **self._base_event_kwargs(),
             challenge=None,
             selected_rail=credential.rail,
-            funding_source=self._funding_label,
             payment=None,
             outcome=Outcome(
                 http_status=0,
                 service_delivered=False,
                 service_latency_ms=0,
             ),
-            reconciliation=Reconciliation(vat_applicable=False),
             timestamp_start=ts,
             timestamp_end=ts,
             credential_id=credential.credential_id,
@@ -191,25 +176,35 @@ class TraceEmitter:
             challenge = _apply_url_mode(challenge, self._url_mode)
         rail = challenge.rail if challenge is not None else None
         event = TraceEvent(
-            request_id=_request_id(),
-            agent_id=self._agent_id,
-            envelope_id=self._envelope_id,
-            policy_hash=self._policy_hash,
+            **self._base_event_kwargs(),
             challenge=challenge,
             selected_rail=rail,
             fallback_from=fallback_from,
-            funding_source=self._funding_label,
             payment=None,
             outcome=outcome,
-            reconciliation=Reconciliation(vat_applicable=False),
             timestamp_start=ts_start,
             timestamp_end=ts_end,
         )
         await self._sink.emit(event)
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _base_event_kwargs(self) -> dict[str, Any]:
+        """Return the TraceEvent fields shared by all emit_* methods."""
+        return {
+            "request_id": _request_id(),
+            "agent_id": self._agent_id,
+            "envelope_id": self._envelope_id,
+            "policy_hash": self._policy_hash,
+            "funding_source": self._funding_label,
+            "reconciliation": Reconciliation(vat_applicable=False),
+        }
+
 
 # ---------------------------------------------------------------------------
-# Private helpers
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 
@@ -256,8 +251,8 @@ def _build_payment(
         currency, amount_native, envelope_currency, snapshot_rates
     )
 
-    # proof_value: prefer the value already in payment_result (e.g. L402 preimage),
-    # fall back to the txid from settlement (x402).
+    # proof_value: prefer the value set by the rail adapter in pay() (e.g. L402 preimage);
+    # fall back to the tx_hash from the server's settlement response (x402).
     proof_value = payment_result.proof_value or (
         settlement.tx_hash if settlement is not None else None
     )
