@@ -12,29 +12,33 @@ from routewiler._auth import RoutewilerAuth
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
 from routewiler.errors import EnvelopeNotFoundError
+from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
-from routewiler.policy.dsl import PolicyFile, compute_policy_hash, default_policy
+from routewiler.policy.dsl import PolicyDocument, PolicyFile, compute_policy_hash, default_policy
 from routewiler.policy.engine import PolicyEngine
-from routewiler.rails.x402 import X402Adapter
+from routewiler.rails import ADAPTER_REGISTRY, RailAdapter
 from routewiler.routing.router import Router
 from routewiler.routing.sticky import StickyCache
 from routewiler.trace.emitter import TraceEmitter
 from routewiler.trace.sink_sqlite import SqliteTraceSink
 
 
-def _build_adapters(funding: list[EvmFundingSource]) -> list[Any]:
-    adapters: list[Any] = []
-    evm = [f for f in funding if isinstance(f, EvmFundingSource)]
-    if evm:
-        adapters.append(X402Adapter(evm))
+def _build_adapters(funding: list[FundingSource]) -> list[RailAdapter]:
+    adapters: list[RailAdapter] = []
+    for factory in ADAPTER_REGISTRY:
+        adapter = factory(funding)
+        if adapter is not None:
+            adapters.append(adapter)
     return adapters
 
 
-def _funding_label(funding: list[EvmFundingSource]) -> str:
+def _funding_label(funding: list[FundingSource]) -> str | None:
     if not funding:
-        return "none"
+        return None
     f = funding[0]
-    return f"evm:{f.network}:{f.asset}"
+    if isinstance(f, EvmFundingSource):
+        return f"evm:{f.network}:{f.asset}"
+    return repr(f)
 
 
 class Routewiler:
@@ -68,8 +72,8 @@ class Routewiler:
     def __init__(
         self,
         *,
-        funding: list[EvmFundingSource],
-        policy: PolicyFile | None = None,
+        funding: list[FundingSource],
+        policy: PolicyFile | PolicyDocument | None = None,
         budget_envelope: str | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
@@ -81,10 +85,15 @@ class Routewiler:
         envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
 
         # Build the policy engine and compute the hash regardless of trace_sink.
-        _policy_doc = policy.document if policy is not None else default_policy()
-        _policy_hash = (
-            policy.policy_hash if policy is not None else compute_policy_hash(_policy_doc)
-        )
+        if isinstance(policy, PolicyFile):
+            _policy_doc = policy.document
+            _policy_hash = policy.policy_hash
+        elif isinstance(policy, PolicyDocument):
+            _policy_doc = policy
+            _policy_hash = compute_policy_hash(policy)
+        else:
+            _policy_doc = default_policy()
+            _policy_hash = compute_policy_hash(_policy_doc)
         policy_engine = PolicyEngine(_policy_doc)
 
         emitter: TraceEmitter | None = None

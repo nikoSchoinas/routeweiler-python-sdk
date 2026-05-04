@@ -6,7 +6,10 @@ from eth_account.signers.local import LocalAccount
 
 from routewiler.funding.evm import EvmFundingSource
 
-__all__ = ["EvmFundingSource", "Funding"]
+# Union type expanded in Month 3/4 as Lightning and Stripe funding sources land.
+FundingSource = EvmFundingSource
+
+__all__ = ["EvmFundingSource", "Funding", "FundingSource"]
 
 
 class Funding:
