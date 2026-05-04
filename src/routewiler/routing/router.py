@@ -26,7 +26,7 @@ from routewiler.normalized import NormalizedChallenge, Rail
 from routewiler.policy.engine import PolicyDecision
 
 if TYPE_CHECKING:
-    from routewiler.funding.evm import EvmFundingSource
+    from routewiler.funding import FundingSource
     from routewiler.policy.engine import PolicyEngine
     from routewiler.rails.base import RailAdapter
 
@@ -97,7 +97,7 @@ class Candidate:
 
     adapter: RailAdapter
     challenge: NormalizedChallenge
-    quote_envelope_minor_units: int
+    quote_envelope_minor_units: int | None  # None when FMV conversion failed; 0 when budget off
     policy_decision: PolicyDecision
 
 
@@ -157,7 +157,7 @@ class Router:
         request: httpx.Request,
         response: httpx.Response,
         policy_engine: PolicyEngine | None,
-        funding: Sequence[EvmFundingSource],
+        funding: Sequence[FundingSource],
         envelope_currency: str | None,
         fmv_snapshot: dict[str, Decimal] | None,
         excluded_rails: frozenset[Rail] = frozenset(),
@@ -325,16 +325,16 @@ def _select_winner(
                 )
 
     # Full scoring pass.
-    scored = [
-        _ScoredCandidate(
-            candidate=c,
-            score=sum(
-                _score_breakdown(c, candidates, weights, latency_p50_ms, reliability).values()
-            ),
-            score_breakdown=_score_breakdown(c, candidates, weights, latency_p50_ms, reliability),
+    scored = []
+    for c, _ in candidates:
+        breakdown = _score_breakdown(c, candidates, weights, latency_p50_ms, reliability)
+        scored.append(
+            _ScoredCandidate(
+                candidate=c,
+                score=sum(breakdown.values()),
+                score_breakdown=breakdown,
+            )
         )
-        for c, _ in candidates
-    ]
     # Stable sort: highest score first; list order (= adapter + prefer order) breaks ties.
     scored.sort(key=lambda s: s.score, reverse=True)
     return scored[0]
@@ -347,13 +347,28 @@ def _score_breakdown(
     latency_p50_ms: Mapping[str, int],
     reliability: Mapping[str, float],
 ) -> dict[str, float]:
-    """Compute the §7.1 score breakdown for a single candidate."""
+    """Compute the §7.1 score breakdown for a single candidate.
+
+    FMV-failed candidates (quote_envelope_minor_units is None) receive
+    cost_score=0.0 — they rank worst on cost versus any candidate with a known
+    quote.  When *all* candidates have None quotes (total outage), everyone gets
+    cost_score=1.0 and cost falls out of the decision.  The "budget off" case
+    (quote=0) gives cost_score=1.0 for all, preserving the existing behaviour.
+    """
     rail = candidate.adapter.rail
     decision = candidate.policy_decision
 
-    quotes = [c.quote_envelope_minor_units for c, _ in all_candidates]
-    max_quote = max(quotes) if quotes else 0
-    cost_score = 1.0 - candidate.quote_envelope_minor_units / max_quote if max_quote > 0 else 1.0
+    valid_quotes = [
+        c.quote_envelope_minor_units
+        for c, _ in all_candidates
+        if c.quote_envelope_minor_units is not None
+    ]
+    max_quote = max(valid_quotes) if valid_quotes else 0
+    if candidate.quote_envelope_minor_units is None:
+        cost_score = 0.0  # FMV failed — penalise on cost
+    else:
+        q = candidate.quote_envelope_minor_units
+        cost_score = 1.0 - q / max_quote if max_quote > 0 else 1.0
 
     p50s = [latency_p50_ms.get(c.adapter.rail, 5000) for c, _ in all_candidates]
     max_p50 = max(p50s) if p50s else 1
@@ -395,11 +410,14 @@ def _fmv_quote(
     challenge: NormalizedChallenge,
     envelope_currency: str | None,
     fmv_snapshot: dict[str, Decimal] | None,
-) -> int:
+) -> int | None:
     """Convert the challenge price to envelope minor units.
 
-    Returns 0 when budget enforcement is not active (no envelope_currency) or
-    when FMV conversion fails (logged; the router continues without cost data).
+    Returns:
+        0       — budget enforcement is not active (no envelope_currency); all
+                  candidates are cost-equal and 0/max_quote=0 gives cost_score=1.0.
+        int > 0 — successful FMV conversion.
+        None    — FMV conversion failed; caller scores this candidate worst on cost.
     """
     if envelope_currency is None:
         return 0
@@ -413,11 +431,11 @@ def _fmv_quote(
         return quote
     except Exception:
         _log.debug(
-            "FMV conversion failed for %s→%s; cost scoring disabled for this candidate.",
+            "FMV conversion failed for %s→%s; candidate will be scored worst on cost.",
             challenge.price.currency,
             envelope_currency,
         )
-        return 0
+        return None
 
 
 def _default_decision() -> PolicyDecision:
