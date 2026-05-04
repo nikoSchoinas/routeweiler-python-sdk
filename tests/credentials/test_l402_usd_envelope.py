@@ -21,7 +21,7 @@ import httpx
 
 from routewiler import Routewiler
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.errors import FmvUnavailableError
 from routewiler.funding.lightning import LightningFundingSource
 from routewiler.trace.sink_sqlite import TraceSink
@@ -88,7 +88,6 @@ async def _make_usd_envelope_client(
     provider so the sats→USD snapshot is persisted before the client reads it.
     """
     keystore = EnvelopeKeystore(root=keystore_root)
-    ensure_default_envelope(db_path, keystore)
 
     # Create the USD envelope with a stub FMV provider so the sats→USD rate
     # is stored in the ``envelope_fmv_snapshots`` table.

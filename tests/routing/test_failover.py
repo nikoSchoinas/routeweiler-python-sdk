@@ -22,7 +22,7 @@ from eth_account import Account
 
 from routewiler._auth import RoutewilerAuth, _make_idempotency_key
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.errors import NoFeasibleRailError
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
@@ -114,9 +114,8 @@ def _build_auth(
     policy_engine: PolicyEngine | None = None,
 ) -> tuple[RoutewilerAuth, StickyCache]:
     key = EnvelopeKeystore(root=db_path.parent / "keys")
-    ensure_default_envelope(db_path, key)
     store = BudgetStore(db_path, key)
-    currency = store.get_currency_sync("default")
+    currency = store._get_envelope_currency_sync("default")
 
     sink = TraceSink.sqlite(db_path, url_mode="raw")
     emitter = TraceEmitter(

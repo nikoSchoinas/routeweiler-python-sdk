@@ -67,7 +67,7 @@ def _rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
 
 
 async def test_schema_migration_creates_tables(tmp_trace_db_path: Path) -> None:
-    """TraceSink.sqlite creates the trace_events table on first open."""
+    """TraceSink.sqlite bootstraps all shared tables via ensure_schema."""
     sink = TraceSink.sqlite(tmp_trace_db_path)
     await sink.aclose()
 
@@ -77,9 +77,11 @@ async def test_schema_migration_creates_tables(tmp_trace_db_path: Path) -> None:
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     conn.close()
+    # All component tables are created by ensure_schema on any store open.
     assert "trace_events" in tables
-    # envelopes and draws are owned by BudgetStore, not SqliteTraceSink.
-    assert "envelopes" not in tables
+    assert "envelopes" in tables
+    assert "credentials" in tables
+    assert "schema_versions" in tables
 
 
 async def test_emit_writes_row(tmp_trace_db_path: Path) -> None:

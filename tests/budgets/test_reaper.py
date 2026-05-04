@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.errors import BudgetExceededError
 
 
@@ -43,7 +43,6 @@ async def test_reap_sync_rolls_back_expired_draw(
     tmp_path: Path, tmp_keystore: EnvelopeKeystore
 ) -> None:
     db = tmp_path / "reap.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
 
     await store.create_envelope(
@@ -76,7 +75,6 @@ async def test_reap_sync_ignores_settled_and_rolled_back(
     tmp_path: Path, tmp_keystore: EnvelopeKeystore
 ) -> None:
     db = tmp_path / "reap2.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
 
     await store.create_envelope(
@@ -115,7 +113,6 @@ async def test_reap_sync_ignores_settled_and_rolled_back(
 
 async def test_reap_sync_frees_capacity(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     db = tmp_path / "reap3.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
 
     await store.create_envelope(
@@ -165,7 +162,6 @@ async def test_reap_sync_frees_capacity(tmp_path: Path, tmp_keystore: EnvelopeKe
 
 async def test_start_spawns_reaper_task(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     db = tmp_path / "life.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
 
     assert store._reaper_task is None
@@ -179,7 +175,6 @@ async def test_start_spawns_reaper_task(tmp_path: Path, tmp_keystore: EnvelopeKe
 
 async def test_start_is_idempotent(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     db = tmp_path / "idem.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
 
     await store.start()
@@ -193,7 +188,6 @@ async def test_start_is_idempotent(tmp_path: Path, tmp_keystore: EnvelopeKeystor
 
 async def test_aclose_is_idempotent(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     db = tmp_path / "close.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore)
     await store.start()
     await store.aclose()

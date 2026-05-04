@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.errors import BudgetExceededError
 
 # Reaper fires every 50 ms in tests — short enough to keep suite fast.
@@ -80,7 +80,6 @@ async def test_reaper_task_rolls_back_expired_draw(
     and frees its capacity for a follow-up draw.
     """
     db = tmp_path / "reap_integ.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore, reaper_interval_seconds=_FAST_REAPER)
 
     await store.create_envelope(
@@ -137,7 +136,6 @@ async def test_reaper_freed_capacity_visible_to_concurrent_drawers(
     (M ≤ cap) must all complete successfully.
     """
     db = tmp_path / "reap_freed.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore, reaper_interval_seconds=_FAST_REAPER)
 
     cap = 10
@@ -198,7 +196,6 @@ async def test_reaper_idempotent_under_concurrent_active_rollback(
     only one can win.  The final state must be rolled_back and must never flip.
     """
     db = tmp_path / "reap_race.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore, reaper_interval_seconds=_FAST_REAPER)
 
     await store.create_envelope(
@@ -243,7 +240,6 @@ async def test_reaper_survives_iteration_failure(
     calls.  Assert the task is still alive after the failure.
     """
     db = tmp_path / "reap_err.db"
-    ensure_default_envelope(db, tmp_keystore)
     store = BudgetStore(db, tmp_keystore, reaper_interval_seconds=_FAST_REAPER)
 
     call_count = 0

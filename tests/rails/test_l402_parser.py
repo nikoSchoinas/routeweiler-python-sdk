@@ -138,3 +138,22 @@ class TestParseErrors:
         req, resp = _make_402(www_auth)
         with pytest.raises(ChallengeExpiredError):
             adapter.parse(req, resp)
+
+
+class TestPayeeIdentifierFallback:
+    """Regression tests for B.3: payee.identifier must never be empty string."""
+
+    def test_invoice_without_pubkey_uses_payment_hash(self, adapter: L402Adapter) -> None:
+        # MOCK_BOLT11 has no 'n' tag (no pubkey) — only 'p' (payment_hash) and 'x' (expiry).
+        # Before B.3 the identifier would be "" (empty string from `or ""`).
+        req, resp = _make_402(MOCK_WWW_AUTHENTICATE)
+        challenge = adapter.parse(req, resp)
+        assert challenge.payee.identifier != ""
+        assert challenge.payee.identifier == MOCK_PAYMENT_HASH
+
+    def test_payee_identifier_equals_nonce_when_no_pubkey(self, adapter: L402Adapter) -> None:
+        # The nonce is always payment_hash_hex; payee.identifier should match it
+        # when there is no pubkey, so both fields refer to the same invoice anchor.
+        req, resp = _make_402(MOCK_WWW_AUTHENTICATE)
+        challenge = adapter.parse(req, resp)
+        assert challenge.payee.identifier == challenge.nonce

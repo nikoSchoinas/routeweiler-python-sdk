@@ -25,7 +25,7 @@ from starlette.routing import Route
 
 from routewiler import BudgetExceededError, Funding, Routewiler
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_CHALLENGE_B64, MOCK_TX_HASH
 
@@ -274,7 +274,6 @@ async def test_draw_idempotency_no_double_count(tmp_trace_db_path: Path) -> None
     await sink.aclose()
 
     keystore = EnvelopeKeystore(root=tmp_trace_db_path.parent / "keys2")
-    ensure_default_envelope(tmp_trace_db_path, keystore)
     store = BudgetStore(tmp_trace_db_path, keystore)
     await store.create_envelope(
         "idem_env",

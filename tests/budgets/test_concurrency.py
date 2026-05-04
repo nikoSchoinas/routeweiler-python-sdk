@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import BudgetExceededError
 
@@ -37,7 +37,6 @@ def tmp_keystore(tmp_path: Path) -> EnvelopeKeystore:
 @pytest.fixture
 async def store(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> BudgetStore:
     db = tmp_path / "concurrent.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
     yield s
     await s.aclose()
@@ -140,7 +139,6 @@ async def test_10k_concurrent_draws_never_exceed_cap(
     tasks complete; exactly cap draws succeed, the remainder raise BudgetExceededError.
     """
     db = tmp_path / "stress10k.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     cap = 10_000
@@ -178,7 +176,6 @@ async def test_concurrent_excess_attempts_only_grants_cap_amount(
 ) -> None:
     """Cap 100, amount 1, attempts 1000: exactly 100 succeed."""
     db = tmp_path / "excess.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     cap = 100
@@ -221,7 +218,6 @@ async def test_concurrent_partial_failure_keeps_invariant(
     """
     rng = random.Random(42)
     db = tmp_path / "partial.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     cap = 1000
@@ -267,7 +263,6 @@ async def test_concurrent_variable_amounts_invariant(
     """
     rng = random.Random(7)
     db = tmp_path / "variable.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     cap = 1000
@@ -316,7 +311,6 @@ async def test_concurrent_same_idempotency_key_yields_one_row(
     - Cap (1 unit) is reserved exactly once, never double-charged.
     """
     db = tmp_path / "idem_collision.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     envelope_id = "env_idem"
@@ -357,7 +351,6 @@ async def test_idempotency_scoped_to_envelope(
 ) -> None:
     """Same idempotency_key in two different envelopes produces two distinct rows."""
     db = tmp_path / "idem_scope.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     for eid in ["env_a", "env_b"]:
@@ -401,7 +394,6 @@ async def test_idempotency_after_rollback_still_returns_existing_row(
     This is the intended behavior; relaxation is a post-MVP §17 item.
     """
     db = tmp_path / "idem_rollback.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     envelope_id = "env_idem_rb"
@@ -454,7 +446,6 @@ async def test_concurrent_rollback_and_confirm_idempotent(
     either 'settled' or 'rolled_back' — never stuck or flipped back.
     """
     db = tmp_path / "race.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     envelope_id = "env_race"
@@ -497,7 +488,6 @@ async def test_concurrent_rollback_and_confirm_idempotent(
 async def test_double_confirm_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     """Confirming an already-settled draw is a no-op: state stays 'settled'."""
     db = tmp_path / "dbl_confirm.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     await s.create_envelope(
@@ -530,7 +520,6 @@ async def test_double_confirm_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKeys
 async def test_double_rollback_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
     """Rolling back an already-rolled-back draw is a no-op."""
     db = tmp_path / "dbl_rollback.db"
-    ensure_default_envelope(db, tmp_keystore)
     s = BudgetStore(db, tmp_keystore)
 
     await s.create_envelope(

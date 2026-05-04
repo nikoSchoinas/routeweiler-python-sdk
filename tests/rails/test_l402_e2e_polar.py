@@ -40,7 +40,7 @@ from starlette.routing import Route
 from routewiler import Routewiler
 from routewiler.budgets.fmv_provider import CoinGeckoProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import BudgetStore
 from routewiler.funding.lightning import LightningFundingSource, LndClient
 from routewiler.trace.sink_sqlite import TraceSink
 
@@ -184,7 +184,6 @@ class TestL402LivePolar:
         db_path: Path = tmp_path / "polar-usd-test.db"  # type: ignore[operator]
         keystore_root: Path = tmp_path / "polar-usd-keys"  # type: ignore[operator]
         keystore = EnvelopeKeystore(root=keystore_root)
-        ensure_default_envelope(db_path, keystore)
 
         # Use an env-override rate if provided so CI doesn't need a live CoinGecko call;
         # fall back to real CoinGecko for manual Polar runs.
