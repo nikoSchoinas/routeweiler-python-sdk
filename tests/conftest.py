@@ -28,6 +28,8 @@ from eth_account.signers.local import LocalAccount
 
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore, ensure_default_envelope
+from routewiler.credentials.recovery import CredentialRecoverer, NoOpRecoveryStrategy
+from routewiler.credentials.store import CredentialStore
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource
 from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
@@ -178,3 +180,25 @@ async def tmp_budget_store(
     store = BudgetStore(tmp_trace_db_path, tmp_keystore)
     yield store
     await store.aclose()
+
+
+@pytest.fixture
+async def tmp_credential_store(
+    tmp_trace_db_path: Path,
+) -> AsyncGenerator[CredentialStore, None]:
+    """A CredentialStore backed by a fresh temp DB. Shares the path with trace/budget stores."""
+    store = CredentialStore(tmp_trace_db_path)
+    yield store
+    await store.aclose()
+
+
+@pytest.fixture
+async def tmp_recoverer(
+    tmp_credential_store: CredentialStore,
+) -> CredentialRecoverer:
+    """A CredentialRecoverer wired to NoOpRecoveryStrategy (no emitter)."""
+    return CredentialRecoverer(
+        store=tmp_credential_store,
+        strategy=NoOpRecoveryStrategy(),
+        emitter=None,
+    )
