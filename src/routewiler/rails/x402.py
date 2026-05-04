@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Sequence
 from uuid import uuid4
 
 import httpx
@@ -21,10 +20,15 @@ from routewiler.normalized import (
     NormalizedChallenge,
     Payee,
     Price,
+    Rail,
     Resource,
     X402PaymentRequirements,
     X402RailRaw,
 )
+from routewiler.rails.base import SettlementInfo
+
+# Re-export SettlementInfo so existing importers of this module are unaffected.
+__all__ = ["SettlementInfo", "X402Adapter"]
 
 # ---------------------------------------------------------------------------
 # Asset resolution helpers
@@ -113,21 +117,6 @@ _PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED"
 _PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE"
 
 
-@dataclass(frozen=True)
-class SettlementInfo:
-    """Parsed content of the PAYMENT-RESPONSE header (§5.1 wire format).
-
-    All fields except `success` are optional because the spec allows a
-    facilitator to omit them (e.g. in testnet / mock scenarios).
-    """
-
-    success: bool
-    tx_hash: str | None = None
-    network_id: str | None = None
-    payer_address: str | None = None
-    amount_paid: int | None = None  # base units; None if facilitator omits it
-
-
 class X402Adapter:
     """Rail adapter for the x402 v2 protocol.
 
@@ -136,6 +125,8 @@ class X402Adapter:
     Signer:   delegates to the ``x402`` Python SDK (``x402Client`` +
               ``ExactEvmScheme``) and returns the ``PAYMENT-SIGNATURE`` value.
     """
+
+    rail: Rail = "x402"
 
     def __init__(
         self,
@@ -241,6 +232,26 @@ class X402Adapter:
             # Pydantic model — serialize via model_dump to respect field aliases.
             serialized = json.dumps(payload.model_dump(by_alias=True), separators=(",", ":"))
         return base64.b64encode(serialized.encode()).decode()
+
+    def match_funding(
+        self,
+        challenge: NormalizedChallenge,
+        funding: Sequence[EvmFundingSource],
+    ) -> EvmFundingSource | None:
+        """Return the first funding source that can satisfy this x402 challenge."""
+        if not isinstance(challenge.raw, X402RailRaw):
+            return None
+        for pr in challenge.raw.accepts:
+            for fs in funding:
+                if not isinstance(fs, EvmFundingSource):
+                    continue
+                if pr.network != fs.network:
+                    continue
+                pr_asset = _resolve_asset(pr.network, pr.asset)
+                fs_asset = _resolve_asset(fs.network, fs.asset)
+                if pr_asset == fs_asset:
+                    return fs
+        return None
 
     def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
         """Read the PAYMENT-RESPONSE header from a successful reply.
