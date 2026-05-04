@@ -89,7 +89,9 @@ def test_default_when_no_rules_match():
     decision = engine.evaluate(_x402_challenge())
     assert decision.rule_name is None
     assert decision.deny is False
-    assert decision.prefer == ("x402",)
+    # Default block sets no hard prefer filter; all capable adapters are eligible.
+    # Hard filtering only applies when a rule explicitly sets prefer.
+    assert decision.prefer == ()
     assert decision.max_per_call_minor_units is None
 
 
