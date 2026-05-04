@@ -17,6 +17,7 @@ from routewiler._base import RoutewilerModel
 Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
 Scheme = Literal["exact", "upto", "stream"]
 UrlEncoding = Literal["raw", "hash", "drop"]
+ProofType = Literal["txid", "preimage", "spt_id"]
 
 # ---------------------------------------------------------------------------
 # Nested models

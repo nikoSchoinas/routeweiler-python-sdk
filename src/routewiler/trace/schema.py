@@ -6,13 +6,15 @@ from datetime import datetime
 from typing import Literal
 
 from routewiler._base import RoutewilerModel
-from routewiler.normalized import NormalizedChallenge, Rail
+from routewiler.normalized import NormalizedChallenge, ProofType, Rail
+
+# Re-export ProofType so existing importers of this module are unaffected.
+__all__ = ["ProofType"]
 
 # ---------------------------------------------------------------------------
 # Shared type aliases
 # ---------------------------------------------------------------------------
 
-ProofType = Literal["txid", "preimage", "spt_id"]
 FmvQuality = Literal["stablecoin_peg", "coingecko_simple", "fx_leg", "unavailable"]
 TaxCategory = Literal["data_api", "inference", "compute", "other"]
 
@@ -74,7 +76,7 @@ class TraceEvent(RoutewilerModel):
     selected_rail: Rail | None  # None for passthrough and pre-rail-selection error traces
     fallback_from: Rail | None = None  # set when this attempt followed a rail failure
     facilitator: str | None = None
-    funding_source: str
+    funding_source: str | None
     payment: PaymentDetails | None
     outcome: Outcome
     reconciliation: Reconciliation
