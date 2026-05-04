@@ -10,6 +10,7 @@ Week 11 plugs ManifestRecoveryStrategy into the same RecoveryStrategy Protocol.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -83,10 +84,14 @@ class NoOpRecoveryStrategy:
 
 
 class CredentialRecoverer:
-    """Orchestrates credential state transitions on the failed-retry path.
+    """Owns all PERSISTED → {REDEEMED, MANUAL_HOLD} transitions.
 
-    Call attempt_recovery() from _auth.py after a 4xx/5xx retry response or a
-    transport error.  Recovery is in-line and does not spawn background workers.
+    The happy path (2xx on first retry) calls ``mark_redeemed``; failed paths
+    call ``attempt_recovery``.  Both are in-line and do not spawn background
+    workers.
+
+    Call ``attempt_recovery()`` from _auth.py after a 4xx/5xx retry response
+    or a transport error.
     """
 
     def __init__(
@@ -98,6 +103,20 @@ class CredentialRecoverer:
         self._store = store
         self._strategy = strategy
         self._emitter = emitter
+
+    async def mark_redeemed(self, credential_id: str) -> None:
+        """Transition a credential to REDEEMED (happy path: 2xx on first retry).
+
+        Logs and swallows errors so that a failed DB write never blocks the caller
+        — the credential stays PERSISTED and remains visible for manual inspection.
+        """
+        try:
+            await self._store.transition(credential_id, to_state=CredentialState.REDEEMED)
+        except Exception:
+            _log.exception(
+                "Credential REDEEMED transition failed for %r; credential stays PERSISTED.",
+                credential_id,
+            )
 
     async def attempt_recovery(
         self,
@@ -136,10 +155,14 @@ class CredentialRecoverer:
             credential = await self._store.transition(
                 credential_id, to_state=CredentialState.RECOVERING
             )
+        except sqlite3.OperationalError:
+            # Infrastructure failure (e.g. DB busy) — surface it; don't silently eat it.
+            _log.exception("DB error transitioning credential %r to RECOVERING.", credential_id)
+            raise
         except Exception:
+            # Transition rejected (InvalidCredentialTransitionError) or other error —
+            # credential stays PERSISTED for inspection.
             _log.exception("Failed to transition credential %r to RECOVERING.", credential_id)
-            # Don't block the caller — the credential stays in PERSISTED and will
-            # remain visible in the credentials table for manual inspection.
             return RecoveryOutcome(
                 succeeded=False, response=None, reason=ManualHoldReason.EXHAUSTED
             )

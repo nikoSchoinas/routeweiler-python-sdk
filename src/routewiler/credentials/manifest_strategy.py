@@ -11,7 +11,7 @@ import httpx
 
 from routewiler.credentials.manifests.loader import ManifestRegistry
 from routewiler.credentials.recovery import RecoveryOutcome
-from routewiler.credentials.schema import ManualHoldReason
+from routewiler.credentials.schema import L402CredentialPayload, ManualHoldReason
 
 if TYPE_CHECKING:
     from routewiler.credentials.schema import CredentialRecord
@@ -136,9 +136,9 @@ class ManifestRecoveryStrategy:
 
 def _build_authorization_header(credential: CredentialRecord) -> str | None:
     """Reconstruct the L402 Authorization header value from a persisted credential payload."""
-    payload = credential.payload
-    macaroon = payload.get("macaroon")
-    preimage_hex = payload.get("preimage_hex")
+    typed: L402CredentialPayload = credential.payload  # type: ignore[assignment]
+    macaroon = typed.get("macaroon")
+    preimage_hex = typed.get("preimage_hex")
     if not macaroon or not preimage_hex:
         return None
     return f"L402 {macaroon}:{preimage_hex}"

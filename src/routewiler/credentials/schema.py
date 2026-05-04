@@ -4,10 +4,23 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypedDict
 
 from routewiler._base import RoutewilerModel
 from routewiler.normalized import Rail
+
+
+class L402CredentialPayload(TypedDict):
+    """Typed shape for L402 credential payloads stored in CredentialRecord.payload."""
+
+    macaroon: str
+    preimage_hex: str
+    invoice: str
+    payment_hash_hex: str
+
+
+class X402CredentialPayload(TypedDict, total=False):
+    """Typed shape for x402 credential payloads (reserved; x402 does not persist today)."""
 
 
 class CredentialState(StrEnum):
