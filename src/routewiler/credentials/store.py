@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from routewiler._storage import ensure_schema as _ensure_schema
+from routewiler._storage import open_connection as _open_connection
 from routewiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
 from routewiler.errors import CredentialNotFoundError, InvalidCredentialTransitionError
 from routewiler.normalized import Rail
@@ -27,27 +29,6 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
-
-_CREDENTIALS_DDL = """
-CREATE TABLE IF NOT EXISTS credentials (
-    credential_id        TEXT    PRIMARY KEY,
-    request_id           TEXT    NOT NULL,
-    rail                 TEXT    NOT NULL,
-    challenge_url        TEXT    NOT NULL,
-    payload_json         TEXT    NOT NULL,   -- JSON; opaque per-rail
-    state                TEXT    NOT NULL,   -- CredentialState value
-    manual_hold_reason   TEXT,               -- ManualHoldReason value or NULL
-    persisted_at         TEXT    NOT NULL,   -- ISO-8601 UTC
-    redeemed_at          TEXT,               -- ISO-8601 UTC; set on REDEEMED
-    last_transition_at   TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at           TEXT                -- ISO-8601 UTC; from challenge.expires_at
-);
-
-CREATE INDEX IF NOT EXISTS credentials_state ON credentials (state);
-CREATE INDEX IF NOT EXISTS credentials_request ON credentials (request_id);
-CREATE UNIQUE INDEX IF NOT EXISTS credentials_request_rail
-    ON credentials (request_id, rail);
-"""
 
 # ---------------------------------------------------------------------------
 # State machine
@@ -71,12 +52,6 @@ _VALID_TRANSITIONS: dict[CredentialState, set[CredentialState]] = {
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-
-def _ensure_credentials_schema(conn: sqlite3.Connection) -> None:
-    """Idempotently create the credentials table. Safe to call multiple times."""
-    conn.executescript(_CREDENTIALS_DDL)
-    conn.commit()
 
 
 def _row_to_record(row: sqlite3.Row) -> CredentialRecord:
@@ -127,13 +102,9 @@ class CredentialStore:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
-        self._conn = sqlite3.connect(
-            str(db_path), check_same_thread=False, isolation_level=None, timeout=10.0
-        )
+        self._conn = _open_connection(db_path)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        _ensure_credentials_schema(self._conn)
+        _ensure_schema(self._conn)
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -196,6 +167,9 @@ class CredentialStore:
                 to_state=to_state,
                 manual_hold_reason=manual_hold_reason,
             )
+
+    async def start(self) -> None:
+        """No-op lifecycle hook — reserved for future background tasks."""
 
     async def aclose(self) -> None:
         if self._closed:

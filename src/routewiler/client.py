@@ -10,7 +10,7 @@ import httpx
 
 from routewiler._auth import RoutewilerAuth
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore, ensure_default_envelope
+from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore
 from routewiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routewiler.credentials.manifests.loader import ManifestRegistry
 from routewiler.credentials.recovery import CredentialRecoverer, RecoveryStrategy
@@ -115,13 +115,10 @@ class Routewiler:
                 if keystore_root is None
                 else EnvelopeKeystore(root=keystore_root)
             )
-            # Seed the default envelope row (idempotent INSERT OR IGNORE).
-            ensure_default_envelope(trace_sink.db_path, keystore)
-
             budget_store = BudgetStore(trace_sink.db_path, keystore)
 
             # Resolve the envelope's declared currency from the DB.
-            envelope_currency = budget_store.get_currency_sync(envelope_id)
+            envelope_currency = budget_store._get_envelope_currency_sync(envelope_id)
             if envelope_currency is None:
                 raise EnvelopeNotFoundError(
                     f"Envelope '{envelope_id}' not found. "
@@ -267,6 +264,10 @@ class Routewiler:
         """Start background tasks (reaper). Called automatically by __aenter__."""
         if self._budget_store is not None:
             await self._budget_store.start()
+        if self._credential_store is not None:
+            await self._credential_store.start()
+        if self._trace_sink is not None:
+            await self._trace_sink.start()
 
     async def __aenter__(self) -> Routewiler:
         await self._http.__aenter__()

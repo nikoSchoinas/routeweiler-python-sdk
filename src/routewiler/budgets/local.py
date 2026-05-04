@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from routewiler._constants import CLOCK_SKEW_BUFFER_SECONDS, REAPER_INTERVAL_SECONDS
+from routewiler._storage import ensure_schema as _ensure_schema
+from routewiler._storage import open_connection as _open_connection
 from routewiler.budgets.fmv import capture_fmv_snapshot as _capture_fmv_snapshot
 from routewiler.budgets.fmv_provider import FmvProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
@@ -35,57 +37,6 @@ _log = logging.getLogger(__name__)
 DEFAULT_ENVELOPE_ID = "default"
 _DEFAULT_CAP_USD = 100
 _DEFAULT_TTL_DAYS = 30
-
-# ---------------------------------------------------------------------------
-# Budget DDL — owned here so schema changes are colocated with the logic.
-# SqliteTraceSink owns only trace_events; BudgetStore and ensure_default_envelope
-# both call _ensure_budget_schema() to initialize these tables.
-# ---------------------------------------------------------------------------
-
-_BUDGET_DDL = """
-CREATE TABLE IF NOT EXISTS envelopes (
-    id                   TEXT    PRIMARY KEY,
-    cap_minor_units      INTEGER NOT NULL,
-    cap_currency         TEXT    NOT NULL,
-    allowed_rails        TEXT    NOT NULL,   -- JSON array
-    allowed_origins_glob TEXT    NOT NULL,   -- JSON array
-    status               TEXT    NOT NULL,
-    created_at           TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at           TEXT    NOT NULL,   -- ISO-8601 UTC
-    counter_public_key   TEXT    NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS draws (
-    id                          TEXT    PRIMARY KEY,
-    envelope_id                 TEXT    NOT NULL REFERENCES envelopes(id),
-    request_id                  TEXT    NOT NULL,
-    idempotency_key             TEXT    NOT NULL,
-    amount_reserved_minor_units INTEGER NOT NULL,
-    amount_settled_minor_units  INTEGER,
-    rail_quoted                 TEXT    NOT NULL,
-    state                       TEXT    NOT NULL,   -- 'reserved' | 'settled' | 'rolled_back'
-    issued_at                   TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at                  TEXT    NOT NULL,   -- ISO-8601 UTC (+30s clock-skew buffer, §8.4)
-    settled_at                  TEXT,               -- ISO-8601 UTC; set on confirm
-    UNIQUE (envelope_id, idempotency_key)
-);
-
-CREATE INDEX IF NOT EXISTS draws_envelope_state ON draws (envelope_id, state);
-
-CREATE TABLE IF NOT EXISTS envelope_fmv_snapshots (
-    envelope_id  TEXT    PRIMARY KEY REFERENCES envelopes(id),
-    captured_at  TEXT    NOT NULL,   -- ISO-8601 UTC
-    rates_json   TEXT    NOT NULL,   -- JSON object {"sats->usd": "0.00065", ...}
-    quality_json TEXT    NOT NULL    -- JSON object {"sats->usd": "coingecko_simple", ...}
-);
-"""
-
-
-def _ensure_budget_schema(conn: sqlite3.Connection) -> None:
-    """Idempotently create the budget tables. Safe to call multiple times."""
-    conn.executescript(_BUDGET_DDL)
-    conn.commit()
-
 
 # ---------------------------------------------------------------------------
 # _EnvelopeRow — typed dict for SQLite envelope INSERT parameters.
@@ -141,12 +92,9 @@ class BudgetStore:
         self._keystore = keystore
         self._reaper_interval_seconds = reaper_interval_seconds
         self._fmv_provider = fmv_provider
-        self._conn = sqlite3.connect(
-            str(db_path), check_same_thread=False, isolation_level=None, timeout=10.0
-        )
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        _ensure_budget_schema(self._conn)
+        self._conn = _open_connection(db_path)
+        _ensure_schema(self._conn)
+        self._seed_default_envelope_sync()
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -196,11 +144,78 @@ class BudgetStore:
     # Synchronous helpers (safe to call from a synchronous constructor)
     # ------------------------------------------------------------------
 
+    def _seed_default_envelope_sync(self) -> None:
+        """Idempotently insert the 'default' envelope row using this store's connection.
+
+        Cap is read from the ROUTEWILER_DEFAULT_CAP_USD env var (default 100 USD).
+        Uses INSERT OR IGNORE so repeated calls are safe.
+        Called once from __init__ after ensure_schema.
+        """
+        cap_usd = int(os.environ.get("ROUTEWILER_DEFAULT_CAP_USD", _DEFAULT_CAP_USD))
+        cap_minor = cap_usd * 100  # USD cents
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(days=_DEFAULT_TTL_DAYS)
+
+        if not self._keystore.exists(DEFAULT_ENVELOPE_ID):
+            private_key = self._keystore.create(DEFAULT_ENVELOPE_ID)
+            pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+        else:
+            pub_key_b64 = self._keystore.public_key_b64(DEFAULT_ENVELOPE_ID)
+
+        row: _EnvelopeRow = {
+            "id": DEFAULT_ENVELOPE_ID,
+            "cap_minor_units": cap_minor,
+            "cap_currency": "usd",
+            "allowed_rails": json.dumps(["x402"]),
+            "allowed_origins_glob": json.dumps(["*"]),
+            "status": "active",
+            "created_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "counter_public_key": pub_key_b64,
+        }
+        self._conn.execute(
+            """
+            INSERT OR IGNORE INTO envelopes (
+                id, cap_minor_units, cap_currency,
+                allowed_rails, allowed_origins_glob,
+                status, created_at, expires_at, counter_public_key
+            ) VALUES (
+                :id, :cap_minor_units, :cap_currency,
+                :allowed_rails, :allowed_origins_glob,
+                :status, :created_at, :expires_at, :counter_public_key
+            )
+            """,
+            row,
+        )
+        # Write FMV snapshot only when the envelope row was actually inserted.
+        changes_row = self._conn.execute("SELECT changes()").fetchone()
+        if changes_row is not None and changes_row[0]:
+            snapshot_rates, snapshot_quality = _capture_fmv_snapshot("usd")
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO envelope_fmv_snapshots
+                    (envelope_id, captured_at, rates_json, quality_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    DEFAULT_ENVELOPE_ID,
+                    now.isoformat(),
+                    json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
+                    json.dumps(snapshot_quality),
+                ),
+            )
+
     def envelope_exists_sync(self, envelope_id: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM envelopes WHERE id = ?", (envelope_id,)).fetchone()
         return row is not None
 
-    def get_currency_sync(self, envelope_id: str) -> str | None:
+    def _get_envelope_currency_sync(self, envelope_id: str) -> str | None:
+        """Return the cap_currency for an envelope, or None if not found.
+
+        Synchronous — runs on the already-open connection so it is safe to call
+        from the Routewiler constructor before the event loop is available.
+        This is the one permitted sync DB read in the constructor path.
+        """
         row = self._conn.execute(
             "SELECT cap_currency FROM envelopes WHERE id = ?", (envelope_id,)
         ).fetchone()
@@ -503,88 +518,3 @@ class BudgetStore:
             "UPDATE draws SET state='rolled_back' WHERE id=? AND state='reserved'",
             (draw_id,),
         )
-
-
-# ---------------------------------------------------------------------------
-# ensure_default_envelope — seeds the 'default' row on first client construction
-# ---------------------------------------------------------------------------
-
-
-def ensure_default_envelope(db_path: Path, keystore: EnvelopeKeystore) -> tuple[str, str]:
-    """Idempotently insert the 'default' envelope row; return (id, cap_currency).
-
-    Cap:            ROUTEWILER_DEFAULT_CAP_USD env var (default 100 USD → 10000 cents).
-    Currency:       "usd".
-    Allowed rails:  all four rails.
-    Allowed origins: ["*"].
-    TTL:            30 days from now (on first creation; existing rows unchanged).
-
-    Uses INSERT OR IGNORE so the function is safe to call on every client
-    construction without hitting the DB unnecessarily.
-    """
-    cap_usd = int(os.environ.get("ROUTEWILER_DEFAULT_CAP_USD", _DEFAULT_CAP_USD))
-    cap_minor = cap_usd * 100  # USD cents
-
-    now = datetime.now(UTC)
-    expires_at = now + timedelta(days=_DEFAULT_TTL_DAYS)
-
-    # Generate keypair if it doesn't exist yet (idempotent).
-    if not keystore.exists(DEFAULT_ENVELOPE_ID):
-        private_key = keystore.create(DEFAULT_ENVELOPE_ID)
-        pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
-    else:
-        pub_key_b64 = keystore.public_key_b64(DEFAULT_ENVELOPE_ID)
-
-    row: _EnvelopeRow = {
-        "id": DEFAULT_ENVELOPE_ID,
-        "cap_minor_units": cap_minor,
-        "cap_currency": "usd",
-        "allowed_rails": json.dumps(["x402"]),  # expanded per-rail as adapters are registered
-        "allowed_origins_glob": json.dumps(["*"]),
-        "status": "active",
-        "created_at": now.isoformat(),
-        "expires_at": expires_at.isoformat(),
-        "counter_public_key": pub_key_b64,
-    }
-
-    snapshot_rates, snapshot_quality = _capture_fmv_snapshot("usd")
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    try:
-        _ensure_budget_schema(conn)
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO envelopes (
-                id, cap_minor_units, cap_currency,
-                allowed_rails, allowed_origins_glob,
-                status, created_at, expires_at, counter_public_key
-            ) VALUES (
-                :id, :cap_minor_units, :cap_currency,
-                :allowed_rails, :allowed_origins_glob,
-                :status, :created_at, :expires_at, :counter_public_key
-            )
-            """,
-            row,
-        )
-        # Write FMV snapshot only when the envelope row was actually inserted.
-        if conn.execute("SELECT changes()").fetchone()[0]:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO envelope_fmv_snapshots
-                    (envelope_id, captured_at, rates_json, quality_json)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    DEFAULT_ENVELOPE_ID,
-                    now.isoformat(),
-                    json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
-                    json.dumps(snapshot_quality),
-                ),
-            )
-        conn.commit()
-        result = conn.execute(
-            "SELECT id, cap_currency FROM envelopes WHERE id = ?", (DEFAULT_ENVELOPE_ID,)
-        ).fetchone()
-    finally:
-        conn.close()
-
-    return str(result[0]), str(result[1])

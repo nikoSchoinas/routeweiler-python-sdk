@@ -7,36 +7,12 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from routewiler._storage import ensure_schema as _ensure_schema
+from routewiler._storage import open_connection as _open_connection
+
 if TYPE_CHECKING:
     from routewiler.normalized import UrlEncoding
     from routewiler.trace.schema import TraceEvent
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS trace_events (
-    request_id              TEXT    PRIMARY KEY,
-    envelope_id             TEXT    NOT NULL,
-    selected_rail           TEXT,               -- NULL for passthrough / pre-rail-selection errors
-    fallback_from           TEXT,               -- NULL when no failover occurred
-    facilitator             TEXT,
-    http_status             INTEGER NOT NULL,
-    service_delivered       INTEGER NOT NULL,   -- 0 | 1
-    amount_native           TEXT,               -- base-units as string (bigint-safe)
-    amount_native_currency  TEXT,
-    amount_envelope         REAL,
-    amount_envelope_currency TEXT,
-    fmv_quality             TEXT,
-    ts_start                TEXT    NOT NULL,   -- ISO-8601 UTC
-    ts_end                  TEXT    NOT NULL,   -- ISO-8601 UTC
-    shipped_at              TEXT,               -- set by hosted uploader (Week 18)
-    payload                 TEXT    NOT NULL    -- full TraceEvent JSON
-);
-
-CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
-    ON trace_events (envelope_id, ts_start DESC);
-"""
-
-# Migration: add fallback_from column to existing databases that pre-date W7.
-_MIGRATION_ADD_FALLBACK_FROM = "ALTER TABLE trace_events ADD COLUMN fallback_from TEXT"
 
 
 class SqliteTraceSink:
@@ -50,12 +26,8 @@ class SqliteTraceSink:
     def __init__(self, db_path: Path, url_mode: UrlEncoding) -> None:
         self._db_path = db_path
         self._url_mode = url_mode
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.executescript(_DDL)
-        self._conn.commit()
-        _migrate_fallback_from(self._conn)
+        self._conn = _open_connection(db_path)
+        _ensure_schema(self._conn)
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -66,6 +38,9 @@ class SqliteTraceSink:
     @property
     def url_mode(self) -> UrlEncoding:
         return self._url_mode
+
+    async def start(self) -> None:
+        """No-op lifecycle hook — reserved for future background tasks."""
 
     async def emit(self, event: TraceEvent) -> None:
         """Persist one TraceEvent row. Silently ignores duplicate request_ids."""
@@ -127,14 +102,6 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
         "ts_start": event.timestamp_start.isoformat(),
         "ts_end": event.timestamp_end.isoformat(),
     }
-
-
-def _migrate_fallback_from(conn: sqlite3.Connection) -> None:
-    """Add fallback_from column to existing trace_events tables (idempotent)."""
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(trace_events)")}
-    if "fallback_from" not in existing:
-        conn.execute(_MIGRATION_ADD_FALLBACK_FROM)
-        conn.commit()
 
 
 class TraceSink:
