@@ -2,27 +2,30 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import httpx
 
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
-from routewiler.budgets.fmv import amount_to_envelope_minor_units
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
+    NoFeasibleRailError,
     PolicyDeniedError,
     PolicyMaxPerCallExceededError,
     RailNotSupportedError,
 )
 from routewiler.policy.engine import PolicyEngine
-from routewiler.rails.base import RailAdapter
+from routewiler.routing.router import Router
+from routewiler.routing.sticky import StickyCache, StickyKey
 
 if TYPE_CHECKING:
+    from routewiler.normalized import Rail
     from routewiler.trace.emitter import TraceEmitter
 
 _log = logging.getLogger(__name__)
@@ -42,15 +45,23 @@ class RoutewilerAuth(httpx.Auth):
 
     def __init__(
         self,
-        adapters: list[RailAdapter],
         *,
+        router: Router,
+        sticky_cache: StickyCache,
+        funding: list[Any],
+        agent_id: str | None = None,
+        session_id: str | None = None,
         emitter: TraceEmitter | None = None,
         budget_store: BudgetStore | None = None,
         envelope_id: str | None = None,
         envelope_currency: str | None = None,
         policy_engine: PolicyEngine | None = None,
     ) -> None:
-        self._adapters = adapters
+        self._router = router
+        self._sticky_cache = sticky_cache
+        self._funding = funding
+        self._agent_id = agent_id
+        self._session_id = session_id
         self._emitter = emitter
         self._budget_store = budget_store
         self._envelope_id = envelope_id
@@ -82,101 +93,164 @@ class RoutewilerAuth(httpx.Auth):
         # Drain the 402 body so the connection returns to the pool.
         await response.aread()
 
-        adapter = next((a for a in self._adapters if a.can_handle(response)), None)
-        if adapter is None:
-            ts_end = datetime.now(UTC)
-            err = RailNotSupportedError(
-                f"No rail adapter can handle the 402 from {request.url}. "
-                "Check that the server uses a supported rail (x402, L402, MPP) "
-                "and that you have configured the matching funding source."
-            )
-            if self._emitter:
-                await self._emitter.emit_error(
-                    request=request,
-                    response=response,
-                    error=err,
-                    challenge=None,
-                    ts_start=ts_start,
-                    ts_end=ts_end,
-                )
-            raise err
-
-        # Phase 1: parse the 402 challenge.
-        challenge = None
-        try:
-            challenge = adapter.parse(request, response)
-        except Exception as exc:
-            ts_end = datetime.now(UTC)
-            if self._emitter:
-                await self._emitter.emit_error(
-                    request=request,
-                    response=response,
-                    error=exc,
-                    challenge=None,
-                    ts_start=ts_start,
-                    ts_end=ts_end,
-                )
-            raise
-
-        # Phase 1b: policy evaluation — single evaluate() call covers both gates.
-        decision = (
-            self._policy_engine.evaluate(challenge) if self._policy_engine is not None else None
+        request_id = uuid4().hex
+        sticky_key = StickyKey(
+            origin=_origin(request.url),
+            agent_id=self._agent_id,
+            session_id=self._session_id,
         )
-        if decision is not None and decision.deny:
-            ts_end = datetime.now(UTC)
-            deny_err = PolicyDeniedError(
-                reason=decision.reason,
-                rule_name=decision.rule_name,
-            )
-            if self._emitter:
-                await self._emitter.emit_error(
+
+        # Load FMV snapshot once per 402 (needed by router for cost scoring).
+        fmv_snapshot = None
+        if self._budget_store is not None and self._envelope_id is not None:
+            fmv_snapshot = await self._budget_store.load_fmv_snapshot(self._envelope_id)
+
+        excluded_rails: frozenset[Rail] = frozenset()
+        prior_rail: Rail | None = None
+        attempt = 0
+
+        while True:
+            # -----------------------------------------------------------------
+            # Routing phase: select the best feasible rail.
+            # -----------------------------------------------------------------
+            sticky_rail = self._sticky_cache.lookup(sticky_key)
+            try:
+                choice = await self._router.decide(
                     request=request,
                     response=response,
-                    error=deny_err,
-                    challenge=challenge,
-                    ts_start=ts_start,
-                    ts_end=ts_end,
+                    policy_engine=self._policy_engine,
+                    funding=self._funding,
+                    envelope_currency=self._envelope_currency,
+                    fmv_snapshot=fmv_snapshot,
+                    excluded_rails=excluded_rails,
+                    sticky_rail=sticky_rail,
+                    prior_rail=prior_rail,
+                    attempt=attempt,
                 )
-            raise deny_err
-
-        # Phase 2: budget draw — reserve capacity before committing to payment.
-        receipt: DrawReceipt | None = None
-        if (
-            self._budget_store is not None
-            and self._envelope_id is not None
-            and self._envelope_currency is not None
-        ):
-            idempotency_key = uuid4().hex
-            request_id = uuid4().hex
-            try:
-                snapshot = await self._budget_store.load_fmv_snapshot(self._envelope_id)
-                amount_envelope, _fmv_quality = amount_to_envelope_minor_units(
-                    challenge.price.currency,
-                    challenge.price.amount,
-                    self._envelope_currency,
-                    snapshot_rates=snapshot,
-                )
-                # Policy max_per_call gate — checked after FMV conversion so the
-                # limit is expressed in the same currency as the envelope cap.
-                # Raises inside the try so the outer except handles emit.
-                if (
-                    decision is not None
-                    and decision.max_per_call_minor_units is not None
-                    and amount_envelope > decision.max_per_call_minor_units
-                ):
-                    raise PolicyMaxPerCallExceededError(
-                        rule_name=decision.rule_name,
-                        requested=amount_envelope,
-                        limit=decision.max_per_call_minor_units,
+            except (RailNotSupportedError, PolicyDeniedError, NoFeasibleRailError) as err:
+                ts_end = datetime.now(UTC)
+                if self._emitter:
+                    await self._emitter.emit_error(
+                        request=request,
+                        response=response,
+                        error=err,
+                        challenge=None,
+                        ts_start=ts_start,
+                        ts_end=ts_end,
+                        fallback_from=prior_rail,
                     )
-                receipt = await self._budget_store.draw(
-                    envelope_id=self._envelope_id,
-                    request_id=request_id,
-                    idempotency_key=idempotency_key,
-                    amount_reserved_minor_units=amount_envelope,
-                    rail_quoted=challenge.rail,
+                raise
+
+            challenge = choice.candidate.challenge
+            adapter = choice.candidate.adapter
+            decision = choice.candidate.policy_decision
+
+            # -----------------------------------------------------------------
+            # Policy max_per_call gate (post-routing, §7.1 step 2 applies the
+            # prefer filter; max_per_call is amount-based and rail-agnostic).
+            # -----------------------------------------------------------------
+            if (
+                decision.max_per_call_minor_units is not None
+                and self._envelope_currency is not None
+                and choice.candidate.quote_envelope_minor_units > decision.max_per_call_minor_units
+            ):
+                ts_end = datetime.now(UTC)
+                exc = PolicyMaxPerCallExceededError(
+                    rule_name=decision.rule_name,
+                    requested=choice.candidate.quote_envelope_minor_units,
+                    limit=decision.max_per_call_minor_units,
                 )
+                if self._emitter:
+                    await self._emitter.emit_error(
+                        request=request,
+                        response=response,
+                        error=exc,
+                        challenge=challenge,
+                        ts_start=ts_start,
+                        ts_end=ts_end,
+                        fallback_from=choice.fallback_from,
+                    )
+                raise exc
+
+            # -----------------------------------------------------------------
+            # Budget draw phase — reserve capacity before committing to payment.
+            # -----------------------------------------------------------------
+            receipt: DrawReceipt | None = None
+            if (
+                self._budget_store is not None
+                and self._envelope_id is not None
+                and self._envelope_currency is not None
+            ):
+                idempotency_key = _make_idempotency_key(request_id, attempt)
+                try:
+                    receipt = await self._budget_store.draw(
+                        envelope_id=self._envelope_id,
+                        request_id=request_id,
+                        idempotency_key=idempotency_key,
+                        amount_reserved_minor_units=choice.candidate.quote_envelope_minor_units,
+                        rail_quoted=adapter.rail,
+                    )
+                except Exception as exc:
+                    ts_end = datetime.now(UTC)
+                    if self._emitter:
+                        await self._emitter.emit_error(
+                            request=request,
+                            response=response,
+                            error=exc,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            ts_end=ts_end,
+                            fallback_from=choice.fallback_from,
+                        )
+                    raise  # budget errors are not failover-able
+
+            # -----------------------------------------------------------------
+            # Sign phase — produce the payment header.
+            # On failure: rollback, exclude this rail, attempt failover.
+            # -----------------------------------------------------------------
+            try:
+                payment_header = await adapter.sign(challenge)
+            except Exception:
+                _log.warning(
+                    "Sign failed for rail %r on attempt %d; rolling back and trying next rail.",
+                    adapter.rail, attempt,
+                )
+                if receipt is not None and self._budget_store is not None:
+                    try:
+                        await self._budget_store.rollback(receipt.receipt_id)
+                    except Exception:
+                        _log.exception(
+                            "Rollback failed after sign error; draw will expire via reaper."
+                        )
+                self._sticky_cache.forget(sticky_key)
+                excluded_rails = excluded_rails | {adapter.rail}
+                prior_rail = adapter.rail
+                attempt += 1
+                continue
+
+            retry = httpx.Request(
+                method=request.method,
+                url=request.url,
+                headers={**dict(request.headers), _PAYMENT_SIGNATURE_HEADER: payment_header},
+                content=request.content,
+                extensions=request.extensions,
+            )
+            ts_retry = datetime.now(UTC)
+
+            # -----------------------------------------------------------------
+            # Yield retry — may raise on transport error.
+            # On transport error: rollback, emit error trace, attempt failover.
+            # -----------------------------------------------------------------
+            try:
+                final_response = yield retry
             except Exception as exc:
+                if receipt is not None and self._budget_store is not None:
+                    try:
+                        await self._budget_store.rollback(receipt.receipt_id)
+                    except Exception:
+                        _log.exception(
+                            "Rollback failed after transport error; draw will expire via reaper."
+                        )
                 ts_end = datetime.now(UTC)
                 if self._emitter:
                     await self._emitter.emit_error(
@@ -186,87 +260,77 @@ class RoutewilerAuth(httpx.Auth):
                         challenge=challenge,
                         ts_start=ts_start,
                         ts_end=ts_end,
+                        fallback_from=choice.fallback_from,
                     )
-                raise
+                self._sticky_cache.forget(sticky_key)
+                excluded_rails = excluded_rails | {adapter.rail}
+                prior_rail = adapter.rail
+                attempt += 1
+                continue
 
-        # Phase 3: sign the challenge.
-        payment_header: str
-        try:
-            payment_header = await adapter.sign(challenge)
-        except Exception as exc:
-            if receipt is not None and self._budget_store is not None:
-                try:
-                    await self._budget_store.rollback(receipt.receipt_id)
-                except Exception:
-                    _log.exception("Rollback failed after sign error; draw will expire via reaper.")
             ts_end = datetime.now(UTC)
-            if self._emitter:
-                await self._emitter.emit_error(
-                    request=request,
-                    response=response,
-                    error=exc,
-                    challenge=challenge,
-                    ts_start=ts_start,
-                    ts_end=ts_end,
-                )
-            raise
 
-        retry = httpx.Request(
-            method=request.method,
-            url=request.url,
-            headers={**dict(request.headers), _PAYMENT_SIGNATURE_HEADER: payment_header},
-            content=request.content,
-            extensions=request.extensions,
-        )
-        ts_retry = datetime.now(UTC)
-        try:
-            final_response = yield retry
-        except Exception as exc:
+            # Tag the final response so the passthrough hook skips it.
+            final_response.extensions["routewiler_emitted"] = True
+
+            # -----------------------------------------------------------------
+            # Phase 4: confirm or rollback the draw based on the final HTTP status.
+            # -----------------------------------------------------------------
             if receipt is not None and self._budget_store is not None:
-                try:
-                    await self._budget_store.rollback(receipt.receipt_id)
-                except Exception:
-                    _log.exception(
-                        "Rollback failed after transport error; draw will expire via reaper."
-                    )
-            raise exc
-        ts_end = datetime.now(UTC)
+                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+                    # Use the reserved amount as the settled amount.  For x402 'exact' scheme
+                    # reserved == settled by definition.  For 'upto' scheme this is
+                    # conservative (may count more than actually settled); a proper FMV
+                    # re-conversion for upto ships with the upto rail adapter.
+                    try:
+                        await self._budget_store.confirm(
+                            receipt.receipt_id, receipt.amount_reserved_minor_units
+                        )
+                    except Exception:
+                        _log.exception("Confirm failed; draw will stay reserved until reaper.")
+                else:
+                    try:
+                        await self._budget_store.rollback(receipt.receipt_id)
+                    except Exception:
+                        _log.exception(
+                            "Rollback failed after error response; draw will expire via reaper."
+                        )
 
-        # Tag the final response so the passthrough hook skips it.
-        final_response.extensions["routewiler_emitted"] = True
+            # Update sticky cache on successful payment.
+            self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
 
-        # Phase 4: confirm or rollback the draw based on the final HTTP status.
-        if receipt is not None and self._budget_store is not None:
-            if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-                # Use the reserved amount as the settled amount.  For x402 'exact' scheme
-                # reserved == settled by definition.  For 'upto' scheme this is
-                # conservative (may count more than actually settled); a proper FMV
-                # re-conversion for upto ships with the upto rail adapter.
-                try:
-                    await self._budget_store.confirm(
-                        receipt.receipt_id, receipt.amount_reserved_minor_units
-                    )
-                except Exception:
-                    _log.exception("Confirm failed; draw will stay reserved until reaper.")
-            else:
-                try:
-                    await self._budget_store.rollback(receipt.receipt_id)
-                except Exception:
-                    _log.exception(
-                        "Rollback failed after error response; draw will expire via reaper."
-                    )
-
-        if self._emitter:
-            settlement = None
-            # Only X402Adapter exposes parse_settlement today.
-            if hasattr(adapter, "parse_settlement"):
+            if self._emitter:
                 settlement = adapter.parse_settlement(final_response)
-            await self._emitter.emit_paid(
-                request=request,
-                challenge=challenge,
-                settlement=settlement,
-                final_response=final_response,
-                ts_start=ts_start,
-                ts_retry=ts_retry,
-                ts_end=ts_end,
-            )
+                await self._emitter.emit_paid(
+                    request=request,
+                    challenge=challenge,
+                    settlement=settlement,
+                    final_response=final_response,
+                    ts_start=ts_start,
+                    ts_retry=ts_retry,
+                    ts_end=ts_end,
+                    fallback_from=choice.fallback_from,
+                )
+
+            return  # success — exit the failover loop
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _origin(url: httpx.URL) -> str:
+    """Return the origin of a URL as "{scheme}://{host}:{port}"."""
+    default_port = 443 if url.scheme == "https" else 80
+    port = url.port if url.port is not None else default_port
+    return f"{url.scheme}://{url.host}:{port}"
+
+
+def _make_idempotency_key(request_id: str, attempt: int) -> str:
+    """Deterministic idempotency key derived from (request_id, attempt).
+
+    Using SHA-256 means a retried failover with the same (request_id, attempt)
+    naturally collapses to the same draw (§7.3: "naturally idempotent").
+    """
+    return hashlib.sha256(f"{request_id}:{attempt}".encode()).hexdigest()

@@ -16,6 +16,8 @@ from routewiler.funding.evm import EvmFundingSource
 from routewiler.policy.dsl import PolicyFile, compute_policy_hash, default_policy
 from routewiler.policy.engine import PolicyEngine
 from routewiler.rails.x402 import X402Adapter
+from routewiler.routing.router import Router
+from routewiler.routing.sticky import StickyCache
 from routewiler.trace.emitter import TraceEmitter
 from routewiler.trace.sink_sqlite import SqliteTraceSink
 
@@ -56,6 +58,11 @@ class Routewiler:
                          no enforcement runs.
         trace_sink:      SQLite trace sink. Pass ``TraceSink.sqlite(path)`` to
                          enable local tracing. Defaults to ``None`` (no tracing).
+        agent_id:        Optional identifier for the calling agent. Written into
+                         TraceEvent.agent_id and used as part of the sticky routing key.
+        session_id:      Optional session identifier. Used as part of the sticky routing
+                         key so multiple logical sessions sharing one client get
+                         independent sticky state.
     """
 
     def __init__(
@@ -66,6 +73,8 @@ class Routewiler:
         budget_envelope: str | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._funding = funding
         self._trace_sink = trace_sink
@@ -108,13 +117,20 @@ class Routewiler:
                 funding_label=_funding_label(funding),
                 url_mode=trace_sink.url_mode,
                 policy_hash=_policy_hash,
+                agent_id=agent_id,
             )
 
         self._budget_store = budget_store
         self._emitter = emitter
         adapters = _build_adapters(funding)
+        router = Router(adapters)
+        sticky_cache = StickyCache()
         auth = RoutewilerAuth(
-            adapters,
+            router=router,
+            sticky_cache=sticky_cache,
+            funding=funding,
+            agent_id=agent_id,
+            session_id=session_id,
             emitter=emitter,
             budget_store=budget_store,
             envelope_id=envelope_id if budget_store is not None else None,
