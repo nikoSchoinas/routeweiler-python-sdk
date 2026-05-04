@@ -28,5 +28,5 @@ class EvmFundingSource:
     asset: str
 
     def balance(self) -> int:
-        # On-chain balance probe — wired in Week 11 (routing engine).
-        raise NotImplementedError("balance probe not available until W11")
+        # On-chain balance probe — deferred to a future month (post-MVP routing signals).
+        raise NotImplementedError("balance probe not yet implemented")

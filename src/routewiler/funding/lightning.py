@@ -121,7 +121,7 @@ class LndClient:
         The lazy import keeps lnd-grpc-client optional at module load time.
         """
         try:
-            import lndgrpc  # type: ignore[import-not-found]  # noqa: PLC0415
+            import lndgrpc  # type: ignore[import-untyped]  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 "lnd-grpc-client is required for L402 payments. "

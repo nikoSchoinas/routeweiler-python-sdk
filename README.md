@@ -53,3 +53,12 @@ async with Routewiler(
 
 Tracing is disabled by default (`trace_sink=None`). Hosted trace upload and the
 `url_mode="hash"` privacy option ship in a later release.
+
+## Lightning (L402) payments
+
+L402 payments require a running Lightning node. Routewiler supports any node
+reachable over the LND gRPC interface — [LND](https://github.com/lightningnetwork/lnd),
+[Voltage](https://voltage.cloud), and [Greenlight](https://blockstream.com/lightning/greenlight/)
+all work. Pass `LightningFundingSource` (from `routewiler.funding.lightning`) with your
+node's gRPC host, port, macaroon, and TLS cert. See `funding/lightning.py` for the full
+API and `tests/rails/test_l402_e2e_polar.py` for a live integration test using Polar regtest.
