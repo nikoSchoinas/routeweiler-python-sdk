@@ -14,12 +14,13 @@ from routewiler.normalized import (
     NormalizedChallenge,
     Payee,
     Price,
+    ProofType,
     Rail,
     Resource,
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routewiler.rails.base import RailAdapter, SettlementInfo
+from routewiler.rails.base import PaymentResult, RailAdapter, SettlementInfo
 
 # Sentinel object returned by match_funding when the test does not supply a real
 # EvmFundingSource.  The router only checks truthiness (None vs. non-None), so
@@ -74,14 +75,16 @@ class MockRailAdapter:
     parse_challenge:
         The challenge returned by ``parse`` (defaults to a synthetic one).
     sign_result:
-        The header value returned by ``sign``.  If None, ``sign`` raises.
+        The header value returned by ``pay``.  If None, ``pay`` raises.
     sign_error:
-        Exception raised by ``sign`` when ``sign_result`` is None.
+        Exception raised by ``pay`` when ``sign_result`` is None.
     has_funding:
         When True (default), ``match_funding`` returns a real funding source if
         one is present in the list, or a sentinel mock if the list is empty.
         When False, ``match_funding`` always returns None (simulating no match).
     """
+
+    proof_type: ProofType = "txid"
 
     def __init__(
         self,
@@ -131,6 +134,25 @@ class MockRailAdapter:
         if self._sign_result is None:
             raise self._sign_error
         return self._sign_result
+
+    async def pay(self, challenge: NormalizedChallenge, receipt: Any = None) -> PaymentResult:
+        self.sign_call_count += 1
+        if self._sign_result is None:
+            raise self._sign_error
+        return PaymentResult(
+            header_name="PAYMENT-SIGNATURE",
+            header_value=self._sign_result,
+            credential=None,
+            proof_type=self.proof_type,
+            proof_value=None,
+        )
+
+    async def confirm(
+        self,
+        result: PaymentResult,
+        response: httpx.Response,
+    ) -> SettlementInfo | None:
+        return self.parse_settlement(response)
 
     def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
         return None
