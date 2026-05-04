@@ -35,6 +35,8 @@ dependencies = [
     "x402[evm]>=2.6,<3",
     "cryptography>=43,<45",
     "pyyaml>=6,<7",
+    "pymacaroons>=0.13,<1",
+    "lnd-grpc-client>=0.5,<1",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +51,7 @@ dev = [
     "mypy>=1.15",
     "python-dotenv>=1",
     "types-PyYAML>=6",
+    "types-protobuf",
 ]
 
 [project.urls]
@@ -117,6 +120,11 @@ ignore = [
     "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
     "PLR2004",  # HTTP threshold constant is imported but some checkers still flag sub-expressions
 ]
+"src/routewiler/rails/_bolt11.py" = [
+    "PLR0912",  # BOLT-11 decoder parses many tagged field types; branches are spec-faithful
+    "PLR0915",  # BOLT-11 decode() has many sequential spec steps; not reducible without obscuring
+    "PLR2004",  # Numeric literals are BOLT-11 spec constants (tag IDs, bit widths, group counts)
+]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -146,5 +154,5 @@ pythonpath  = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "live: requires --run-live flag and env-var-funded Base-Sepolia test wallet",
+    "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402)",
 ]
