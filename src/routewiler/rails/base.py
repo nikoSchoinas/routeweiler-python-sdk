@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import httpx
 
-from routewiler.normalized import NormalizedChallenge, Rail
+from routewiler.normalized import NormalizedChallenge, ProofType, Rail
 
 if TYPE_CHECKING:
-    from routewiler.funding.evm import EvmFundingSource
+    from routewiler.budgets.schema import DrawReceipt
+    from routewiler.funding import FundingSource
 
 
 @dataclass(frozen=True)
@@ -29,16 +30,58 @@ class SettlementInfo:
     amount_paid: int | None = None  # base units; None if facilitator omits it
 
 
+@dataclass(frozen=True)
+class PaymentResult:
+    """Output of ``RailAdapter.pay()``.
+
+    For x402-style adapters the result carries a header to attach to the retry.
+    For L402 (Month 3) ``header_name`` / ``header_value`` are None and
+    ``credential`` carries the persisted ``{macaroon, preimage}`` pair.
+
+    Attributes:
+        header_name:   HTTP header to set on the retry request (e.g.
+                       ``"PAYMENT-SIGNATURE"`` for x402); ``None`` for
+                       credential-based rails like L402.
+        header_value:  The header string; ``None`` for L402.
+        credential:    Rail-specific persisted credential (e.g.
+                       ``{"macaroon": ..., "preimage": ...}`` for L402);
+                       ``None`` for x402.
+        proof_type:    Category of payment proof produced by this rail.
+        proof_value:   Proof string (preimage hex for L402; x402 fills this
+                       via ``confirm()`` after the server returns the
+                       PAYMENT-RESPONSE header; ``None`` until then).
+    """
+
+    header_name: str | None
+    header_value: str | None
+    credential: dict[str, Any] | None
+    proof_type: ProofType
+    proof_value: str | None
+
+
 @runtime_checkable
 class RailAdapter(Protocol):
     """Protocol every rail adapter implements.
 
-    Week 2 surface: detect → parse → sign → parse_settlement.
-    Week 3+: pay(challenge, funding, receipt) + confirm(result).
+    The adapter lifecycle per payment:
+        1. ``can_handle``   — detect a 402 as belonging to this rail.
+        2. ``parse``        — decode the challenge into ``NormalizedChallenge``.
+        3. ``match_funding``— confirm a funding source is available.
+        4. ``pay``          — produce a ``PaymentResult`` (signs + builds headers
+                              for x402-style rails; pays invoice for L402).
+        5. ``confirm``      — read the server's settlement proof from the response.
+
+    ``sign`` and ``parse_settlement`` remain on the Protocol for backward
+    compatibility; x402 adapters implement them and ``pay``/``confirm`` delegate
+    to them by default.  L402 and future adapters override ``pay``/``confirm``
+    directly.
     """
 
     rail: Rail
     """Rail identity (e.g. ``"x402"``) — maps policy prefer lists to adapters."""
+
+    proof_type: ProofType
+    """Proof category produced by this rail (``"txid"``, ``"preimage"``, ``"spt_id"``)."""
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True if this adapter recognizes the 402 challenge."""
@@ -54,8 +97,8 @@ class RailAdapter(Protocol):
     def match_funding(
         self,
         challenge: NormalizedChallenge,
-        funding: Sequence[EvmFundingSource],
-    ) -> EvmFundingSource | None:
+        funding: Sequence[FundingSource],
+    ) -> FundingSource | None:
         """Return the first funding source that can satisfy this challenge, or None.
 
         Called by the router after parsing to check funding availability before
@@ -63,18 +106,48 @@ class RailAdapter(Protocol):
         """
         ...
 
+    async def pay(
+        self,
+        challenge: NormalizedChallenge,
+        receipt: DrawReceipt | None = None,
+    ) -> PaymentResult:
+        """Execute the payment and return a PaymentResult.
+
+        For x402: signs the EIP-3009 authorization and returns the
+        PAYMENT-SIGNATURE header.  For L402 (Month 3): pays the Lightning
+        invoice and returns the macaroon+preimage credential.
+
+        Raises SigningError (or a rail-specific payment error) on failure.
+        """
+        ...
+
+    async def confirm(
+        self,
+        result: PaymentResult,
+        response: httpx.Response,
+    ) -> SettlementInfo | None:
+        """Read settlement proof from the server's successful reply.
+
+        For x402: decodes the PAYMENT-RESPONSE header into SettlementInfo.
+        For L402: returns a minimal SettlementInfo with the preimage as proof.
+
+        Returns None if no settlement proof is present (mock/testnet).
+        """
+        ...
+
     async def sign(self, challenge: NormalizedChallenge) -> str:
         """Produce the payment header value for the retry request.
 
-        Returns the raw string to set as the PAYMENT-SIGNATURE (x402),
-        Authorization (L402), or X-MPP-AUTHORIZATION (MPP) header.
-        Raises SigningError on failure.
+        Legacy method — kept for x402 adapters.  New adapters should
+        override ``pay()`` instead.  ``pay()`` calls this by default for
+        x402-style adapters.
         """
         ...
 
     def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
         """Read payment proof from the server's successful reply headers.
 
-        Returns None if the header is absent or cannot be decoded.
+        Legacy method — kept for x402 adapters.  ``confirm()`` calls this
+        by default.  Returns None if the header is absent or cannot be decoded.
         """
         ...
