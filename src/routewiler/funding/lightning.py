@@ -60,15 +60,24 @@ class LightningFundingSource:
     async def create(
         cls,
         client: LightningNodeClient,
-        network: Literal["bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"],
+        network: Literal[
+            "bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"
+        ],
         *,
         max_fee_msat: int = 1000,
     ) -> LightningFundingSource:
         """Async factory that populates node_pubkey from the client."""
         pubkey = await client.get_node_pubkey()
-        return cls(client=client, network=network, node_pubkey=pubkey, max_fee_msat=max_fee_msat)
+        return cls(
+            client=client,
+            network=network,
+            node_pubkey=pubkey,
+            max_fee_msat=max_fee_msat,
+        )
 
-    async def pay_invoice(self, bolt11: str, *, max_fee_msat: int | None = None) -> bytes:
+    async def pay_invoice(
+        self, bolt11: str, *, max_fee_msat: int | None = None
+    ) -> bytes:
         """Delegate to the underlying client, applying the per-source fee cap."""
         fee = max_fee_msat if max_fee_msat is not None else self.max_fee_msat
         return await self.client.pay_invoice(bolt11, max_fee_msat=fee)
@@ -134,7 +143,11 @@ class LndClient:
         if self.tls_cert_path is not None:
             kwargs["cert_filepath"] = self.tls_cert_path
         elif self.tls_cert_pem is not None:
-            kwargs["cert"] = self.tls_cert_pem.encode() if isinstance(self.tls_cert_pem, str) else self.tls_cert_pem
+            kwargs["cert"] = (
+                self.tls_cert_pem.encode()
+                if isinstance(self.tls_cert_pem, str)
+                else self.tls_cert_pem
+            )
 
         return lndgrpc.LNDClient(**kwargs)
 
