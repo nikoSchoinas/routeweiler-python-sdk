@@ -21,7 +21,7 @@ from routewiler.trace.schema import (
 
 if TYPE_CHECKING:
     from routewiler.normalized import NormalizedChallenge, Rail, UrlEncoding
-    from routewiler.rails.base import SettlementInfo
+    from routewiler.rails.base import PaymentResult, SettlementInfo
     from routewiler.trace.sink_sqlite import SqliteTraceSink
 
 
@@ -33,7 +33,7 @@ class TraceEmitter:
         sink: SqliteTraceSink,
         envelope_id: str,
         envelope_currency: str,
-        funding_label: str,
+        funding_label: str | None,
         url_mode: UrlEncoding,
         policy_hash: str,
         agent_id: str | None = None,
@@ -55,6 +55,7 @@ class TraceEmitter:
         *,
         request: httpx.Request,
         challenge: NormalizedChallenge,
+        payment_result: PaymentResult,
         settlement: SettlementInfo | None,
         final_response: httpx.Response,
         ts_start: datetime,
@@ -67,7 +68,9 @@ class TraceEmitter:
         total_ms = _ms(ts_start, ts_end)
 
         challenge = _apply_url_mode(challenge, self._url_mode)
-        payment = _build_payment(challenge, settlement, settlement_ms, self._envelope_currency)
+        payment = _build_payment(
+            challenge, payment_result, settlement, settlement_ms, self._envelope_currency
+        )
         outcome = Outcome(
             http_status=final_response.status_code,
             service_delivered=(final_response.status_code < _HTTP_CLIENT_ERROR_THRESHOLD),
@@ -198,6 +201,7 @@ def _ms(start: datetime, end: datetime) -> int:
 
 def _build_payment(
     challenge: NormalizedChallenge,
+    payment_result: PaymentResult,
     settlement: SettlementInfo | None,
     settlement_latency_ms: int,
     envelope_currency: str,
@@ -207,12 +211,14 @@ def _build_payment(
 
     amount_envelope, fmv_quality = _fmv_for_trace(currency, amount_native, envelope_currency)
 
-    # Proof of payment from the settlement response.
-    proof_type: str = "txid"
-    proof_value: str | None = settlement.tx_hash if settlement is not None else None
+    # proof_value: prefer the value already in payment_result (e.g. L402 preimage),
+    # fall back to the txid from settlement (x402).
+    proof_value = payment_result.proof_value or (
+        settlement.tx_hash if settlement is not None else None
+    )
 
     return PaymentDetails(
-        proof_type=proof_type,
+        proof_type=payment_result.proof_type,
         proof_value=proof_value,
         amount_native=amount_native,
         amount_native_currency=currency,

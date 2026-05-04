@@ -6,7 +6,7 @@ import hashlib
 import logging
 from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
@@ -20,6 +20,7 @@ from routewiler.errors import (
     PolicyMaxPerCallExceededError,
     RailNotSupportedError,
 )
+from routewiler.funding import FundingSource
 from routewiler.policy.engine import PolicyEngine
 from routewiler.routing.router import Router
 from routewiler.routing.sticky import StickyCache, StickyKey
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
     from routewiler.trace.emitter import TraceEmitter
 
 _log = logging.getLogger(__name__)
-_PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE"
 
 
 class RoutewilerAuth(httpx.Auth):
@@ -48,7 +48,7 @@ class RoutewilerAuth(httpx.Auth):
         *,
         router: Router,
         sticky_cache: StickyCache,
-        funding: list[Any],
+        funding: list[FundingSource],
         agent_id: str | None = None,
         session_id: str | None = None,
         emitter: TraceEmitter | None = None,
@@ -152,6 +152,7 @@ class RoutewilerAuth(httpx.Auth):
             if (
                 decision.max_per_call_minor_units is not None
                 and self._envelope_currency is not None
+                and choice.candidate.quote_envelope_minor_units is not None
                 and choice.candidate.quote_envelope_minor_units > decision.max_per_call_minor_units
             ):
                 ts_end = datetime.now(UTC)
@@ -176,10 +177,12 @@ class RoutewilerAuth(httpx.Auth):
             # Budget draw phase — reserve capacity before committing to payment.
             # -----------------------------------------------------------------
             receipt: DrawReceipt | None = None
+            quote = choice.candidate.quote_envelope_minor_units
             if (
                 self._budget_store is not None
                 and self._envelope_id is not None
                 and self._envelope_currency is not None
+                and quote is not None  # None means FMV conversion failed; skip draw
             ):
                 idempotency_key = _make_idempotency_key(request_id, attempt)
                 try:
@@ -187,7 +190,7 @@ class RoutewilerAuth(httpx.Auth):
                         envelope_id=self._envelope_id,
                         request_id=request_id,
                         idempotency_key=idempotency_key,
-                        amount_reserved_minor_units=choice.candidate.quote_envelope_minor_units,
+                        amount_reserved_minor_units=quote,
                         rail_quoted=adapter.rail,
                     )
                 except Exception as exc:
@@ -205,14 +208,15 @@ class RoutewilerAuth(httpx.Auth):
                     raise  # budget errors are not failover-able
 
             # -----------------------------------------------------------------
-            # Sign phase — produce the payment header.
+            # Pay phase — produce the PaymentResult (signs + header for x402;
+            # pays invoice for L402).
             # On failure: rollback, exclude this rail, attempt failover.
             # -----------------------------------------------------------------
             try:
-                payment_header = await adapter.sign(challenge)
+                payment_result = await adapter.pay(challenge, receipt)
             except Exception:
                 _log.warning(
-                    "Sign failed for rail %r on attempt %d; rolling back and trying next rail.",
+                    "Pay failed for rail %r on attempt %d; rolling back and trying next rail.",
                     adapter.rail,
                     attempt,
                 )
@@ -221,7 +225,7 @@ class RoutewilerAuth(httpx.Auth):
                         await self._budget_store.rollback(receipt.receipt_id)
                     except Exception:
                         _log.exception(
-                            "Rollback failed after sign error; draw will expire via reaper."
+                            "Rollback failed after pay error; draw will expire via reaper."
                         )
                 self._sticky_cache.forget(sticky_key)
                 excluded_rails = excluded_rails | {adapter.rail}
@@ -229,10 +233,14 @@ class RoutewilerAuth(httpx.Auth):
                 attempt += 1
                 continue
 
+            # Build the retry request, adding the payment header if present.
+            retry_headers = dict(request.headers)
+            if payment_result.header_name is not None and payment_result.header_value is not None:
+                retry_headers[payment_result.header_name] = payment_result.header_value
             retry = httpx.Request(
                 method=request.method,
                 url=request.url,
-                headers={**dict(request.headers), _PAYMENT_SIGNATURE_HEADER: payment_header},
+                headers=retry_headers,
                 content=request.content,
                 extensions=request.extensions,
             )
@@ -301,10 +309,11 @@ class RoutewilerAuth(httpx.Auth):
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
 
             if self._emitter:
-                settlement = adapter.parse_settlement(final_response)
+                settlement = await adapter.confirm(payment_result, final_response)
                 await self._emitter.emit_paid(
                     request=request,
                     challenge=challenge,
+                    payment_result=payment_result,
                     settlement=settlement,
                     final_response=final_response,
                     ts_start=ts_start,
