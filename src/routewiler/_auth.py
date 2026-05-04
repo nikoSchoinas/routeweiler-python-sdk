@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import AsyncGenerator, Generator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import httpx
@@ -14,7 +16,6 @@ import httpx
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
-from routewiler.credentials.schema import CredentialState
 from routewiler.errors import (
     NoFeasibleRailError,
     PolicyDeniedError,
@@ -31,9 +32,48 @@ if TYPE_CHECKING:
     from routewiler.credentials.schema import CredentialRecord
     from routewiler.credentials.store import CredentialStore
     from routewiler.normalized import Rail
+    from routewiler.rails.base import PaymentResult
     from routewiler.trace.emitter import TraceEmitter
 
 _log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Per-iteration failover state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FailoverState:
+    """Mutable state carried across failover-loop iterations."""
+
+    excluded_rails: frozenset[Rail] = field(default_factory=frozenset)
+    prior_rail: Rail | None = None
+    attempt: int = 0
+
+    def advance(self, failed_rail: Rail) -> None:
+        self.excluded_rails = self.excluded_rails | {failed_rail}
+        self.prior_rail = failed_rail
+        self.attempt += 1
+
+
+# ---------------------------------------------------------------------------
+# Module-level pure helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_retry_request(request: httpx.Request, payment_result: PaymentResult) -> httpx.Request:
+    """Build the retry request with the payment header attached."""
+    retry_headers = dict(request.headers)
+    if payment_result.header_name is not None and payment_result.header_value is not None:
+        retry_headers[payment_result.header_name] = payment_result.header_value
+    return httpx.Request(
+        method=request.method,
+        url=request.url,
+        headers=retry_headers,
+        content=request.content,
+        extensions=request.extensions,
+    )
 
 
 class RoutewilerAuth(httpx.Auth):
@@ -109,13 +149,9 @@ class RoutewilerAuth(httpx.Auth):
         )
 
         # Load FMV snapshot once per 402 (needed by router for cost scoring).
-        fmv_snapshot = None
-        if self._budget_store is not None and self._envelope_id is not None:
-            fmv_snapshot = await self._budget_store.load_fmv_snapshot(self._envelope_id)
+        fmv_snapshot = await self._load_fmv_snapshot()
 
-        excluded_rails: frozenset[Rail] = frozenset()
-        prior_rail: Rail | None = None
-        attempt = 0
+        state = _FailoverState()
 
         while True:
             # -----------------------------------------------------------------
@@ -130,13 +166,12 @@ class RoutewilerAuth(httpx.Auth):
                     funding=self._funding,
                     envelope_currency=self._envelope_currency,
                     fmv_snapshot=fmv_snapshot,
-                    excluded_rails=excluded_rails,
+                    excluded_rails=state.excluded_rails,
                     sticky_rail=sticky_rail,
-                    prior_rail=prior_rail,
-                    attempt=attempt,
+                    prior_rail=state.prior_rail,
+                    attempt=state.attempt,
                 )
             except (RailNotSupportedError, PolicyDeniedError, NoFeasibleRailError) as err:
-                ts_end = datetime.now(UTC)
                 if self._emitter:
                     await self._emitter.emit_error(
                         request=request,
@@ -144,8 +179,8 @@ class RoutewilerAuth(httpx.Auth):
                         error=err,
                         challenge=None,
                         ts_start=ts_start,
-                        ts_end=ts_end,
-                        fallback_from=prior_rail,
+                        ts_end=datetime.now(UTC),
+                        fallback_from=state.prior_rail,
                     )
                 raise
 
@@ -154,8 +189,7 @@ class RoutewilerAuth(httpx.Auth):
             decision = choice.candidate.policy_decision
 
             # -----------------------------------------------------------------
-            # Policy max_per_call gate (post-routing, §7.1 step 2 applies the
-            # prefer filter; max_per_call is amount-based and rail-agnostic).
+            # Policy max_per_call gate (post-routing, amount-based).
             # -----------------------------------------------------------------
             if (
                 decision.max_per_call_minor_units is not None
@@ -163,7 +197,6 @@ class RoutewilerAuth(httpx.Auth):
                 and choice.candidate.quote_envelope_minor_units is not None
                 and choice.candidate.quote_envelope_minor_units > decision.max_per_call_minor_units
             ):
-                ts_end = datetime.now(UTC)
                 exc = PolicyMaxPerCallExceededError(
                     rule_name=decision.rule_name,
                     requested=choice.candidate.quote_envelope_minor_units,
@@ -176,7 +209,7 @@ class RoutewilerAuth(httpx.Auth):
                         error=exc,
                         challenge=challenge,
                         ts_start=ts_start,
-                        ts_end=ts_end,
+                        ts_end=datetime.now(UTC),
                         fallback_from=choice.fallback_from,
                     )
                 raise exc
@@ -192,7 +225,7 @@ class RoutewilerAuth(httpx.Auth):
                 and self._envelope_currency is not None
                 and quote is not None  # None means FMV conversion failed; skip draw
             ):
-                idempotency_key = _make_idempotency_key(request_id, attempt)
+                idempotency_key = _make_idempotency_key(request_id, state.attempt)
                 try:
                     receipt = await self._budget_store.draw(
                         envelope_id=self._envelope_id,
@@ -202,7 +235,6 @@ class RoutewilerAuth(httpx.Auth):
                         rail_quoted=adapter.rail,
                     )
                 except Exception as exc:
-                    ts_end = datetime.now(UTC)
                     if self._emitter:
                         await self._emitter.emit_error(
                             request=request,
@@ -210,14 +242,13 @@ class RoutewilerAuth(httpx.Auth):
                             error=exc,
                             challenge=challenge,
                             ts_start=ts_start,
-                            ts_end=ts_end,
+                            ts_end=datetime.now(UTC),
                             fallback_from=choice.fallback_from,
                         )
                     raise  # budget errors are not failover-able
 
             # -----------------------------------------------------------------
-            # Pay phase — produce the PaymentResult (signs + header for x402;
-            # pays invoice for L402).
+            # Pay phase — produce the PaymentResult.
             # On failure: rollback, exclude this rail, attempt failover.
             # -----------------------------------------------------------------
             try:
@@ -226,51 +257,23 @@ class RoutewilerAuth(httpx.Auth):
                 _log.warning(
                     "Pay failed for rail %r on attempt %d; rolling back and trying next rail.",
                     adapter.rail,
-                    attempt,
+                    state.attempt,
                 )
-                if receipt is not None and self._budget_store is not None:
-                    try:
-                        await self._budget_store.rollback(receipt.receipt_id)
-                    except Exception:
-                        _log.exception(
-                            "Rollback failed after pay error; draw will expire via reaper."
-                        )
+                await self._rollback_safe(receipt)
                 self._sticky_cache.forget(sticky_key)
-                excluded_rails = excluded_rails | {adapter.rail}
-                prior_rail = adapter.rail
-                attempt += 1
+                state.advance(adapter.rail)
                 continue
 
             # -----------------------------------------------------------------
             # Persist credential before the retry so a crash mid-retry leaves a
             # recoverable PERSISTED row (§9.2 — "before the retry is attempted").
             # -----------------------------------------------------------------
-            credential_record: CredentialRecord | None = None
-            if payment_result.credential is not None and self._credential_store is not None:
-                try:
-                    credential_record = await self._credential_store.persist(
-                        request_id=request_id,
-                        rail=adapter.rail,
-                        challenge_url=str(request.url),
-                        payload=payment_result.credential,
-                        expires_at=challenge.expires_at,
-                    )
-                except Exception:
-                    _log.exception(
-                        "Credential persistence failed; retry proceeds without recovery tracking."
-                    )
-
-            # Build the retry request, adding the payment header if present.
-            retry_headers = dict(request.headers)
-            if payment_result.header_name is not None and payment_result.header_value is not None:
-                retry_headers[payment_result.header_name] = payment_result.header_value
-            retry = httpx.Request(
-                method=request.method,
-                url=request.url,
-                headers=retry_headers,
-                content=request.content,
-                extensions=request.extensions,
+            credential_record = await self._persist_credential_safe(
+                request_id, adapter.rail, str(request.url), payment_result, challenge
             )
+
+            # Build the retry request with the payment header attached.
+            retry = _build_retry_request(request, payment_result)
             ts_retry = datetime.now(UTC)
 
             # -----------------------------------------------------------------
@@ -280,21 +283,8 @@ class RoutewilerAuth(httpx.Auth):
             try:
                 final_response = yield retry
             except Exception as exc:
-                if receipt is not None and self._budget_store is not None:
-                    try:
-                        await self._budget_store.rollback(receipt.receipt_id)
-                    except Exception:
-                        _log.exception(
-                            "Rollback failed after transport error; draw will expire via reaper."
-                        )
-                if credential_record is not None and self._recoverer is not None:
-                    try:
-                        await self._recoverer.attempt_recovery(
-                            credential_record.credential_id, last_response=None
-                        )
-                    except Exception:
-                        _log.exception("Credential recovery attempt failed after transport error.")
-                ts_end = datetime.now(UTC)
+                await self._rollback_safe(receipt)
+                await self._attempt_recovery_safe(credential_record, last_response=None)
                 if self._emitter:
                     await self._emitter.emit_error(
                         request=request,
@@ -302,13 +292,11 @@ class RoutewilerAuth(httpx.Auth):
                         error=exc,
                         challenge=challenge,
                         ts_start=ts_start,
-                        ts_end=ts_end,
+                        ts_end=datetime.now(UTC),
                         fallback_from=choice.fallback_from,
                     )
                 self._sticky_cache.forget(sticky_key)
-                excluded_rails = excluded_rails | {adapter.rail}
-                prior_rail = adapter.rail
-                attempt += 1
+                state.advance(adapter.rail)
                 continue
 
             ts_end = datetime.now(UTC)
@@ -317,73 +305,17 @@ class RoutewilerAuth(httpx.Auth):
             final_response.extensions["routewiler_emitted"] = True
 
             # -----------------------------------------------------------------
-            # Phase 4a: Credential lifecycle transitions.
-            # Split-URL recovery runs here — BEFORE the budget confirm/rollback —
-            # so that a successful recovery substitutes the canonical response that
-            # drives the budget decision (confirm on 2xx, rollback on 4xx/5xx).
-            # CredentialRecoverer handles all state transitions internally:
-            #   PERSISTED → RECOVERING → REDEEMED | MANUAL_HOLD
+            # Credential lifecycle: REDEEMED on 2xx, or split-URL recovery on
+            # 4xx/5xx.  Returns the budget_response (may be the recovered 2xx).
             # -----------------------------------------------------------------
-            # ``budget_response`` is the response we use for budget and trace.
-            # A successful split-URL recovery replaces it with the recovered 2xx.
-            budget_response = final_response
-
-            if credential_record is not None:
-                if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-                    # Direct 2xx from the original retry — credential is consumed.
-                    if self._credential_store is not None:
-                        try:
-                            await self._credential_store.transition(
-                                credential_record.credential_id,
-                                to_state=CredentialState.REDEEMED,
-                            )
-                        except Exception:
-                            _log.exception(
-                                "Credential REDEEMED transition failed; credential stays PERSISTED."
-                            )
-                elif self._recoverer is not None:
-                    # 4xx/5xx: attempt split-URL recovery.
-                    # On success the recoverer transitions REDEEMED internally.
-                    # On exhaustion it transitions MANUAL_HOLD and emits a trace event.
-                    try:
-                        outcome = await self._recoverer.attempt_recovery(
-                            credential_record.credential_id,
-                            last_response=final_response,
-                        )
-                        if outcome.succeeded and outcome.response is not None:
-                            # Tag the recovered response so _traced() does not double-emit.
-                            outcome.response.extensions["routewiler_emitted"] = True
-                            # Signal client._traced() to return this response to the caller.
-                            final_response.extensions["routewiler_recovered_response"] = (
-                                outcome.response
-                            )
-                            # Use the recovered 2xx for budget confirm and trace emission.
-                            budget_response = outcome.response
-                    except Exception:
-                        _log.exception("Credential recovery attempt failed.")
+            budget_response = await self._handle_credential_post_response(
+                credential_record, final_response
+            )
 
             # -----------------------------------------------------------------
-            # Phase 4b: confirm or rollback the draw based on post-recovery status.
+            # Confirm or rollback the draw based on post-recovery status.
             # -----------------------------------------------------------------
-            if receipt is not None and self._budget_store is not None:
-                if budget_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-                    # Use the reserved amount as the settled amount.  For x402 'exact' scheme
-                    # reserved == settled by definition.  For 'upto' scheme this is
-                    # conservative (may count more than actually settled); a proper FMV
-                    # re-conversion for upto ships with the upto rail adapter.
-                    try:
-                        await self._budget_store.confirm(
-                            receipt.receipt_id, receipt.amount_reserved_minor_units
-                        )
-                    except Exception:
-                        _log.exception("Confirm failed; draw will stay reserved until reaper.")
-                else:
-                    try:
-                        await self._budget_store.rollback(receipt.receipt_id)
-                    except Exception:
-                        _log.exception(
-                            "Rollback failed after error response; draw will expire via reaper."
-                        )
+            await self._settle_budget_safe(receipt, budget_response)
 
             # Update sticky cache on successful payment.
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
@@ -404,6 +336,128 @@ class RoutewilerAuth(httpx.Auth):
                 )
 
             return  # success — exit the failover loop
+
+    # ---------------------------------------------------------------------------
+    # Private helpers
+    # ---------------------------------------------------------------------------
+
+    async def _load_fmv_snapshot(self) -> dict[str, Decimal] | None:
+        if self._budget_store is not None and self._envelope_id is not None:
+            return await self._budget_store.load_fmv_snapshot(self._envelope_id)
+        return None
+
+    async def _rollback_safe(self, receipt: DrawReceipt | None) -> None:
+        if receipt is not None and self._budget_store is not None:
+            try:
+                await self._budget_store.rollback(receipt.receipt_id)
+            except Exception:
+                _log.exception("Rollback failed; draw will expire via reaper.")
+
+    async def _persist_credential_safe(
+        self,
+        request_id: str,
+        rail: Rail,
+        challenge_url: str,
+        payment_result: PaymentResult,
+        challenge: Any,
+    ) -> CredentialRecord | None:
+        if payment_result.credential is None or self._credential_store is None:
+            return None
+        try:
+            return await self._credential_store.persist(
+                request_id=request_id,
+                rail=rail,
+                challenge_url=challenge_url,
+                payload=payment_result.credential,
+                expires_at=challenge.expires_at,
+            )
+        except Exception:
+            _log.exception(
+                "Credential persistence failed; retry proceeds without recovery tracking."
+            )
+            return None
+
+    async def _attempt_recovery_safe(
+        self,
+        credential_record: CredentialRecord | None,
+        *,
+        last_response: httpx.Response | None,
+    ) -> None:
+        if credential_record is not None and self._recoverer is not None:
+            try:
+                await self._recoverer.attempt_recovery(
+                    credential_record.credential_id,
+                    last_response=last_response,
+                )
+            except Exception:
+                _log.exception("Credential recovery attempt failed.")
+
+    async def _handle_credential_post_response(
+        self,
+        credential_record: CredentialRecord | None,
+        final_response: httpx.Response,
+    ) -> httpx.Response:
+        """Transition the credential and return the response to use for budget settle.
+
+        On a direct 2xx: marks the credential REDEEMED.
+        On 4xx/5xx: triggers split-URL recovery; on success, substitutes the
+        recovered 2xx as the budget_response so the draw is confirmed, not rolled back.
+        The extension ``"routewiler_recovered_response"`` signals ``client._traced``
+        to return the recovered response to the caller.
+        """
+        if credential_record is None:
+            return final_response
+
+        budget_response = final_response
+
+        if final_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+            # Direct 2xx from the original retry — credential is consumed.
+            # Route through recoverer so it owns all PERSISTED→REDEEMED transitions.
+            if self._recoverer is not None:
+                await self._recoverer.mark_redeemed(credential_record.credential_id)
+        elif self._recoverer is not None:
+            # 4xx/5xx: attempt split-URL recovery.
+            # On success the recoverer transitions REDEEMED internally.
+            # On exhaustion it transitions MANUAL_HOLD and emits a trace event.
+            try:
+                outcome = await self._recoverer.attempt_recovery(
+                    credential_record.credential_id,
+                    last_response=final_response,
+                )
+                if outcome.succeeded and outcome.response is not None:
+                    # Tag the recovered response so _traced() does not double-emit.
+                    outcome.response.extensions["routewiler_emitted"] = True
+                    # Signal client._traced() to return this response to the caller.
+                    final_response.extensions["routewiler_recovered_response"] = outcome.response
+                    # Use the recovered 2xx for budget confirm and trace emission.
+                    budget_response = outcome.response
+            except Exception:
+                _log.exception("Credential recovery attempt failed.")
+
+        return budget_response
+
+    async def _settle_budget_safe(
+        self,
+        receipt: DrawReceipt | None,
+        budget_response: httpx.Response,
+    ) -> None:
+        if receipt is None or self._budget_store is None:
+            return
+        if budget_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
+            # Use the reserved amount as the settled amount.  For x402 'exact' scheme
+            # reserved == settled by definition.  For 'upto' scheme this is
+            # conservative; a proper FMV re-conversion ships with the upto adapter.
+            try:
+                await self._budget_store.confirm(
+                    receipt.receipt_id, receipt.amount_reserved_minor_units
+                )
+            except Exception:
+                _log.exception("Confirm failed; draw will stay reserved until reaper.")
+        else:
+            try:
+                await self._budget_store.rollback(receipt.receipt_id)
+            except Exception:
+                _log.exception("Rollback failed after error response; draw will expire via reaper.")
 
 
 # ---------------------------------------------------------------------------
