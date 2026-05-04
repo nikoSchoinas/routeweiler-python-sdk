@@ -72,7 +72,7 @@ def polar_merchant_client() -> LndClient:
     )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def polar_payer_source(polar_payer_client: LndClient) -> LightningFundingSource:
     """LightningFundingSource for the payer node on regtest."""
     return await LightningFundingSource.create(
@@ -120,14 +120,9 @@ def polar_l402_server(polar_merchant_client: LndClient) -> httpx.ASGITransport:
             actual_hash = hashlib.sha256(preimage_bytes).hexdigest()
 
             def _check_payment() -> bool:
-                payments = client._make_client().list_payments(  # type: ignore[attr-defined]
-                    max_payments=100
-                )
-                _lnd_succeeded = 2
-                for p in payments.payments:
-                    if p.payment_hash == actual_hash and p.status == _lnd_succeeded:
-                        return True
-                return False
+                invoice = client._make_client().lookup_invoice(actual_hash)  # type: ignore[attr-defined]
+                _lnd_settled = 1
+                return invoice.state == _lnd_settled  # type: ignore[attr-defined]
 
             paid = await asyncio.to_thread(_check_payment)
             if not paid:
