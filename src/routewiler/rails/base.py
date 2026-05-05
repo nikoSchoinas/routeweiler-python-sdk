@@ -28,6 +28,7 @@ class SettlementInfo:
     network_id: str | None = None
     payer_address: str | None = None
     amount_paid: int | None = None  # base units; None if facilitator omits it
+    facilitator: str | None = None  # e.g. "stripe", "tempo", "lightning", "cdp"
 
 
 @dataclass(frozen=True)
@@ -72,10 +73,9 @@ class RailAdapter(Protocol):
                               credential and authorization header).
         5. ``confirm``      — read the server's settlement proof from the response.
 
-    The canonical implementation path is to override ``pay`` and ``confirm``.
-    ``sign`` and ``parse_settlement`` are legacy methods kept for the x402 rail;
-    they are scheduled for removal once x402 is migrated to the ``pay``/``confirm``
-    path.
+    The canonical implementation path: override ``pay`` and ``confirm``.
+    Adapters may use private helpers (e.g. ``_sign``) but must not expose them
+    through this Protocol.
     """
 
     rail: Rail
@@ -126,29 +126,14 @@ class RailAdapter(Protocol):
         self,
         result: PaymentResult,
         response: httpx.Response,
-    ) -> SettlementInfo | None:
+    ) -> SettlementInfo:
         """Read settlement proof from the server's successful reply.
 
         For x402: decodes the PAYMENT-RESPONSE header into SettlementInfo.
         For L402: returns a minimal SettlementInfo with the preimage as proof.
 
-        Returns None if no settlement proof is present (mock/testnet).
-        """
-        ...
-
-    async def sign(self, challenge: NormalizedChallenge) -> str:
-        """Produce the payment header value for the retry request.
-
-        Legacy method — kept for x402 adapters.  New adapters should
-        override ``pay()`` instead.  ``pay()`` calls this by default for
-        x402-style adapters.
-        """
-        ...
-
-    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
-        """Read payment proof from the server's successful reply headers.
-
-        Legacy method — kept for x402 adapters.  ``confirm()`` calls this
-        by default.  Returns None if the header is absent or cannot be decoded.
+        When no settlement header is present (mock/testnet), returns a
+        SettlementInfo with ``tx_hash=None`` and ``success`` derived from the
+        HTTP status code.
         """
         ...
