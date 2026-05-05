@@ -8,16 +8,20 @@ from eth_account.signers.local import LocalAccount
 
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource, LightningNodeClient, LndClient
+from routewiler.funding.tempo import EthAccountTempoSigner, TempoFundingSource, TempoSigner
 
-FundingSource = EvmFundingSource | LightningFundingSource
+FundingSource = EvmFundingSource | LightningFundingSource | TempoFundingSource
 
 __all__ = [
+    "EthAccountTempoSigner",
     "EvmFundingSource",
     "Funding",
     "FundingSource",
     "LightningFundingSource",
     "LightningNodeClient",
     "LndClient",
+    "TempoFundingSource",
+    "TempoSigner",
 ]
 
 
@@ -62,4 +66,30 @@ class Funding:
             network=network,
             node_pubkey=node_pubkey,
             max_fee_msat=max_fee_msat,
+        )
+
+    @staticmethod
+    def tempo_pathusd_moderato(*, wallet: LocalAccount) -> TempoFundingSource:
+        """PathUSD on Tempo Moderato testnet (chain ID 42431).
+
+        PathUSD is the primary faucet-funded stablecoin on Moderato.
+        Use ``Funding.tempo_usdc()`` for Tempo mainnet USDC.
+        """
+        return TempoFundingSource(
+            signer=EthAccountTempoSigner(wallet=wallet, chain_id=42431),
+            network="tempo-moderato",
+            asset="pathusd",
+        )
+
+    @staticmethod
+    def tempo_usdc(*, wallet: LocalAccount) -> TempoFundingSource:
+        """USDC on Tempo mainnet (chain ID 42430).
+
+        Not exercised in Week 13 tests; use ``tempo_pathusd_moderato`` for
+        testnet development.
+        """
+        return TempoFundingSource(
+            signer=EthAccountTempoSigner(wallet=wallet, chain_id=42430),
+            network="tempo",
+            asset="usdc",
         )
