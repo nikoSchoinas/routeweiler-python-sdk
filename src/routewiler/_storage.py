@@ -163,7 +163,8 @@ def _migrate_trace_schema(conn: sqlite3.Connection) -> None:
     if "fallback_from" not in existing_cols:
         # Pre-W7 database: add the column and record the migration.
         conn.execute(_MIGRATION_TRACE_V1_ADD_FALLBACK_FROM)
-    # Mark version 1 as applied (idempotent: INSERT OR IGNORE).
-    conn.execute(
-        "INSERT OR IGNORE INTO schema_versions (component, version) VALUES ('trace_events', 1)"
+    # Mark initial versions for all components (idempotent: INSERT OR IGNORE).
+    conn.executemany(
+        "INSERT OR IGNORE INTO schema_versions (component, version) VALUES (?, 1)",
+        [("trace_events",), ("credentials",), ("envelopes",)],
     )
