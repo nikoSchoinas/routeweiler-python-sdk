@@ -115,6 +115,9 @@ ignore = [
 "tests/**" = [
     "PLR2004",  # magic-value comparisons are fine in test assertions
 ]
+"tests/rails/test_mpp_tempo_e2e_live.py" = [
+    "PLR0915",  # live merchant app has many sequential RPC/validation steps; not reducible
+]
 "src/routewiler/_auth.py" = [
     "PLR0912",  # auth flow inherently has many branches (protocol phases + error paths)
     "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
@@ -124,6 +127,15 @@ ignore = [
     "PLR0912",  # BOLT-11 decoder parses many tagged field types; branches are spec-faithful
     "PLR0915",  # BOLT-11 decode() has many sequential spec steps; not reducible without obscuring
     "PLR2004",  # Numeric literals are BOLT-11 spec constants (tag IDs, bit widths, group counts)
+]
+"src/routewiler/rails/_tempo_tx.py" = [
+    "PLR2004",  # Numeric literals are RLP/EIP-2718 spec constants (0x80, 0xC0, 56, 27/28)
+    "RUF005",   # list[*a, b] sugar not needed here; explicit list concat is clearer
+]
+"src/routewiler/rails/_mpp_http.py" = [
+    "PLR0911",  # JCS serialiser has many return branches — each type is a distinct path
+    "PLR2004",  # Numeric literals are RFC-spec constants (0x20 for JSON control chars, 4 for base64)
+    "RUF003",   # Unicode U+2013 en-dash in spec cross-reference comment; intentional
 ]
 
 [tool.ruff.format]
@@ -154,5 +166,5 @@ pythonpath  = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402)",
+    "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402, Tempo Moderato for MPP-Tempo)",
 ]

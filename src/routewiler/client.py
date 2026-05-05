@@ -18,6 +18,8 @@ from routewiler.credentials.store import CredentialStore
 from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
+from routewiler.funding.lightning import LightningFundingSource
+from routewiler.funding.tempo import TempoFundingSource
 from routewiler.policy.dsl import PolicyDocument, PolicyFile, compute_policy_hash, default_policy
 from routewiler.policy.engine import PolicyEngine
 from routewiler.rails import ADAPTER_REGISTRY, RailAdapter
@@ -42,6 +44,10 @@ def _funding_label(funding: list[FundingSource]) -> str | None:
     f = funding[0]
     if isinstance(f, EvmFundingSource):
         return f"evm:{f.network}:{f.asset}"
+    if isinstance(f, LightningFundingSource):
+        return f"lightning:{f.network}"
+    if isinstance(f, TempoFundingSource):
+        return f"mpp-tempo:{f.network}:{f.asset}"
     return repr(f)
 
 
