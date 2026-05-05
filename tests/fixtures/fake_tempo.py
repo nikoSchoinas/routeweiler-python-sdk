@@ -46,9 +46,12 @@ class FakeTempoSigner:
         amount: int,
         nonce_key: int = 0,
         nonce: int,
-        valid_until: int,
+        valid_before: int,
+        valid_after: int = 0,
         fee_payer: bool = False,
-        memo: bytes = b"\x00" * 32,
+        max_priority_fee_per_gas: int = 0,
+        max_fee_per_gas: int = 20_000_000_000,
+        gas_limit: int = 350_000,
     ) -> str:
         if self._should_fail:
             raise RuntimeError("FakeTempoSigner: forced failure")

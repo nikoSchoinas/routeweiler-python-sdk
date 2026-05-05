@@ -8,20 +8,23 @@ secp256k1 signature.
 Wire format (simplified single-call variant shipped in W13):
     0x76 || rlp([
         chain_id,
+        max_priority_fee_per_gas,
+        max_fee_per_gas,
+        gas_limit,
+        calls,                # list of [to, value, calldata] triples
+        access_list,          # empty list for standard transfers
         nonce_key,
         nonce,
-        valid_until,
+        valid_before,         # Unix timestamp: reject after this time
+        valid_after,          # Unix timestamp: reject before this time (0 = immediate)
         fee_token,            # TIP-20 address (or zero if fee_payer=True)
-        fee_amount,           # 0 when fee_payer=True
-        calls,                # list of [to, calldata] pairs
-        fee_payer_signature,  # 0x00 placeholder when fee_payer=True
-        sig_v,
-        sig_r,
-        sig_s,
+        fee_payer_signature,  # [] when fee_payer=True; b"" (0x80) when not applicable
+        aa_authorization_list,
+        sender_signature,     # 65 bytes: r (32) || s (32) || v (1); v = 0 or 1
     ])
 
 The signing digest is keccak256(0x76 || rlp(unsigned_fields)) where
-unsigned_fields are all elements except the three trailing signature fields.
+unsigned_fields are all elements except the trailing sender_signature.
 """
 
 from __future__ import annotations
@@ -126,9 +129,12 @@ def sign_tempo_transaction(
     amount: int,
     nonce_key: int = 0,
     nonce: int,
-    valid_until: int,
+    valid_before: int,
+    valid_after: int = 0,
     fee_payer: bool = False,
-    memo: bytes = b"\x00" * 32,
+    max_priority_fee_per_gas: int = 0,
+    max_fee_per_gas: int = 20_000_000_000,
+    gas_limit: int = 350_000,
 ) -> str:
     """Build and sign a Tempo Transaction (type 0x76) for a single TIP-20 transfer.
 
@@ -137,16 +143,19 @@ def sign_tempo_transaction(
     the server broadcasts it to the Tempo RPC.
 
     Args:
-        wallet:       eth_account LocalAccount holding the secp256k1 private key.
-        chain_id:     Tempo chain ID (42431 = Moderato, 42430 = mainnet).
-        tip20_token:  Contract address of the TIP-20 token to transfer.
-        recipient:    Recipient address.
-        amount:       Transfer amount in base units (6 decimals).
-        nonce_key:    2D nonce lane (0 = standard payment lane).
-        nonce:        Per-lane sequence number.
-        valid_until:  Unix timestamp (seconds) after which the tx is rejected.
-        fee_payer:    If True the server sponsors fees (placeholder sig).
-        memo:         32-byte memo (unused in W13 single-transfer variant).
+        wallet:                   eth_account LocalAccount holding the secp256k1 private key.
+        chain_id:                 Tempo chain ID (42431 = Moderato, 42430 = mainnet).
+        tip20_token:              Contract address of the TIP-20 token to transfer.
+        recipient:                Recipient address.
+        amount:                   Transfer amount in base units (6 decimals).
+        nonce_key:                2D nonce lane (0 = standard payment lane).
+        nonce:                    Per-lane sequence number.
+        valid_before:             Unix timestamp (seconds) after which the tx is rejected.
+        valid_after:              Unix timestamp (seconds) before which the tx is rejected (0 = immediate).
+        fee_payer:                If True the server sponsors fees (empty fee_payer_sig slot).
+        max_priority_fee_per_gas: EIP-1559 priority fee (wei); default 0.
+        max_fee_per_gas:          EIP-1559 max fee (wei); default 20 Gwei.
+        gas_limit:                Gas limit; default 200 000.
 
     Returns:
         ``0x76``-prefixed, RLP-encoded signed transaction as a ``0x``-prefixed
@@ -155,27 +164,31 @@ def sign_tempo_transaction(
     calldata = _encode_transfer_calldata(recipient, amount)
     token_bytes = _addr_bytes(tip20_token)
 
+    # calls: list of [to, value, calldata] triples
+    calls: list[Any] = [[token_bytes, 0, calldata]]
+
+    # fee_payer_signature slot: empty bytes (0x80) when not sponsoring
+    fee_payer_sig: bytes | list[Any] = b""
+
     if fee_payer:
         fee_token: bytes = _zero_address()
-        fee_amount = 0
-        fee_payer_sig: bytes = b"\x00"  # single zero byte = placeholder
     else:
         fee_token = token_bytes
-        fee_amount = 0  # W13: fee mechanics deferred; server must tolerate 0
-        fee_payer_sig = b""  # empty = not applicable
-
-    # calls: list of [to, calldata]
-    calls: list[Any] = [[token_bytes, calldata]]
 
     unsigned_body: list[Any] = [
         chain_id,
+        max_priority_fee_per_gas,
+        max_fee_per_gas,
+        gas_limit,
+        calls,
+        [],              # access_list (empty)
         nonce_key,
         nonce,
-        valid_until,
+        valid_before,
+        valid_after,
         fee_token,
-        fee_amount,
-        calls,
         fee_payer_sig,
+        [],              # aa_authorization_list (empty)
     ]
 
     # Signing digest: keccak256(type_prefix || rlp(unsigned_body))
@@ -184,15 +197,14 @@ def sign_tempo_transaction(
     digest: bytes = keccak(type_prefix + rlp_unsigned)
 
     # Sign using eth-keys secp256k1 (no Ethereum prefix — raw hash signing)
+    # v is 0 or 1 (raw recovery id); Tempo uses raw recovery ids, not 27/28
     pk = EthPrivateKey(bytes(wallet.key))
     sig = pk.sign_msg_hash(digest)
 
-    # sig.v is 0 or 1 (recovery id); Tempo uses 27/28 Ethereum convention
-    v = sig.v + 27
-    r = sig.r.to_bytes(32, "big")
-    s = sig.s.to_bytes(32, "big")
+    # sender_signature: 65-byte concatenation r (32) || s (32) || v (1)
+    sender_sig = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([sig.v])
 
-    signed_body: list[Any] = list(unsigned_body) + [v, r, s]
+    signed_body: list[Any] = list(unsigned_body) + [sender_sig]
     signed_rlp = _rlp_encode_item(signed_body)
 
     return "0x76" + signed_rlp.hex()

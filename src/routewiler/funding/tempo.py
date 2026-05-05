@@ -45,9 +45,12 @@ class TempoSigner(Protocol):
         amount: int,
         nonce_key: int = 0,
         nonce: int,
-        valid_until: int,
+        valid_before: int,
+        valid_after: int = 0,
         fee_payer: bool = False,
-        memo: bytes = b"\x00" * 32,
+        max_priority_fee_per_gas: int = 0,
+        max_fee_per_gas: int = 20_000_000_000,
+        gas_limit: int = 350_000,
     ) -> str:
         """Build and sign a type-0x76 Tempo Transaction.
 
@@ -56,14 +59,17 @@ class TempoSigner(Protocol):
         direct broadcast via ``eth_sendRawTransaction``.
 
         Args:
-            tip20_token:  Hex address of the TIP-20 token contract.
-            recipient:    Hex address of the payment recipient.
-            amount:       Token amount in base units (6 decimals for PathUSD/USDC).
-            nonce_key:    2D nonce lane (0 is the standard payment lane).
-            nonce:        Per-lane sequence number to prevent replay.
-            valid_until:  Unix timestamp after which the transaction is invalid.
-            fee_payer:    If True, fee is sponsored by the server (placeholder sig).
-            memo:         Optional 32-byte memo field (zeroes = no memo).
+            tip20_token:              Hex address of the TIP-20 token contract.
+            recipient:                Hex address of the payment recipient.
+            amount:                   Token amount in base units (6 decimals for PathUSD/USDC).
+            nonce_key:                2D nonce lane (0 is the standard payment lane).
+            nonce:                    Per-lane sequence number to prevent replay.
+            valid_before:             Unix timestamp after which the transaction is invalid.
+            valid_after:              Unix timestamp before which the transaction is invalid (0 = immediate).
+            fee_payer:                If True, fee is sponsored by the server.
+            max_priority_fee_per_gas: EIP-1559 priority fee (wei).
+            max_fee_per_gas:          EIP-1559 max fee (wei).
+            gas_limit:                Gas limit for the transaction.
         """
         ...
 
@@ -89,11 +95,16 @@ class TempoFundingSource:
     ``asset`` is the canonical short name of the TIP-20 token:
         ``"pathusd"`` → Moderato testnet (faucet-funded)
         ``"usdc"``    → Tempo mainnet
+
+    ``rpc_url`` is the JSON-RPC endpoint used to fetch the on-chain nonce before
+    signing. Leave empty to skip RPC nonce fetching (offline / test mode).
+    The ``Funding`` factory methods set this to the canonical endpoint for each network.
     """
 
     signer: TempoSigner
     network: Literal["tempo", "tempo-moderato"]
     asset: str  # "pathusd" | "usdc" | explicit hex contract address
+    rpc_url: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +141,12 @@ class EthAccountTempoSigner:
         amount: int,
         nonce_key: int = 0,
         nonce: int,
-        valid_until: int,
+        valid_before: int,
+        valid_after: int = 0,
         fee_payer: bool = False,
-        memo: bytes = b"\x00" * 32,
+        max_priority_fee_per_gas: int = 0,
+        max_fee_per_gas: int = 20_000_000_000,
+        gas_limit: int = 350_000,
     ) -> str:
         from routewiler.rails._tempo_tx import sign_tempo_transaction  # noqa: PLC0415
 
@@ -144,9 +158,12 @@ class EthAccountTempoSigner:
             amount=amount,
             nonce_key=nonce_key,
             nonce=nonce,
-            valid_until=valid_until,
+            valid_before=valid_before,
+            valid_after=valid_after,
             fee_payer=fee_payer,
-            memo=memo,
+            max_priority_fee_per_gas=max_priority_fee_per_gas,
+            max_fee_per_gas=max_fee_per_gas,
+            gas_limit=gas_limit,
         )
 
     async def sign_typed_data_v4(self, typed_data: dict[str, Any]) -> str:
