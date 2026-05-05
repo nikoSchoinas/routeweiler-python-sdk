@@ -151,11 +151,11 @@ def sign_tempo_transaction(
         nonce_key:                2D nonce lane (0 = standard payment lane).
         nonce:                    Per-lane sequence number.
         valid_before:             Unix timestamp (seconds) after which the tx is rejected.
-        valid_after:              Unix timestamp (seconds) before which the tx is rejected (0 = immediate).
+        valid_after:              Unix timestamp (seconds); tx rejected before this time (0 = now).
         fee_payer:                If True the server sponsors fees (empty fee_payer_sig slot).
         max_priority_fee_per_gas: EIP-1559 priority fee (wei); default 0.
         max_fee_per_gas:          EIP-1559 max fee (wei); default 20 Gwei.
-        gas_limit:                Gas limit; default 200 000.
+        gas_limit:                Gas limit; default 350 000.
 
     Returns:
         ``0x76``-prefixed, RLP-encoded signed transaction as a ``0x``-prefixed
@@ -181,14 +181,14 @@ def sign_tempo_transaction(
         max_fee_per_gas,
         gas_limit,
         calls,
-        [],              # access_list (empty)
+        [],  # access_list (empty)
         nonce_key,
         nonce,
         valid_before,
         valid_after,
         fee_token,
         fee_payer_sig,
-        [],              # aa_authorization_list (empty)
+        [],  # aa_authorization_list (empty)
     ]
 
     # Signing digest: keccak256(type_prefix || rlp(unsigned_body))

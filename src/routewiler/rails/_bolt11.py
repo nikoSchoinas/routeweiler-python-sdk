@@ -140,10 +140,7 @@ def decode(bolt11: str) -> DecodedBolt11:
 
         elif tag == _TAG_DESCRIPTION:
             raw = _bits_to_bytes(value_bits, len(value_bits) // 8)
-            try:
-                description = raw.decode("utf-8", errors="replace")
-            except Exception:
-                pass
+            description = raw.decode("utf-8", errors="replace")
 
     if payment_hash_hex is None:
         raise Bolt11DecodeError("BOLT-11 invoice missing required payment_hash tag")
