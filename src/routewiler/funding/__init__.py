@@ -30,10 +30,15 @@ __all__ = [
 
 
 class Funding:
-    """Factory for funding sources passed to ``Routewiler(funding=[...])``.
+    """Namespace of factory helpers for funding sources passed to ``Routewiler(funding=[...])``.
 
-    Each static method returns a concrete funding source.
+    Each static method returns a concrete funding source.  This class is not
+    meant to be instantiated; use the static methods directly (``Funding.base_usdc(...)``,
+    ``Funding.lightning_lnd(...)``, etc.).
     """
+
+    def __new__(cls) -> Funding:  # pragma: no cover
+        raise TypeError("Funding is a factory namespace and cannot be instantiated.")
 
     @staticmethod
     def base_usdc(*, wallet: LocalAccount) -> EvmFundingSource:
@@ -46,7 +51,7 @@ class Funding:
         return EvmFundingSource(wallet=wallet, network="base-sepolia", asset="usdc")
 
     @staticmethod
-    def lightning(
+    def lightning_lnd(
         client: LightningNodeClient,
         network: Literal["bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"],
         *,

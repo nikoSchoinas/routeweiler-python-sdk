@@ -24,9 +24,3 @@ def test_evm_funding_source_is_frozen(test_account: LocalAccount) -> None:
     fs = EvmFundingSource(wallet=test_account, network="base", asset="usdc")
     with pytest.raises((AttributeError, TypeError)):
         fs.network = "polygon"  # type: ignore[misc]
-
-
-def test_balance_not_implemented(test_account: LocalAccount) -> None:
-    fs = Funding.base_usdc(wallet=test_account)
-    with pytest.raises(NotImplementedError):
-        fs.balance()

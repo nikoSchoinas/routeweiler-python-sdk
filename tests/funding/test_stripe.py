@@ -42,7 +42,7 @@ def test_stripe_funding_source_default_creator_is_stripe_spt_creator() -> None:
     assert isinstance(source.spt_creator, StripeSptCreator)
 
 
-def test_stripe_funding_source_is_frozen() -> None:
+def test_stripe_funding_source_is_immutable() -> None:
     source = StripeFundingSource(
         api_key="sk_test_abc",
         customer="cus_123",

@@ -97,7 +97,7 @@ class StripeSptCreator:
         params["seller_details"] = seller_details
 
         resp = await client.raw_request_async("post", self._SPT_ENDPOINT, **params)
-        spt_id: str = resp.data["id"]  # type: ignore[index]
+        spt_id: str = resp.data["id"]
         return spt_id
 
 
@@ -128,6 +128,5 @@ class StripeFundingSource:
     spt_creator: SptCreator = field(default=None)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        # dataclass(frozen=True) requires object.__setattr__ for post-init mutation.
         if self.spt_creator is None:
             object.__setattr__(self, "spt_creator", _make_default_spt_creator(self.api_key))

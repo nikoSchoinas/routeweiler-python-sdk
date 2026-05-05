@@ -26,7 +26,3 @@ class EvmFundingSource:
     wallet: LocalAccount
     network: str
     asset: str
-
-    def balance(self) -> int:
-        # On-chain balance probe — deferred to a future month (post-MVP routing signals).
-        raise NotImplementedError("balance probe not yet implemented")

@@ -15,8 +15,6 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from eth_account.signers.local import LocalAccount
 
-from routewiler.assets import CHAIN_IDS
-
 
 @runtime_checkable
 class TempoSigner(Protocol):
@@ -65,7 +63,7 @@ class TempoSigner(Protocol):
             nonce_key:                2D nonce lane (0 is the standard payment lane).
             nonce:                    Per-lane sequence number to prevent replay.
             valid_before:             Unix timestamp after which the transaction is invalid.
-            valid_after:              Unix timestamp before which the transaction is invalid (0 = immediate).
+            valid_after:              Unix timestamp before which the tx is invalid (0 = immediate).
             fee_payer:                If True, fee is sponsored by the server.
             max_priority_fee_per_gas: EIP-1559 priority fee (wei).
             max_fee_per_gas:          EIP-1559 max fee (wei).
@@ -174,8 +172,3 @@ class EthAccountTempoSigner:
         signed = Account.sign_message(signable, private_key=self._wallet.key)
         sig: str = "0x" + signed.signature.hex()
         return sig
-
-
-def _network_to_chain_id(network: Literal["tempo", "tempo-moderato"]) -> int:
-    """Resolve a Tempo network name to its chain ID."""
-    return CHAIN_IDS[network]
