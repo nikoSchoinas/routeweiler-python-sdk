@@ -47,7 +47,7 @@ class TestFakeTempoSigner:
             recipient=_TEST_RECIPIENT,
             amount=10_000,
             nonce=0,
-            valid_until=9_999_999_999,
+            valid_before=9_999_999_999,
         )
         assert result == FAKE_SIGNED_TX
 
@@ -59,7 +59,7 @@ class TestFakeTempoSigner:
                 recipient=_TEST_RECIPIENT,
                 amount=10_000,
                 nonce=0,
-                valid_until=9_999_999_999,
+                valid_before=9_999_999_999,
             )
 
 
@@ -88,7 +88,7 @@ class TestEthAccountTempoSigner:
             recipient=_TEST_RECIPIENT,
             amount=10_000,
             nonce=0,
-            valid_until=9_999_999_999,
+            valid_before=9_999_999_999,
         )
         assert tx.startswith("0x76")
 

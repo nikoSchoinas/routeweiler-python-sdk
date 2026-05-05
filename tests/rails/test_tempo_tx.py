@@ -109,7 +109,7 @@ def test_sign_tempo_transaction_prefix() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
     )
     assert tx.startswith("0x76"), f"Expected 0x76 prefix, got: {tx[:6]}"
 
@@ -122,7 +122,7 @@ def test_sign_tempo_transaction_returns_hex() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
     )
     # Should parse as valid hex (after stripping 0x)
     bytes.fromhex(tx.removeprefix("0x"))
@@ -137,15 +137,29 @@ def test_sign_tempo_transaction_signature_recovers_signer() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
         fee_payer=False,
     )
 
-    # Re-compute the signing digest as the builder does
+    # Re-compute the signing digest using the new field order
     calldata = _encode_transfer_calldata(_TEST_RECIPIENT, _TEST_AMOUNT)
     token_bytes = _addr_bytes(_TEST_TOKEN)
-    calls = [[token_bytes, calldata]]
-    unsigned_body = [_TEST_CHAIN_ID, 0, 0, 9_999_999_999, token_bytes, 0, calls, b""]
+    calls = [[token_bytes, 0, calldata]]
+    unsigned_body = [
+        _TEST_CHAIN_ID,    # chain_id
+        0,                 # max_priority_fee_per_gas
+        20_000_000_000,    # max_fee_per_gas
+        200_000,           # gas_limit
+        calls,             # calls [[to, 0, calldata]]
+        [],                # access_list
+        0,                 # nonce_key
+        0,                 # nonce
+        9_999_999_999,     # valid_before
+        0,                 # valid_after
+        token_bytes,       # fee_token
+        b"",               # fee_payer_signature (empty = not sponsoring)
+        [],                # aa_authorization_list
+    ]
     type_prefix = b"\x76"
     digest = keccak(type_prefix + _rlp_encode_item(unsigned_body))
 
@@ -164,7 +178,7 @@ def test_sign_tempo_transaction_fee_payer_mode() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
         fee_payer=True,
     )
     assert tx.startswith("0x76")
@@ -178,7 +192,7 @@ def test_sign_tempo_transaction_deterministic() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
     )
     tx1 = sign_tempo_transaction(**kwargs)  # type: ignore[arg-type]
     tx2 = sign_tempo_transaction(**kwargs)  # type: ignore[arg-type]
@@ -198,7 +212,7 @@ def test_tx_hash_format() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
     )
     h = tx_hash(tx)
     assert h.startswith("0x")
@@ -213,7 +227,7 @@ def test_tx_hash_different_txs_differ() -> None:
         recipient=_TEST_RECIPIENT,
         amount=_TEST_AMOUNT,
         nonce=0,
-        valid_until=9_999_999_999,
+        valid_before=9_999_999_999,
     )
     tx1 = sign_tempo_transaction(**kwargs_base)  # type: ignore[arg-type]
     tx2 = sign_tempo_transaction(**{**kwargs_base, "nonce": 1})  # type: ignore[arg-type]
