@@ -68,14 +68,14 @@ class RailAdapter(Protocol):
         1. ``can_handle``   — detect a 402 as belonging to this rail.
         2. ``parse``        — decode the challenge into ``NormalizedChallenge``.
         3. ``match_funding``— confirm a funding source is available.
-        4. ``pay``          — produce a ``PaymentResult`` (signs + builds headers
-                              for x402-style rails; pays invoice for L402).
+        4. ``pay``          — produce a ``PaymentResult`` (builds the signed
+                              credential and authorization header).
         5. ``confirm``      — read the server's settlement proof from the response.
 
-    ``sign`` and ``parse_settlement`` remain on the Protocol for backward
-    compatibility; x402 adapters implement them and ``pay``/``confirm`` delegate
-    to them by default.  L402 and future adapters override ``pay``/``confirm``
-    directly.
+    The canonical implementation path is to override ``pay`` and ``confirm``.
+    ``sign`` and ``parse_settlement`` are legacy methods kept for the x402 rail;
+    they are scheduled for removal once x402 is migrated to the ``pay``/``confirm``
+    path.
     """
 
     rail: Rail
