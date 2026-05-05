@@ -24,9 +24,8 @@ Week 13 scope:
 
 from __future__ import annotations
 
-import time
+import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -34,10 +33,8 @@ import httpx
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.assets import ASSETS_BY_ADDRESS, CANONICAL_ADDRESSES, CHAIN_IDS
 from routewiler.errors import (
-    ChallengeExpiredError,
     ChallengeParseError,
     MppChargeFailedError,
-    MppReceiptVerificationError,
     NoFundingForRailError,
 )
 from routewiler.funding.tempo import TempoFundingSource
@@ -51,15 +48,17 @@ from routewiler.normalized import (
     Resource,
 )
 from routewiler.rails._mpp_http import (
-    PAYMENT_RECEIPT,
+    AUTHORIZATION,
     WWW_AUTHENTICATE,
     build_authorization_header,
-    decode_request_param,
+    build_mpp_challenge_echo,
+    compute_mpp_expiry,
+    confirm_mpp_receipt,
+    parse_mpp_envelope,
     parse_payment_challenge,
-    parse_payment_receipt,
 )
 from routewiler.rails._tempo_tx import tx_hash as tempo_tx_hash
-from routewiler.rails.base import PaymentResult, RailAdapter, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo
 
 if TYPE_CHECKING:
     from routewiler.budgets.schema import DrawReceipt
@@ -70,17 +69,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _WWW_AUTH_HEADER = WWW_AUTHENTICATE  # "www-authenticate" (httpx lower-cases)
-_PAYMENT_RECEIPT_HEADER = PAYMENT_RECEIPT  # "payment-receipt"
-_AUTHORIZATION_HEADER = "Authorization"
-
-# Default nonce when the caller doesn't supply one (mock / offline tests).
-_DEFAULT_NONCE = 0
 
 
 async def _fetch_nonce(rpc_url: str, address: str) -> int:
     """Fetch the pending transaction count for ``address`` via ``eth_getTransactionCount``.
 
     Returns 0 if ``rpc_url`` is empty (offline / test mode).
+
+    Raises:
+        MppChargeFailedError: HTTP or JSON-RPC error from the Tempo RPC endpoint.
     """
     if not rpc_url:
         return 0
@@ -90,16 +87,23 @@ async def _fetch_nonce(rpc_url: str, address: str) -> int:
         "method": "eth_getTransactionCount",
         "params": [address, "pending"],
     }
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(rpc_url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(rpc_url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
         if "error" in data:
-            raise RuntimeError(f"eth_getTransactionCount RPC error: {data['error']}")
+            raise MppChargeFailedError(
+                f"eth_getTransactionCount RPC error from {rpc_url}: {data['error']}"
+            )
         return int(data["result"], 16)
+    except MppChargeFailedError:
+        raise
+    except Exception as exc:
+        raise MppChargeFailedError(f"Failed to fetch on-chain nonce from {rpc_url}: {exc}") from exc
 
-# Default validity window: 5 minutes from signing time.
-_DEFAULT_VALIDITY_SECONDS = 300
+
+_log = logging.getLogger(__name__)
 
 # Chain ID → Tempo network name (reverse of CHAIN_IDS).
 _CHAIN_ID_TO_NETWORK: dict[int, str] = {v: k for k, v in CHAIN_IDS.items() if "tempo" in k}
@@ -142,15 +146,6 @@ def _resolve_contract(network: str, asset: str) -> str | None:
     if asset.startswith("0x"):
         return asset
     return CANONICAL_ADDRESSES.get((network, asset))
-
-
-def _extract_address_from_did(source: str) -> str | None:
-    """Extract the Ethereum address from a ``did:pkh:eip155:<chainId>:<address>`` DID."""
-    try:
-        parts = source.split(":")
-        return parts[-1] if parts[-1].startswith("0x") else None
-    except Exception:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -200,23 +195,7 @@ class MppTempoAdapter:
             ChallengeExpiredError: Challenge ``expires`` is in the past.
         """
         header = response.headers.get(_WWW_AUTH_HEADER, "")
-        try:
-            params = parse_payment_challenge(header)
-        except Exception as exc:
-            raise ChallengeParseError(f"MPP-Tempo: malformed WWW-Authenticate: {exc}") from exc
-
-        challenge_id = params.get("id", "")
-        if not challenge_id:
-            raise ChallengeParseError("MPP-Tempo: missing 'id' auth-param")
-
-        # Decode the base64url JCS-JSON ``request`` param
-        request_b64 = params.get("request", "")
-        if not request_b64:
-            raise ChallengeParseError("MPP-Tempo: missing 'request' auth-param")
-        try:
-            req = decode_request_param(request_b64)
-        except Exception as exc:
-            raise ChallengeParseError(f"MPP-Tempo: failed to decode 'request': {exc}") from exc
+        challenge_id, req, params = parse_mpp_envelope(header, rail_prefix="MPP-Tempo")
 
         # Validate required fields
         for field in ("amount", "currency", "recipient"):
@@ -234,7 +213,12 @@ class MppTempoAdapter:
         recipient: str = req["recipient"]
 
         method_details: dict[str, Any] = req.get("methodDetails", {})
-        chain_id: int = int(method_details.get("chainId", 42431))
+        raw_chain_id = method_details.get("chainId")
+        if raw_chain_id is None:
+            raise ChallengeParseError(
+                "MPP-Tempo challenge is missing required 'methodDetails.chainId'"
+            )
+        chain_id: int = int(raw_chain_id)
         fee_payer: bool = bool(method_details.get("feePayer", False))
         supported_modes: list[str] = method_details.get("supportedModes", ["pull"])
 
@@ -245,23 +229,7 @@ class MppTempoAdapter:
                 "Routewiler W13 requires 'pull' mode"
             )
 
-        # Expiry
-        expires_str = params.get("expires", "")
-        if expires_str:
-            try:
-                expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ChallengeParseError(
-                    f"MPP-Tempo: could not parse 'expires' value {expires_str!r}: {exc}"
-                ) from exc
-        else:
-            # Default: now + 5 minutes
-            expires_at = datetime.fromtimestamp(time.time() + _DEFAULT_VALIDITY_SECONDS, tz=UTC)
-
-        if datetime.now(tz=UTC) >= expires_at:
-            raise ChallengeExpiredError(
-                f"MPP-Tempo challenge {challenge_id!r} expired at {expires_at.isoformat()}"
-            )
+        expires_at = compute_mpp_expiry(params, challenge_id, rail_prefix="MPP-Tempo")
 
         # Currency string for Price
         currency_str = _tip20_currency_string(currency_contract)
@@ -320,8 +288,8 @@ class MppTempoAdapter:
         if not isinstance(challenge.raw, MppTempoRailRaw):
             return None
 
-        chain_id: int = challenge.raw.extra.get("chain_id", 42431)
-        currency_contract: str = challenge.payee.metadata.get("currency_contract", "")  # type: ignore[union-attr]
+        chain_id: int = int(challenge.raw.extra["chain_id"])
+        currency_contract: str = challenge.payee.metadata.get("currency_contract", "")
 
         for fs in funding:
             if not isinstance(fs, TempoFundingSource):
@@ -364,21 +332,22 @@ class MppTempoAdapter:
         assert isinstance(challenge.raw, MppTempoRailRaw), (
             "pay() called with non-MPP-Tempo challenge"
         )
+        _log.debug("pay: charge_id=%s amount=%s", challenge.raw.charge_id, challenge.price.amount)
 
         source = self.match_funding(challenge, self._funding)
         if source is None:
             raise NoFundingForRailError(
                 f"No TempoFundingSource matches chain_id="
                 f"{challenge.raw.extra.get('chain_id')!r}, "
-                f"currency={challenge.payee.metadata.get('currency_contract')!r}. "  # type: ignore[union-attr]
+                f"currency={challenge.payee.metadata.get('currency_contract')!r}. "
                 f"Available: {[(f.signer.chain_id, f.asset) for f in self._funding]}"
             )
 
         req: dict[str, Any] = challenge.raw.extra.get("request_decoded", {})
         currency_contract: str = req.get("currency", "")
         recipient: str = req.get("recipient", "")
-        chain_id: int = challenge.raw.extra.get("chain_id", 42431)
-        fee_payer: bool = challenge.raw.extra.get("fee_payer", False)
+        chain_id: int = int(challenge.raw.extra["chain_id"])
+        fee_payer: bool = bool(challenge.raw.extra.get("fee_payer", False))
 
         # Compute a validity window from the challenge expiry
         valid_before = int(challenge.expires_at.timestamp())
@@ -407,23 +376,15 @@ class MppTempoAdapter:
         # Build the MPP credential per draft-httpauth-payment-00 / draft-tempo-charge-00
         auth_params = challenge.raw.extra.get("auth_params", {})
         credential: dict[str, Any] = {
-            "challenge": {
-                "id": challenge.raw.charge_id,
-                "realm": auth_params.get("realm", ""),
-                "method": "tempo",
-                "intent": auth_params.get("intent", "charge"),
-                "request": auth_params.get("request", ""),
-                "expires": auth_params.get("expires", ""),
-                "opaque": auth_params.get("opaque", ""),
-            },
+            "challenge": build_mpp_challenge_echo(
+                challenge.raw.charge_id, auth_params, default_method="tempo"
+            ),
             "payload": {
                 "type": "transaction",
                 "signature": signed_tx_hex,
             },
             "source": f"did:pkh:eip155:{chain_id}:{source.signer.address}",
         }
-        # Strip empty-string keys from challenge to keep the blob compact
-        credential["challenge"] = {k: v for k, v in credential["challenge"].items() if v != ""}
 
         header_value = build_authorization_header(credential)
 
@@ -436,7 +397,7 @@ class MppTempoAdapter:
         }
 
         return PaymentResult(
-            header_name=_AUTHORIZATION_HEADER,
+            header_name=AUTHORIZATION,
             header_value=header_value,
             credential=persisted,
             proof_type=self.proof_type,  # "txid"
@@ -447,7 +408,7 @@ class MppTempoAdapter:
         self,
         result: PaymentResult,
         response: httpx.Response,
-    ) -> SettlementInfo | None:
+    ) -> SettlementInfo:
         """Parse the ``Payment-Receipt`` header and return settlement info.
 
         Returns:
@@ -458,73 +419,12 @@ class MppTempoAdapter:
             MppReceiptVerificationError: Receipt is malformed or mismatches
                                          the credential we sent.
         """
-        receipt_header = response.headers.get(_PAYMENT_RECEIPT_HEADER, "")
-        if not receipt_header:
-            # Receipt absent — still return minimal SettlementInfo
-            return SettlementInfo(
-                success=response.is_success,
-                tx_hash=result.proof_value,
-                network_id="tempo",
-                payer_address=None,
-                amount_paid=None,
-            )
-
-        try:
-            receipt = parse_payment_receipt(receipt_header)
-        except Exception as exc:
-            raise MppReceiptVerificationError(
-                f"MPP-Tempo: failed to decode Payment-Receipt: {exc}"
-            ) from exc
-
-        # Cross-check challenge ID and method
-        expected_id = (result.credential or {}).get("charge_id", "")
-        if expected_id and receipt.challenge_id != expected_id:
-            raise MppReceiptVerificationError(
-                f"MPP-Tempo: receipt challengeId {receipt.challenge_id!r} != "
-                f"expected {expected_id!r}"
-            )
-        if receipt.method != "tempo":
-            raise MppReceiptVerificationError(
-                f"MPP-Tempo: receipt method {receipt.method!r} != 'tempo'"
-            )
-
-        payer_address: str | None = None
-        if result.credential:
-            source_did = result.credential.get("challenge_echo", {}).get("source", "")
-            if not source_did and result.credential:
-                # Fallback: build source DID from stored chain_id
-                pass
-            # Extract address from persisted credential — not the DID (we don't store it there)
-            # The source DID is only in the credential blob, not persisted separately; skip.
-
-        # Settled amount in base units
-        try:
-            amount_paid = int(receipt.settlement.get("amount", "0"))
-        except (ValueError, TypeError):
-            amount_paid = None
-
-        return SettlementInfo(
-            success=receipt.status == "success" and response.is_success,
-            tx_hash=receipt.reference,
+        _log.debug("confirm: status=%d", response.status_code)
+        return confirm_mpp_receipt(
+            result,
+            response,
+            expected_methods={"tempo"},
             network_id="tempo",
-            payer_address=payer_address,
-            amount_paid=amount_paid,
+            rail_prefix="MPP-Tempo",
+            facilitator="tempo",
         )
-
-    async def sign(self, challenge: NormalizedChallenge) -> str:
-        raise NotImplementedError(
-            "MppTempoAdapter uses pay() not sign(). "
-            "sign() is a legacy method for x402-style header-signing adapters."
-        )
-
-    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Verify protocol conformance at import time
-# ---------------------------------------------------------------------------
-
-assert isinstance(MppTempoAdapter([]), RailAdapter), (
-    "MppTempoAdapter does not satisfy the RailAdapter protocol"
-)

@@ -282,7 +282,6 @@ async def test_confirm_success_parses_receipt() -> None:
     resp = httpx.Response(200, headers={"Payment-Receipt": MOCK_RECEIPT_HEADER})
     settlement = await adapter.confirm(result, resp)
 
-    assert settlement is not None
     assert settlement.success is True
     assert settlement.tx_hash == MOCK_PAYMENT_INTENT
     assert settlement.network_id == "stripe"
@@ -298,7 +297,6 @@ async def test_confirm_no_receipt_header_returns_minimal_settlement() -> None:
     resp = httpx.Response(200)
     settlement = await adapter.confirm(result, resp)
 
-    assert settlement is not None
     assert settlement.success is True
     assert settlement.tx_hash == FAKE_SPT_ID  # falls back to proof_value
     assert settlement.network_id == "stripe"
@@ -322,7 +320,6 @@ async def test_confirm_method_card_accepted() -> None:
     resp = httpx.Response(200, headers={"Payment-Receipt": card_receipt})
     settlement = await adapter.confirm(result, resp)
 
-    assert settlement is not None
     assert settlement.success is True
 
 

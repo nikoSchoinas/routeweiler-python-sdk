@@ -146,19 +146,19 @@ def test_sign_tempo_transaction_signature_recovers_signer() -> None:
     token_bytes = _addr_bytes(_TEST_TOKEN)
     calls = [[token_bytes, 0, calldata]]
     unsigned_body = [
-        _TEST_CHAIN_ID,    # chain_id
-        0,                 # max_priority_fee_per_gas
-        20_000_000_000,    # max_fee_per_gas
-        200_000,           # gas_limit
-        calls,             # calls [[to, 0, calldata]]
-        [],                # access_list
-        0,                 # nonce_key
-        0,                 # nonce
-        9_999_999_999,     # valid_before
-        0,                 # valid_after
-        token_bytes,       # fee_token
-        b"",               # fee_payer_signature (empty = not sponsoring)
-        [],                # aa_authorization_list
+        _TEST_CHAIN_ID,  # chain_id
+        0,  # max_priority_fee_per_gas
+        20_000_000_000,  # max_fee_per_gas
+        200_000,  # gas_limit
+        calls,  # calls [[to, 0, calldata]]
+        [],  # access_list
+        0,  # nonce_key
+        0,  # nonce
+        9_999_999_999,  # valid_before
+        0,  # valid_after
+        token_bytes,  # fee_token
+        b"",  # fee_payer_signature (empty = not sponsoring)
+        [],  # aa_authorization_list
     ]
     type_prefix = b"\x76"
     digest = keccak(type_prefix + _rlp_encode_item(unsigned_body))

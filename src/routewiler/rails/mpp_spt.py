@@ -30,18 +30,15 @@ References:
 
 from __future__ import annotations
 
-import time
+import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.errors import (
-    ChallengeExpiredError,
     ChallengeParseError,
-    MppReceiptVerificationError,
     NoFundingForRailError,
     SptCreationError,
 )
@@ -56,14 +53,16 @@ from routewiler.normalized import (
     Resource,
 )
 from routewiler.rails._mpp_http import (
-    PAYMENT_RECEIPT,
+    AUTHORIZATION,
     WWW_AUTHENTICATE,
     build_authorization_header,
-    decode_request_param,
+    build_mpp_challenge_echo,
+    compute_mpp_expiry,
+    confirm_mpp_receipt,
+    parse_mpp_envelope,
     parse_payment_challenge,
-    parse_payment_receipt,
 )
-from routewiler.rails.base import PaymentResult, RailAdapter, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo
 
 if TYPE_CHECKING:
     from routewiler.budgets.schema import DrawReceipt
@@ -74,13 +73,10 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _WWW_AUTH_HEADER = WWW_AUTHENTICATE  # "www-authenticate" (httpx lower-cases)
-_PAYMENT_RECEIPT_HEADER = PAYMENT_RECEIPT  # "payment-receipt"
-_AUTHORIZATION_HEADER = "Authorization"
 
 _HANDLED_METHODS = {"stripe", "card"}
 
-# When the 402 doesn't include an `expires` param, default to 5 minutes.
-_DEFAULT_VALIDITY_SECONDS = 300
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -143,22 +139,7 @@ class MppSptAdapter:
             ChallengeExpiredError: Challenge ``expires`` is in the past.
         """
         header = response.headers.get(_WWW_AUTH_HEADER, "")
-        try:
-            params = parse_payment_challenge(header)
-        except Exception as exc:
-            raise ChallengeParseError(f"MPP-SPT: malformed WWW-Authenticate: {exc}") from exc
-
-        challenge_id = params.get("id", "")
-        if not challenge_id:
-            raise ChallengeParseError("MPP-SPT: missing 'id' auth-param")
-
-        request_b64 = params.get("request", "")
-        if not request_b64:
-            raise ChallengeParseError("MPP-SPT: missing 'request' auth-param")
-        try:
-            req = decode_request_param(request_b64)
-        except Exception as exc:
-            raise ChallengeParseError(f"MPP-SPT: failed to decode 'request': {exc}") from exc
+        challenge_id, req, params = parse_mpp_envelope(header, rail_prefix="MPP-SPT")
 
         for required_field in ("amount", "currency", "recipient"):
             if required_field not in req:
@@ -191,22 +172,7 @@ class MppSptAdapter:
         if not seller_details and recipient:
             seller_details = {"account": recipient}
 
-        # Expiry
-        expires_str = params.get("expires", "")
-        if expires_str:
-            try:
-                expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ChallengeParseError(
-                    f"MPP-SPT: could not parse 'expires' value {expires_str!r}: {exc}"
-                ) from exc
-        else:
-            expires_at = datetime.fromtimestamp(time.time() + _DEFAULT_VALIDITY_SECONDS, tz=UTC)
-
-        if datetime.now(tz=UTC) >= expires_at:
-            raise ChallengeExpiredError(
-                f"MPP-SPT challenge {challenge_id!r} expired at {expires_at.isoformat()}"
-            )
+        expires_at = compute_mpp_expiry(params, challenge_id, rail_prefix="MPP-SPT")
 
         raw = MppSptRailRaw(
             kind="mpp-spt",
@@ -302,6 +268,7 @@ class MppSptAdapter:
             SptCreationError:      Stripe API call failed.
         """
         assert isinstance(challenge.raw, MppSptRailRaw), "pay() called with non-MPP-SPT challenge"
+        _log.debug("pay: nonce=%s amount=%s", challenge.nonce, challenge.price.amount)
 
         source = self.match_funding(challenge, self._funding)
         if source is None:
@@ -335,20 +302,10 @@ class MppSptAdapter:
             ) from exc
 
         # Build the MPP credential per draft-httpauth-payment-00.
-        challenge_echo: dict[str, Any] = {
-            "id": challenge.nonce,
-            "realm": auth_params.get("realm", ""),
-            "method": auth_params.get("method", "stripe"),
-            "intent": auth_params.get("intent", "charge"),
-            "request": auth_params.get("request", ""),
-            "expires": auth_params.get("expires", ""),
-            "opaque": auth_params.get("opaque", ""),
-        }
-        # Strip empty-string keys to keep the credential blob compact.
-        challenge_echo = {k: v for k, v in challenge_echo.items() if v != ""}
-
         credential: dict[str, Any] = {
-            "challenge": challenge_echo,
+            "challenge": build_mpp_challenge_echo(
+                challenge.nonce, auth_params, default_method="stripe"
+            ),
             "payload": {
                 "type": "shared_payment_granted_token",
                 "id": spt_id,
@@ -367,7 +324,7 @@ class MppSptAdapter:
         }
 
         return PaymentResult(
-            header_name=_AUTHORIZATION_HEADER,
+            header_name=AUTHORIZATION,
             header_value=header_value,
             credential=persisted,
             proof_type=self.proof_type,  # "spt_id"
@@ -378,7 +335,7 @@ class MppSptAdapter:
         self,
         result: PaymentResult,
         response: httpx.Response,
-    ) -> SettlementInfo | None:
+    ) -> SettlementInfo:
         """Parse the ``Payment-Receipt`` header and return settlement info.
 
         Returns:
@@ -389,60 +346,12 @@ class MppSptAdapter:
             MppReceiptVerificationError: Receipt is malformed or mismatches
                                          the credential we sent.
         """
-        receipt_header = response.headers.get(_PAYMENT_RECEIPT_HEADER, "")
-        if not receipt_header:
-            return SettlementInfo(
-                success=response.is_success,
-                tx_hash=result.proof_value,
-                network_id="stripe",
-                payer_address=None,
-                amount_paid=None,
-            )
-
-        try:
-            receipt = parse_payment_receipt(receipt_header)
-        except Exception as exc:
-            raise MppReceiptVerificationError(
-                f"MPP-SPT: failed to decode Payment-Receipt: {exc}"
-            ) from exc
-
-        expected_id = (result.credential or {}).get("charge_id", "")
-        if expected_id and receipt.challenge_id != expected_id:
-            raise MppReceiptVerificationError(
-                f"MPP-SPT: receipt challengeId {receipt.challenge_id!r} != expected {expected_id!r}"
-            )
-        if receipt.method not in ("stripe", "card"):
-            raise MppReceiptVerificationError(
-                f"MPP-SPT: receipt method {receipt.method!r} is not 'stripe' or 'card'"
-            )
-
-        try:
-            amount_paid = int(receipt.settlement.get("amount", "0"))
-        except (ValueError, TypeError):
-            amount_paid = None
-
-        return SettlementInfo(
-            success=receipt.status == "success" and response.is_success,
-            tx_hash=receipt.reference,
+        _log.debug("confirm: status=%d", response.status_code)
+        return confirm_mpp_receipt(
+            result,
+            response,
+            expected_methods={"stripe", "card"},
             network_id="stripe",
-            payer_address=None,
-            amount_paid=amount_paid,
+            rail_prefix="MPP-SPT",
+            facilitator="stripe",
         )
-
-    async def sign(self, challenge: NormalizedChallenge) -> str:
-        raise NotImplementedError(
-            "MppSptAdapter uses pay() not sign(). "
-            "sign() is a legacy method for x402-style header-signing adapters."
-        )
-
-    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Verify protocol conformance at import time
-# ---------------------------------------------------------------------------
-
-assert isinstance(MppSptAdapter([]), RailAdapter), (
-    "MppSptAdapter does not satisfy the RailAdapter protocol"
-)

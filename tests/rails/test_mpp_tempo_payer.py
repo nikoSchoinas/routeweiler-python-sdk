@@ -180,7 +180,6 @@ async def test_confirm_parses_receipt_header() -> None:
     )
     settlement = await adapter.confirm(result, ok_response)
 
-    assert settlement is not None
     assert settlement.success is True
     assert settlement.network_id == "tempo"
 
@@ -198,7 +197,7 @@ async def test_confirm_tx_hash_from_receipt() -> None:
         request=httpx.Request("GET", "http://example.com/protected"),
     )
     settlement = await adapter.confirm(result, ok_response)
-    assert settlement is not None
+
     # The receipt carries MOCK_TX_HASH as reference
     assert settlement.tx_hash == MOCK_TX_HASH
 
@@ -215,7 +214,7 @@ async def test_confirm_no_receipt_header_returns_info() -> None:
         request=httpx.Request("GET", "http://example.com/protected"),
     )
     settlement = await adapter.confirm(result, ok_response)
-    assert settlement is not None
+
     assert settlement.success is True  # 200 response, no receipt → assume success
 
 
@@ -291,17 +290,3 @@ async def test_confirm_malformed_receipt_raises() -> None:
 # ---------------------------------------------------------------------------
 # Legacy protocol methods
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_sign_raises_not_implemented() -> None:
-    adapter = MppTempoAdapter([])
-    challenge = _make_challenge(adapter)
-    with pytest.raises(NotImplementedError):
-        await adapter.sign(challenge)  # type: ignore[arg-type]
-
-
-def test_parse_settlement_returns_none() -> None:
-    adapter = MppTempoAdapter([])
-    response = httpx.Response(200, request=httpx.Request("GET", "http://example.com"))
-    assert adapter.parse_settlement(response) is None
