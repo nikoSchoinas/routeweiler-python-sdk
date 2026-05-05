@@ -37,6 +37,7 @@ dependencies = [
     "pyyaml>=6,<7",
     "pymacaroons>=0.13,<1",
     "lnd-grpc-client>=0.5,<1",
+    "stripe>=10,<13",
 ]
 
 [project.optional-dependencies]
@@ -137,6 +138,14 @@ ignore = [
     "PLR2004",  # Numeric literals are RFC-spec constants (0x20 for JSON control chars, 4 for base64)
     "RUF003",   # Unicode U+2013 en-dash in spec cross-reference comment; intentional
 ]
+"src/routewiler/budgets/fmv.py" = [
+    "PLR0911",  # fmv_for_trace has many return branches — each currency type is a distinct path
+    "PLR0912",  # fmv_for_trace has many branches — fiat/stablecoin/sats/cross-fiat all distinct
+]
+"src/routewiler/rails/mpp_spt.py" = [
+    "PLR0912",  # parse() has many branches — each is a distinct validation step per spec
+    "PLR2004",  # 2 and 4 are ISO-4217 spec constants for min/max currency code length
+]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -166,5 +175,5 @@ pythonpath  = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402, Tempo Moderato for MPP-Tempo)",
+    "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402, Tempo Moderato for MPP-Tempo, sk_test_* for MPP-SPT)",
 ]
