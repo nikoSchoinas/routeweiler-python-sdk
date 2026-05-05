@@ -8,9 +8,10 @@ from eth_account.signers.local import LocalAccount
 
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource, LightningNodeClient, LndClient
+from routewiler.funding.stripe import SptCreator, StripeFundingSource, StripeSptCreator
 from routewiler.funding.tempo import EthAccountTempoSigner, TempoFundingSource, TempoSigner
 
-FundingSource = EvmFundingSource | LightningFundingSource | TempoFundingSource
+FundingSource = EvmFundingSource | LightningFundingSource | TempoFundingSource | StripeFundingSource
 
 __all__ = [
     "EthAccountTempoSigner",
@@ -20,6 +21,9 @@ __all__ = [
     "LightningFundingSource",
     "LightningNodeClient",
     "LndClient",
+    "SptCreator",
+    "StripeFundingSource",
+    "StripeSptCreator",
     "TempoFundingSource",
     "TempoSigner",
 ]
@@ -79,6 +83,41 @@ class Funding:
             signer=EthAccountTempoSigner(wallet=wallet, chain_id=42431),
             network="tempo-moderato",
             asset="pathusd",
+        )
+
+    @staticmethod
+    def stripe(
+        *,
+        api_key: str,
+        customer: str,
+        payment_method: str,
+        currency: str = "usd",
+        spt_creator: SptCreator | None = None,
+    ) -> StripeFundingSource:
+        """Stripe fiat / card funding source for MPP-SPT payments.
+
+        Args:
+            api_key:        Buyer's Stripe secret key (``sk_live_...`` or ``sk_test_...``).
+            customer:       Buyer's Stripe customer id (``cus_<id>``).
+            payment_method: Buyer's saved Stripe payment method id (``pm_<id>``).
+            currency:       ISO-4217 lowercase currency this source covers (default ``"usd"``).
+            spt_creator:    Optional injected SPT creator; defaults to
+                            ``StripeSptCreator(api_key)``.
+                            Pass a ``FakeSptCreator`` in tests to avoid hitting Stripe.
+        """
+        if spt_creator is not None:
+            return StripeFundingSource(
+                api_key=api_key,
+                customer=customer,
+                payment_method=payment_method,
+                currency=currency,
+                spt_creator=spt_creator,
+            )
+        return StripeFundingSource(
+            api_key=api_key,
+            customer=customer,
+            payment_method=payment_method,
+            currency=currency,
         )
 
     @staticmethod
