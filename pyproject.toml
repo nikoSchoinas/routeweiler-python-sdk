@@ -122,7 +122,6 @@ ignore = [
 "src/routewiler/_auth.py" = [
     "PLR0912",  # auth flow inherently has many branches (protocol phases + error paths)
     "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
-    "PLR2004",  # HTTP threshold constant is imported but some checkers still flag sub-expressions
 ]
 "src/routewiler/rails/_bolt11.py" = [
     "PLR0912",  # BOLT-11 decoder parses many tagged field types; branches are spec-faithful
@@ -145,6 +144,9 @@ ignore = [
 "src/routewiler/rails/mpp_spt.py" = [
     "PLR0912",  # parse() has many branches — each is a distinct validation step per spec
     "PLR2004",  # 2 and 4 are ISO-4217 spec constants for min/max currency code length
+]
+"src/routewiler/rails/mpp_tempo.py" = [
+    "PLR0912",  # parse() has many branches — each is a distinct validation step per spec
 ]
 
 [tool.ruff.format]

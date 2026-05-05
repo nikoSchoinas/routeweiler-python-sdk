@@ -1,8 +1,10 @@
 # routewiler
 
+**Status:** Alpha — `0.1.0.dev0` — API may change before 1.0.
+
 The neutral micropayment router for autonomous agents. A single async HTTP client —
 `await client.get(url)` — that transparently handles `402 Payment Required` across
-x402 v2, L402 (Lightning), and Stripe MPP.
+x402, L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
 
 > **Async-only.** `Routewiler` wraps `httpx.AsyncClient`. All methods (`get`, `post`,
 > …) are coroutines and must be awaited inside an `async` function.
@@ -12,6 +14,8 @@ x402 v2, L402 (Lightning), and Stripe MPP.
 ```bash
 pip install routewiler
 ```
+
+Python 3.11+ required.
 
 ## Quick start
 
@@ -31,34 +35,77 @@ async def main():
 asyncio.run(main())
 ```
 
+## Supported rails
+
+| Rail | Method | Funding source | Networks |
+|------|--------|---------------|----------|
+| [x402](https://x402.org) | EVM signed transaction | `EvmFundingSource` | Base, Base-Sepolia |
+| [L402](https://docs.lightning.engineering/the-lightning-network/l402) | BOLT-11 Lightning invoice | `LightningFundingSource` | Bitcoin, Regtest |
+| [MPP-Tempo](https://paymentauth.org) | Tempo 0x76 stablecoin tx | `TempoFundingSource` | Moderato testnet |
+| [MPP-SPT](https://docs.stripe.com/agentic-commerce) | Stripe Shared Payment Token | `StripeFundingSource` | USD, EUR, GBP |
+
 ## SQLite trace recorder
 
 Enable local tracing with `TraceSink.sqlite`. Every call (paid or free) produces
 exactly one `TraceEvent` row, including the on-chain tx hash, FMV in your envelope
-currency, and the outcome:
+currency, and the payment outcome:
 
 ```python
 from routewiler import Routewiler, Funding, TraceSink
 
 async with Routewiler(
     funding=[Funding.base_usdc(wallet=signer)],
-    trace_sink=TraceSink.sqlite("./routewiler-traces.db"),
+    trace_sink=TraceSink.sqlite("./routewiler.db"),
 ) as client:
     response = await client.get("https://api.example.com/data")
 
 # Inspect with the sqlite3 CLI:
-# sqlite3 ./routewiler-traces.db \
-#   'SELECT request_id, selected_rail, http_status, amount_envelope FROM trace_events;'
+# sqlite3 ./routewiler.db \
+#   'SELECT request_id, selected_rail, http_status FROM trace_events;'
 ```
 
-Tracing is disabled by default (`trace_sink=None`). Hosted trace upload and the
-`url_mode="hash"` privacy option ship in a later release.
+## Budget envelopes
 
-## Lightning (L402) payments
+Enforce per-session or per-agent spend caps with local SQLite budget envelopes:
 
-L402 payments require a running Lightning node. Routewiler supports any node
-reachable over the LND gRPC interface — [LND](https://github.com/lightningnetwork/lnd),
-[Voltage](https://voltage.cloud), and [Greenlight](https://blockstream.com/lightning/greenlight/)
-all work. Pass `LightningFundingSource` (from `routewiler.funding.lightning`) with your
-node's gRPC host, port, macaroon, and TLS cert. See `funding/lightning.py` for the full
-API and `tests/rails/test_l402_e2e_polar.py` for a live integration test using Polar regtest.
+```python
+async with Routewiler(
+    funding=[Funding.base_usdc(wallet=signer)],
+    trace_sink=TraceSink.sqlite("routewiler.db"),
+    envelope_id="session-abc",
+) as client:
+    response = await client.get("https://api.example.com/data")
+```
+
+Envelopes track reserved and settled amounts with Ed25519-signed draw receipts.
+`BudgetExceededError` is raised if a payment would breach the cap.
+
+## Policy
+
+Control which rails are used, set per-call spend limits, or deny specific URLs:
+
+```python
+from routewiler import PolicyFile, Routewiler
+
+async with Routewiler(
+    funding=[...],
+    policy=PolicyFile("policy.yaml"),
+) as client:
+    ...
+```
+
+```yaml
+# policy.yaml
+version: 1
+rules:
+  - name: "deny analytics"
+    when:
+      url_matches: "*.tracking.io"
+    deny: true
+  - name: "cap per call"
+    max_per_call_minor_units: 500  # 5 USD cents
+```
+
+## License
+
+Apache 2.0 — see [LICENSE](../../LICENSE).
