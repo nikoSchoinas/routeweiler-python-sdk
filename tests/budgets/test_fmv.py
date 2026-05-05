@@ -151,3 +151,52 @@ def test_capture_fmv_snapshot_used_by_amount_conversion() -> None:
     )
     assert result == 97  # 1 USDC * 0.92 EUR/USD * 1.05 buffer * 100 = 96.6 → 97 cents
     assert quality == "fx_leg"
+
+
+# ---------------------------------------------------------------------------
+# Fiat: "<iso>-fiat" branch — added for MPP-SPT (Week 14)
+# ---------------------------------------------------------------------------
+
+
+def test_fiat_same_currency_passthrough() -> None:
+    """usd-fiat in a USD envelope is 1:1, no conversion."""
+    result, quality = amount_to_envelope_minor_units("usd-fiat", 500, "usd")
+    assert result == 500
+    assert quality == "stablecoin_peg"
+
+
+def test_fiat_same_currency_eur() -> None:
+    result, quality = amount_to_envelope_minor_units("eur-fiat", 100, "eur")
+    assert result == 100
+    assert quality == "stablecoin_peg"
+
+
+def test_fiat_cross_currency_usd_to_eur() -> None:
+    """USD cents → EUR cents via ECB stub (0.92), with 5% buffer, ceil."""
+    # 500 cents * 0.92 * 1.05 = 483.0 → 483 EUR cents
+    result, quality = amount_to_envelope_minor_units("usd-fiat", 500, "eur")
+    assert result == 483
+    assert quality == "fx_leg"
+
+
+def test_fiat_cross_currency_eur_to_usd() -> None:
+    """EUR cents → USD cents via ECB stub (1.087), with 5% buffer, ceil."""
+    # 100 cents * 1.087 * 1.05 = 114.135 → 115 USD cents
+    result, quality = amount_to_envelope_minor_units("eur-fiat", 100, "usd")
+    assert result == 115
+    assert quality == "fx_leg"
+
+
+def test_fiat_cross_currency_uses_snapshot_rate_over_ecb() -> None:
+    """Custom snapshot rate takes precedence over ECB stub."""
+    rates = {"usd->eur": Decimal("0.90")}
+    # 200 * 0.90 * 1.05 = 189 cents
+    result, quality = amount_to_envelope_minor_units("usd-fiat", 200, "eur", snapshot_rates=rates)
+    assert result == 189
+    assert quality == "fx_leg"
+
+
+def test_fiat_unknown_cross_currency_raises() -> None:
+    """Unknown fiat cross-pair (no ECB rate) raises FmvUnavailableError."""
+    with pytest.raises(FmvUnavailableError):
+        amount_to_envelope_minor_units("usd-fiat", 100, "xyz")

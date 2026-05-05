@@ -100,6 +100,17 @@ def amount_to_envelope_minor_units(
     The 5% ``FMV_BUFFER`` (§8.4) is applied to all non-peg conversions.
     """
     env_cur = envelope_currency.lower()
+
+    # Fiat: "<iso>-fiat" — already in minor units of the named fiat currency.
+    # Example: "usd-fiat" with amount=500 means $5.00 (500 cents).
+    if rail_currency.endswith("-fiat"):
+        src = rail_currency[: -len("-fiat")]
+        if src == env_cur:
+            return amount_native, "stablecoin_peg"
+        rate = _resolve_rate(src, env_cur, snapshot_rates)
+        result = _apply_rate_with_buffer(Decimal(amount_native), rate, 1)
+        return result, "fx_leg"
+
     address = _erc20_address(rail_currency)
 
     if address and address in STABLECOIN_PEG:
@@ -182,6 +193,24 @@ def fmv_for_trace(
     ``(None, "unavailable")`` rather than raising.
     """
     env_cur = envelope_currency.lower()
+
+    # Fiat: "<iso>-fiat" — already in minor units of the named fiat currency.
+    if caip19_currency.endswith("-fiat"):
+        src = caip19_currency[: -len("-fiat")]
+        if src == env_cur:
+            return float(amount_native), "stablecoin_peg"
+        if snapshot_rates:
+            key = f"{src}->{env_cur}"
+            rate = snapshot_rates.get(key)
+            if rate is None:
+                rate = ecb_rate_stub(src, env_cur)
+            if rate is not None:
+                return float(Decimal(str(amount_native)) * rate), "fx_leg"
+        rate = ecb_rate_stub(src, env_cur)
+        if rate is not None:
+            return float(Decimal(str(amount_native)) * rate), "fx_leg"
+        return None, "unavailable"
+
     address = _erc20_address(caip19_currency)
 
     if address and address in STABLECOIN_PEG:
