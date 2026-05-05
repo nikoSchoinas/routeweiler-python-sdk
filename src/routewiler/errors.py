@@ -1,4 +1,38 @@
-"""Routewiler exception hierarchy."""
+"""Routewiler exception hierarchy.
+
+:class:`RoutewilerError`
+└── :class:`PaymentError`
+    ├── :class:`RailParsingError`
+    │   ├── :class:`ChallengeParseError`
+    │   └── :class:`ChallengeExpiredError`
+    ├── :class:`RailExecutionError`
+    │   ├── :class:`SigningError`
+    │   ├── :class:`InvoicePaymentError`
+    │   ├── :class:`PreimageMismatchError`
+    │   ├── :class:`SptCreationError`
+    │   ├── :class:`MppChargeFailedError`
+    │   └── :class:`MppReceiptVerificationError`
+    ├── :class:`BudgetError`
+    │   ├── :class:`BudgetExceededError`
+    │   ├── :class:`EnvelopeNotFoundError`
+    │   ├── :class:`EnvelopeFrozenError`
+    │   └── :class:`EnvelopeExpiredError`
+    ├── :class:`PolicyError`
+    │   ├── :class:`PolicyDeniedError`
+    │   ├── :class:`PolicyMaxPerCallExceededError`
+    │   └── :class:`NoFeasibleRailError`
+    ├── :class:`CredentialError`
+    │   ├── :class:`CredentialNotFoundError`
+    │   ├── :class:`InvalidCredentialTransitionError`
+    │   └── :class:`ManifestParseError`
+    ├── :class:`KeystoreError`
+    │   ├── :class:`KeystoreNotFoundError`
+    │   └── :class:`KeystoreAlreadyExistsError`
+    ├── :class:`FmvUnavailableError`
+    ├── :class:`NoFundingForRailError`
+    ├── :class:`RailNotSupportedError`
+    └── :class:`ReceiptVerificationError`
+"""
 
 from __future__ import annotations
 
@@ -11,23 +45,84 @@ class PaymentError(RoutewilerError):
     """Raised when a 402 payment flow cannot be completed."""
 
 
-class RailNotSupportedError(PaymentError):
-    """No registered adapter can handle the 402 challenge."""
+# ---------------------------------------------------------------------------
+# Rail-parsing errors
+# ---------------------------------------------------------------------------
 
 
-class ChallengeParseError(PaymentError):
+class RailParsingError(PaymentError):
+    """Base for errors that occur while parsing a 402 challenge."""
+
+
+class ChallengeParseError(RailParsingError):
     """The PAYMENT-REQUIRED header could not be decoded or validated."""
 
 
-class SigningError(PaymentError):
+class ChallengeExpiredError(RailParsingError):
+    """Rail challenge expired before the client could pay.
+
+    Examples: BOLT-11 invoice expiry, L402 macaroon ``valid_until`` caveat,
+    MPP challenge ``expires`` auth-param.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Rail-execution errors
+# ---------------------------------------------------------------------------
+
+
+class RailExecutionError(PaymentError):
+    """Base for errors that occur while executing a payment."""
+
+
+class SigningError(RailExecutionError):
     """The rail adapter failed to produce a signed payment payload."""
 
 
-class NoFundingForRailError(PaymentError):
-    """None of the available funding sources match the server's accepted payment options."""
+class InvoicePaymentError(RailExecutionError):
+    """Lightning node returned a terminal payment failure (no_route, channel offline, etc.)."""
 
 
-class BudgetExceededError(PaymentError):
+class PreimageMismatchError(RailExecutionError):
+    """sha256(preimage) != invoice payment_hash; the node returned a corrupt preimage."""
+
+
+class SptCreationError(RailExecutionError):
+    """Stripe rejected or failed to create the Shared Payment Token.
+
+    Raised when the Stripe API call in ``MppSptAdapter.pay()`` fails for any
+    reason: network error, declined card, invalid customer or payment_method,
+    expired payment method, Stripe API outage, etc.
+    """
+
+
+class MppChargeFailedError(RailExecutionError):
+    """MPP server rejected the credential or payment did not settle.
+
+    Returned when the server responds 402 with a Problem-Details body
+    (``verification-failed``, ``payment-insufficient``, ``invalid-challenge``)
+    or with a non-2xx status that lacks a ``Payment-Receipt`` header.
+    """
+
+
+class MppReceiptVerificationError(RailExecutionError):
+    """The ``Payment-Receipt`` header is malformed or mismatches our credential.
+
+    Raised when the receipt cannot be decoded, fails Pydantic validation, or
+    the ``challengeId`` / ``method`` fields do not match what we sent.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Budget errors
+# ---------------------------------------------------------------------------
+
+
+class BudgetError(PaymentError):
+    """Base for budget envelope failures."""
+
+
+class BudgetExceededError(BudgetError):
     """Drawing this amount would breach the envelope's flat cap."""
 
     def __init__(
@@ -45,39 +140,28 @@ class BudgetExceededError(PaymentError):
         self.available_minor_units = available_minor_units
 
 
-class EnvelopeNotFoundError(PaymentError):
+class EnvelopeNotFoundError(BudgetError):
     """No envelope row matches the requested id."""
 
 
-class EnvelopeFrozenError(PaymentError):
+class EnvelopeFrozenError(BudgetError):
     """Envelope status is not 'active' (frozen or revoked)."""
 
 
-class EnvelopeExpiredError(PaymentError):
+class EnvelopeExpiredError(BudgetError):
     """Envelope expires_at is in the past."""
 
 
-class KeystoreError(RoutewilerError):
-    """Base for keystore failures."""
+# ---------------------------------------------------------------------------
+# Policy errors
+# ---------------------------------------------------------------------------
 
 
-class KeystoreNotFoundError(KeystoreError):
-    """No key file exists for the given envelope id."""
+class PolicyError(PaymentError):
+    """Base for policy-engine failures."""
 
 
-class KeystoreAlreadyExistsError(KeystoreError):
-    """A key file already exists for the given envelope id; will not overwrite."""
-
-
-class ReceiptVerificationError(RoutewilerError):
-    """Ed25519 signature on a DrawReceipt is invalid or the payload was tampered with."""
-
-
-class FmvUnavailableError(PaymentError):
-    """No cached FMV rate is available for the required currency pair."""
-
-
-class PolicyDeniedError(PaymentError):
+class PolicyDeniedError(PolicyError):
     """A policy rule with `deny: true` matched the challenge."""
 
     def __init__(self, reason: str | None = None, rule_name: str | None = None) -> None:
@@ -87,7 +171,7 @@ class PolicyDeniedError(PaymentError):
         self.rule_name = rule_name
 
 
-class PolicyMaxPerCallExceededError(PaymentError):
+class PolicyMaxPerCallExceededError(PolicyError):
     """The challenge amount exceeds the policy's `max_per_call_minor_units` limit."""
 
     def __init__(
@@ -105,24 +189,13 @@ class PolicyMaxPerCallExceededError(PaymentError):
         self.limit = limit
 
 
-class NoFeasibleRailError(PaymentError):
+class NoFeasibleRailError(PolicyError):
     """No rail remains after policy, funding, and failover filters are applied."""
 
 
-class ChallengeExpiredError(ChallengeParseError):
-    """Rail challenge expired before the client could pay.
-
-    Examples: BOLT-11 invoice expiry, L402 macaroon ``valid_until`` caveat,
-    MPP challenge ``expires`` auth-param.
-    """
-
-
-class InvoicePaymentError(PaymentError):
-    """Lightning node returned a terminal payment failure (no_route, channel offline, etc.)."""
-
-
-class PreimageMismatchError(PaymentError):
-    """sha256(preimage) != invoice payment_hash; the node returned a corrupt preimage."""
+# ---------------------------------------------------------------------------
+# Credential errors
+# ---------------------------------------------------------------------------
 
 
 class CredentialError(PaymentError):
@@ -142,31 +215,39 @@ class ManifestParseError(CredentialError):
     invalid id_extractor (unknown prefix, bad regex)."""
 
 
-class ManifestNotFoundError(CredentialError):
-    """No loaded service-shape manifest matches the given URL's domain."""
+# ---------------------------------------------------------------------------
+# Keystore errors
+# ---------------------------------------------------------------------------
 
 
-class SptCreationError(PaymentError):
-    """Stripe rejected or failed to create the Shared Payment Token.
-
-    Raised when the Stripe API call in ``MppSptAdapter.pay()`` fails for any
-    reason: network error, declined card, invalid customer or payment_method,
-    expired payment method, Stripe API outage, etc.
-    """
+class KeystoreError(PaymentError):
+    """Base for keystore failures."""
 
 
-class MppChargeFailedError(PaymentError):
-    """MPP server rejected the credential or payment did not settle.
-
-    Returned when the server responds 402 with a Problem-Details body
-    (``verification-failed``, ``payment-insufficient``, ``invalid-challenge``)
-    or with a non-2xx status that lacks a ``Payment-Receipt`` header.
-    """
+class KeystoreNotFoundError(KeystoreError):
+    """No key file exists for the given envelope id."""
 
 
-class MppReceiptVerificationError(PaymentError):
-    """The ``Payment-Receipt`` header is malformed or mismatches our credential.
+class KeystoreAlreadyExistsError(KeystoreError):
+    """A key file already exists for the given envelope id; will not overwrite."""
 
-    Raised when the receipt cannot be decoded, fails Pydantic validation, or
-    the ``challengeId`` / ``method`` fields do not match what we sent.
-    """
+
+# ---------------------------------------------------------------------------
+# Remaining payment errors
+# ---------------------------------------------------------------------------
+
+
+class FmvUnavailableError(PaymentError):
+    """No cached FMV rate is available for the required currency pair."""
+
+
+class NoFundingForRailError(PaymentError):
+    """None of the available funding sources match the server's accepted payment options."""
+
+
+class RailNotSupportedError(PaymentError):
+    """No registered adapter can handle the 402 challenge."""
+
+
+class ReceiptVerificationError(PaymentError):
+    """Ed25519 signature on a DrawReceipt is invalid or the payload was tampered with."""
