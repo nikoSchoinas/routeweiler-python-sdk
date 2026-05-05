@@ -111,6 +111,7 @@ class MppSptRailRaw(RoutewilerModel):
     kind: Literal["mpp-spt"]
     seller_details: dict[str, Any]
     payment_method_hint: str | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 RailRaw = Annotated[
