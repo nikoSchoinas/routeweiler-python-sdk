@@ -22,13 +22,26 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
+import time
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
 from pydantic import field_validator
 
-from routewiler._base import RoutewilerModel
+from routewiler._base import RoutewilerLooseModel
+from routewiler.errors import (
+    ChallengeExpiredError,
+    ChallengeParseError,
+    MppReceiptVerificationError,
+)
+
+if TYPE_CHECKING:
+    from routewiler.rails.base import PaymentResult, SettlementInfo
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Wire-format header constants
@@ -204,7 +217,7 @@ def build_authorization_header(credential: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-class MppReceipt(RoutewilerModel):
+class MppReceipt(RoutewilerLooseModel):
     """Decoded ``Payment-Receipt`` header payload."""
 
     challenge_id: str
@@ -266,3 +279,152 @@ def build_payment_receipt(
         "timestamp": now,
     }
     return b64url_encode(jcs_encode(receipt))
+
+
+# ---------------------------------------------------------------------------
+# Shared MPP adapter helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_VALIDITY_SECONDS = 300
+
+
+def parse_mpp_envelope(
+    header_value: str,
+    *,
+    rail_prefix: str,
+) -> tuple[str, dict[str, Any], dict[str, str]]:
+    """Parse a ``WWW-Authenticate: Payment`` header and decode the ``request`` param.
+
+    Returns ``(challenge_id, request_dict, params)``.
+
+    Raises ``ChallengeParseError`` on any failure.
+    """
+    try:
+        params = parse_payment_challenge(header_value)
+    except Exception as exc:
+        _log.warning("%s: malformed WWW-Authenticate: %s", rail_prefix, exc)
+        raise ChallengeParseError(f"{rail_prefix}: malformed WWW-Authenticate: {exc}") from exc
+
+    challenge_id = params.get("id", "")
+    if not challenge_id:
+        raise ChallengeParseError(f"{rail_prefix}: missing 'id' auth-param")
+
+    request_b64 = params.get("request", "")
+    if not request_b64:
+        raise ChallengeParseError(f"{rail_prefix}: missing 'request' auth-param")
+    try:
+        req: dict[str, Any] = decode_request_param(request_b64)
+    except Exception as exc:
+        raise ChallengeParseError(f"{rail_prefix}: failed to decode 'request': {exc}") from exc
+
+    return challenge_id, req, params
+
+
+def compute_mpp_expiry(
+    params: dict[str, str],
+    challenge_id: str,
+    *,
+    rail_prefix: str,
+    default_seconds: int = _DEFAULT_VALIDITY_SECONDS,
+) -> datetime:
+    """Parse the ``expires`` auth-param or fall back to now + ``default_seconds``.
+
+    Raises ``ChallengeParseError`` on bad format; ``ChallengeExpiredError`` if past.
+    """
+    expires_str = params.get("expires", "")
+    if expires_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ChallengeParseError(
+                f"{rail_prefix}: could not parse 'expires' value {expires_str!r}: {exc}"
+            ) from exc
+    else:
+        expires_at = datetime.fromtimestamp(time.time() + default_seconds, tz=UTC)
+
+    if datetime.now(tz=UTC) >= expires_at:
+        raise ChallengeExpiredError(
+            f"{rail_prefix} challenge {challenge_id!r} expired at {expires_at.isoformat()}"
+        )
+
+    return expires_at
+
+
+def build_mpp_challenge_echo(
+    challenge_id: str,
+    auth_params: dict[str, Any],
+    *,
+    default_method: str,
+) -> dict[str, Any]:
+    """Build the challenge echo dict for an MPP credential, stripping empty-string keys."""
+    echo: dict[str, Any] = {
+        "id": challenge_id,
+        "realm": auth_params.get("realm", ""),
+        "method": auth_params.get("method", default_method),
+        "intent": auth_params.get("intent", "charge"),
+        "request": auth_params.get("request", ""),
+        "expires": auth_params.get("expires", ""),
+        "opaque": auth_params.get("opaque", ""),
+    }
+    return {k: v for k, v in echo.items() if v != ""}
+
+
+def confirm_mpp_receipt(
+    result: PaymentResult,
+    response: httpx.Response,
+    *,
+    expected_methods: set[str],
+    network_id: str,
+    rail_prefix: str,
+    facilitator: str | None = None,
+) -> SettlementInfo:
+    """Parse the ``Payment-Receipt`` header and return a ``SettlementInfo``.
+
+    Returns a minimal ``SettlementInfo`` when no receipt header is present.
+
+    Raises ``MppReceiptVerificationError`` on decode failure or mismatched fields.
+    """
+    from routewiler.rails.base import SettlementInfo  # noqa: PLC0415
+
+    receipt_header = response.headers.get(PAYMENT_RECEIPT, "")
+    if not receipt_header:
+        return SettlementInfo(
+            success=response.is_success,
+            tx_hash=result.proof_value,
+            network_id=network_id,
+            payer_address=None,
+            amount_paid=None,
+            facilitator=facilitator,
+        )
+
+    try:
+        receipt = parse_payment_receipt(receipt_header)
+    except Exception as exc:
+        raise MppReceiptVerificationError(
+            f"{rail_prefix}: failed to decode Payment-Receipt: {exc}"
+        ) from exc
+
+    expected_id = (result.credential or {}).get("charge_id", "")
+    if expected_id and receipt.challenge_id != expected_id:
+        raise MppReceiptVerificationError(
+            f"{rail_prefix}: receipt challengeId {receipt.challenge_id!r} != "
+            f"expected {expected_id!r}"
+        )
+    if receipt.method not in expected_methods:
+        raise MppReceiptVerificationError(
+            f"{rail_prefix}: receipt method {receipt.method!r} not in {expected_methods!r}"
+        )
+
+    try:
+        amount_paid = int(receipt.settlement.get("amount", "0"))
+    except (ValueError, TypeError):
+        amount_paid = None
+
+    return SettlementInfo(
+        success=receipt.status == "success" and response.is_success,
+        tx_hash=receipt.reference,
+        network_id=network_id,
+        payer_address=None,
+        amount_paid=amount_paid,
+        facilitator=facilitator,
+    )
