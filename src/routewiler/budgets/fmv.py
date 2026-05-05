@@ -13,12 +13,15 @@ Conversion rules (§10.3):
 A 5% buffer (``FMV_BUFFER``) is applied on cross-currency conversions so intra-day
 price moves don't silently breach the cap (§8.4).
 
-The ECB rate integration in this module is a stub returning hardcoded rates.
-Real ECB XML feed integration ships in a later week.
+Cross-fiat rates (EUR↔USD etc.) are pre-fetched at envelope creation via
+``LiveEcbProvider`` (``budgets/ecb_provider.py``) and stored in the FMV snapshot.
+``_ECB_OFFLINE_FALLBACK`` serves as a last-resort dict if live rates are unavailable;
+a warning is emitted whenever it is consulted at draw time.
 """
 
 from __future__ import annotations
 
+import logging
 from decimal import ROUND_CEILING, Decimal
 from typing import TYPE_CHECKING
 
@@ -28,6 +31,8 @@ from routewiler.errors import FmvUnavailableError
 
 if TYPE_CHECKING:
     from routewiler.trace.schema import FmvQuality
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Derived stablecoin peg tables — computed from the central asset registry.
@@ -40,17 +45,19 @@ STABLECOIN_PEG: dict[str, str] = {
     if meta.peg_currency is not None
 }
 
-STABLECOIN_DECIMALS = 6  # USDC and EURC both use 6 decimal places (held constant for now)
+# Decimal places per stablecoin come from the asset registry, not a constant.
+# Do not add a global STABLECOIN_DECIMALS — use ASSETS_BY_ADDRESS[address].decimals.
 
 # Minor units per major unit for each envelope currency.
 MINOR_PER_MAJOR: dict[str, int] = {"usd": 100, "eur": 100, "gbp": 100, "jpy": 1}
 
 # ---------------------------------------------------------------------------
-# ECB rate stub — hardcoded reference rates (USD as pivot).
-# Real ECB XML feed integration ships in a later week.
+# ECB offline fallback — hardcoded reference rates (USD as pivot).
+# Used when the live ECB provider is unavailable or not configured.
+# A warning is emitted at draw time whenever this dict is consulted.
 # ---------------------------------------------------------------------------
 
-_ECB_STUB: dict[tuple[str, str], Decimal] = {
+_ECB_OFFLINE_FALLBACK: dict[tuple[str, str], Decimal] = {
     ("usd", "eur"): Decimal("0.92"),
     ("eur", "usd"): Decimal("1.087"),
     ("usd", "gbp"): Decimal("0.79"),
@@ -63,10 +70,10 @@ _ECB_STUB: dict[tuple[str, str], Decimal] = {
 
 
 def ecb_rate_stub(src: str, dst: str) -> Decimal | None:
-    """Return a hardcoded ECB reference rate for src→dst, or None if unknown."""
+    """Return a hardcoded offline ECB reference rate for src→dst, or None if unknown."""
     if src == dst:
         return Decimal("1")
-    return _ECB_STUB.get((src.lower(), dst.lower()))
+    return _ECB_OFFLINE_FALLBACK.get((src.lower(), dst.lower()))
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +122,10 @@ def amount_to_envelope_minor_units(
 
     if address and address in STABLECOIN_PEG:
         peg = STABLECOIN_PEG[address]
-        minor_per_major = MINOR_PER_MAJOR.get(env_cur, 100)
-        divisor = 10**STABLECOIN_DECIMALS
+        minor_per_major = MINOR_PER_MAJOR[env_cur]
+        meta = ASSETS_BY_ADDRESS.get(address)
+        decimals = meta.decimals if meta is not None else 6
+        divisor = 10**decimals
 
         if peg == env_cur:
             # 1:1 stablecoin peg — exact ceiling arithmetic, no buffer.
@@ -133,7 +142,7 @@ def amount_to_envelope_minor_units(
     # Sats / native BTC: ``"btc-lightning"`` or similar non-ERC-20 currency string.
     # Requires a snapshot rate keyed ``"sats-><env_cur>"``.
     if "sats" in rail_currency.lower() or "btc" in rail_currency.lower():
-        _minor_per_major = MINOR_PER_MAJOR.get(env_cur, 100)
+        _minor_per_major = MINOR_PER_MAJOR[env_cur]
         rate = _resolve_rate("sats", env_cur, snapshot_rates)
         amount_major = Decimal(amount_native)
         result = _apply_rate_with_buffer(amount_major, rate, _minor_per_major)
@@ -146,7 +155,7 @@ def amount_to_envelope_minor_units(
 
 
 def _resolve_rate(src: str, dst: str, snapshot_rates: dict[str, Decimal] | None) -> Decimal:
-    """Return the conversion rate src→dst from snapshot_rates or ECB stub.
+    """Return the conversion rate src→dst from snapshot_rates or offline fallback.
 
     Raises ``FmvUnavailableError`` if neither source has a rate.
     """
@@ -156,9 +165,17 @@ def _resolve_rate(src: str, dst: str, snapshot_rates: dict[str, Decimal] | None)
         if rate is not None:
             return rate
 
-    # Fall back to ECB stub for fiat-to-fiat pairs.
+    # Fall back to offline reference rates — snapshot is missing this pair.
+    # This typically means the envelope was created without a live ECB provider.
     rate = ecb_rate_stub(src, dst)
     if rate is not None:
+        _log.warning(
+            "Using offline ECB fallback for %s→%s (rate: %s). "
+            "Pass ecb_provider to BudgetStore for live rates.",
+            src.upper(),
+            dst.upper(),
+            rate,
+        )
         return rate
 
     raise FmvUnavailableError(
@@ -215,7 +232,9 @@ def fmv_for_trace(
 
     if address and address in STABLECOIN_PEG:
         peg = STABLECOIN_PEG[address]
-        divisor = 10**STABLECOIN_DECIMALS
+        meta = ASSETS_BY_ADDRESS.get(address)
+        decimals = meta.decimals if meta is not None else 6
+        divisor = 10**decimals
         if peg == env_cur:
             return amount_native / divisor, "stablecoin_peg"
         # Cross-currency stablecoin — try snapshot rate.
@@ -239,8 +258,6 @@ def fmv_for_trace(
 
 # ---------------------------------------------------------------------------
 # Snapshot capture — called at envelope creation to seed envelope_fmv_snapshots.
-# Real CoinGecko integration ships in a later week; for now only fiat/stablecoin
-# pairs are populated so cross-currency stablecoin cap enforcement works.
 # ---------------------------------------------------------------------------
 
 
@@ -248,11 +265,17 @@ def capture_fmv_snapshot(
     cap_currency: str,
     *,
     sats_rates: dict[str, Decimal] | None = None,
+    cross_rates: dict[str, Decimal] | None = None,
 ) -> tuple[dict[str, Decimal], dict[str, str]]:
     """Return the initial FMV snapshot rates and quality flags for a new envelope.
 
-    Populates all ECB-stub fiat-to-fiat pairs that include ``cap_currency`` as the
+    Populates all known fiat-to-fiat pairs that include ``cap_currency`` as the
     destination, plus the identity pair ``<cur>-><cur> = 1``.
+
+    ``cross_rates`` is an optional dict of pre-fetched live rates keyed as
+    ``"<src>-><dst>"`` (e.g. ``{"usd->eur": Decimal("0.918")}``).  When provided
+    these override the offline fallback for the same pair.  Supply this from
+    ``LiveEcbProvider`` to seed envelopes with current market rates.
 
     ``sats_rates`` is an optional dict of pre-fetched per-satoshi rates keyed as
     ``"sats-><currency>"`` (e.g. ``{"sats->usd": Decimal("0.00000065")}``).  When
@@ -271,10 +294,13 @@ def capture_fmv_snapshot(
     quality[f"{env_cur}->{env_cur}"] = "stablecoin_peg"
 
     # Populate all known fiat-to-fiat cross rates whose destination is env_cur.
-    for (src, dst), rate in _ECB_STUB.items():
+    # Live cross_rates take precedence over the offline fallback dict.
+    live = cross_rates or {}
+    for (src, dst), offline_rate in _ECB_OFFLINE_FALLBACK.items():
         if dst == env_cur:
-            rates[f"{src}->{dst}"] = rate
-            quality[f"{src}->{dst}"] = "fx_leg"
+            key = f"{src}->{dst}"
+            rates[key] = live.get(key, offline_rate)
+            quality[key] = "fx_leg"
 
     if sats_rates:
         for key, rate in sats_rates.items():

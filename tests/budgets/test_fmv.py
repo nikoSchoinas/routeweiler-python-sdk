@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 import pytest
@@ -118,6 +119,31 @@ def test_ecb_stub_unknown_pair() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Offline fallback warning
+# ---------------------------------------------------------------------------
+
+
+def test_offline_fallback_emits_warning_in_resolve_rate(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_resolve_rate emits a WARNING when it falls back to the offline ECB dict."""
+    with caplog.at_level(logging.WARNING, logger="routewiler.budgets.fmv"):
+        # Pass no snapshot_rates so _resolve_rate must use offline fallback.
+        result, quality = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur")
+    assert result == 97
+    assert quality == "fx_leg"
+    assert any("offline ECB fallback" in r.message for r in caplog.records)
+
+
+def test_no_warning_when_snapshot_has_rate(caplog: pytest.LogCaptureFixture) -> None:
+    """No offline-fallback warning when the snapshot already contains the rate."""
+    rates = {"usd->eur": Decimal("0.92")}
+    with caplog.at_level(logging.WARNING, logger="routewiler.budgets.fmv"):
+        amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur", snapshot_rates=rates)
+    assert not any("offline ECB fallback" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # capture_fmv_snapshot
 # ---------------------------------------------------------------------------
 
@@ -131,7 +157,7 @@ def test_capture_fmv_snapshot_contains_identity() -> None:
 
 def test_capture_fmv_snapshot_usd_contains_cross_rates() -> None:
     rates, quality = capture_fmv_snapshot("usd")
-    # ECB stub has eur->usd, so it should appear.
+    # Offline fallback has eur->usd, so it should appear.
     assert "eur->usd" in rates
     assert quality["eur->usd"] == "fx_leg"
 
@@ -151,6 +177,21 @@ def test_capture_fmv_snapshot_used_by_amount_conversion() -> None:
     )
     assert result == 97  # 1 USDC * 0.92 EUR/USD * 1.05 buffer * 100 = 96.6 → 97 cents
     assert quality == "fx_leg"
+
+
+def test_capture_fmv_snapshot_live_cross_rates_override_offline() -> None:
+    """cross_rates kwarg replaces the offline fallback for known pairs."""
+    live = {"usd->eur": Decimal("0.95")}  # different from offline 0.92
+    rates, quality = capture_fmv_snapshot("eur", cross_rates=live)
+    assert rates["usd->eur"] == Decimal("0.95")
+    assert quality["usd->eur"] == "fx_leg"
+
+
+def test_capture_fmv_snapshot_offline_used_for_missing_live_pair() -> None:
+    """Pairs absent from cross_rates still get the offline fallback value."""
+    live = {"usd->eur": Decimal("0.95")}  # gbp->eur not provided
+    rates, _ = capture_fmv_snapshot("eur", cross_rates=live)
+    assert rates["gbp->eur"] == ecb_rate_stub("gbp", "eur")
 
 
 # ---------------------------------------------------------------------------

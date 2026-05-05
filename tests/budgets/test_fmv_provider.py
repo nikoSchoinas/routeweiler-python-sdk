@@ -154,7 +154,7 @@ async def test_snapshot_omits_sats_rate_when_no_provider() -> None:
 
 @pytest.mark.asyncio
 async def test_budget_store_create_envelope_seeds_sats_rate(tmp_path: pytest.fixture) -> None:
-    """BudgetStore.create_envelope writes sats rate into FMV snapshot when provider given."""
+    """BudgetStore.create_envelope writes sats rate into FMV snapshot for l402 envelopes."""
     db_path = tmp_path / "test.db"
     keystore = EnvelopeKeystore(root=tmp_path / "keys")
     provider = StubFmvProvider({"usd": Decimal("60000")})
@@ -164,7 +164,7 @@ async def test_budget_store_create_envelope_seeds_sats_rate(tmp_path: pytest.fix
         "test-env",
         cap_minor_units=10_000,
         cap_currency="usd",
-        allowed_rails=["x402"],
+        allowed_rails=["l402", "x402"],  # l402 triggers the BTC rate fetch
         ttl_seconds=3600,
     )
 
@@ -177,10 +177,34 @@ async def test_budget_store_create_envelope_seeds_sats_rate(tmp_path: pytest.fix
 
 
 @pytest.mark.asyncio
-async def test_budget_store_create_envelope_omits_sats_on_provider_failure(
+async def test_budget_store_create_envelope_no_sats_for_x402_only(
     tmp_path: pytest.fixture,
 ) -> None:
-    """Snapshot omits sats rate when provider raises FmvUnavailableError."""
+    """Sats rate is not fetched when the envelope does not include l402."""
+    db_path = tmp_path / "test.db"
+    keystore = EnvelopeKeystore(root=tmp_path / "keys")
+    provider = StubFmvProvider({"usd": Decimal("60000")})
+
+    store = BudgetStore(db_path, keystore, fmv_provider=provider)
+    await store.create_envelope(
+        "test-env",
+        cap_minor_units=10_000,
+        cap_currency="usd",
+        allowed_rails=["x402"],  # no l402 — BTC rate is irrelevant
+        ttl_seconds=3600,
+    )
+
+    snapshot = store.load_fmv_snapshot_sync("test-env")
+    assert snapshot is not None
+    assert "sats->usd" not in snapshot
+    await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_budget_store_create_envelope_propagates_fmv_error_for_l402(
+    tmp_path: pytest.fixture,
+) -> None:
+    """FmvUnavailableError propagates when l402 is in allowed_rails and provider fails."""
 
     class FailingProvider:
         async def fetch_btc_to(self, currency: str) -> Decimal:
@@ -189,15 +213,13 @@ async def test_budget_store_create_envelope_omits_sats_on_provider_failure(
     db_path = tmp_path / "test.db"
     keystore = EnvelopeKeystore(root=tmp_path / "keys")
     store = BudgetStore(db_path, keystore, fmv_provider=FailingProvider())  # type: ignore[arg-type]
-    await store.create_envelope(
-        "test-env",
-        cap_minor_units=10_000,
-        cap_currency="usd",
-        allowed_rails=["x402"],
-        ttl_seconds=3600,
-    )
 
-    snapshot = store.load_fmv_snapshot_sync("test-env")
-    assert snapshot is not None
-    assert "sats->usd" not in snapshot
+    with pytest.raises(FmvUnavailableError, match="CoinGecko down"):
+        await store.create_envelope(
+            "test-env",
+            cap_minor_units=10_000,
+            cap_currency="usd",
+            allowed_rails=["l402", "x402"],
+            ttl_seconds=3600,
+        )
     await store.aclose()

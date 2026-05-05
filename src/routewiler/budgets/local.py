@@ -17,6 +17,7 @@ from typing import TypedDict, cast
 from routewiler._constants import CLOCK_SKEW_BUFFER_SECONDS, REAPER_INTERVAL_SECONDS
 from routewiler._storage import ensure_schema as _ensure_schema
 from routewiler._storage import open_connection as _open_connection
+from routewiler.budgets.ecb_provider import EcbRateProvider
 from routewiler.budgets.fmv import capture_fmv_snapshot as _capture_fmv_snapshot
 from routewiler.budgets.fmv_provider import FmvProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
@@ -87,11 +88,13 @@ class BudgetStore:
         *,
         reaper_interval_seconds: float = REAPER_INTERVAL_SECONDS,
         fmv_provider: FmvProvider | None = None,
+        ecb_provider: EcbRateProvider | None = None,
     ) -> None:
         self._db_path = db_path
         self._keystore = keystore
         self._reaper_interval_seconds = reaper_interval_seconds
         self._fmv_provider = fmv_provider
+        self._ecb_provider = ecb_provider
         self._conn = _open_connection(db_path)
         _ensure_schema(self._conn)
         self._seed_default_envelope_sync()
@@ -209,7 +212,7 @@ class BudgetStore:
         row = self._conn.execute("SELECT 1 FROM envelopes WHERE id = ?", (envelope_id,)).fetchone()
         return row is not None
 
-    def _get_envelope_currency_sync(self, envelope_id: str) -> str | None:
+    def get_envelope_currency_sync(self, envelope_id: str) -> str | None:
         """Return the cap_currency for an envelope, or None if not found.
 
         Synchronous — runs on the already-open connection so it is safe to call
@@ -263,20 +266,42 @@ class BudgetStore:
         private_key = self._keystore.create(envelope_id)
         pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
 
+        # Fetch per-satoshi rate — required for L402 budget enforcement.
+        # Propagate FmvUnavailableError so the caller knows the envelope is
+        # not safe for L402 draws rather than silently creating a broken envelope.
         sats_rates: dict[str, Decimal] | None = None
-        if self._fmv_provider is not None:
-            try:
+        if "l402" in allowed_rails:
+            if self._fmv_provider is not None:
                 rate = await self._fmv_provider.fetch_btc_to(cap_currency)
                 sats_rates = {f"sats->{cap_currency.lower()}": rate}
-            except FmvUnavailableError:
+            else:
                 _log.warning(
-                    "FMV provider unavailable at envelope creation; "
-                    "sats→%s rate omitted from snapshot.",
-                    cap_currency,
+                    "Envelope '%s' includes the l402 rail but no fmv_provider was supplied; "
+                    "draws on l402 will raise FmvUnavailableError at runtime.",
+                    envelope_id,
                 )
 
+        # Pre-fetch live ECB cross-fiat rates for the snapshot.
+        # Partial failures are logged and the offline fallback is used for that pair.
+        cross_rates: dict[str, Decimal] | None = None
+        if self._ecb_provider is not None:
+            env_cur = cap_currency.lower()
+            known_fiats = {"usd", "eur", "gbp", "jpy"}
+            cross_rates = {}
+            for src in known_fiats:
+                if src != env_cur:
+                    try:
+                        ecb_rate = await self._ecb_provider.fetch_rate(src, env_cur)
+                        cross_rates[f"{src}->{env_cur}"] = ecb_rate
+                    except FmvUnavailableError:
+                        _log.warning(
+                            "ECB: %s→%s rate unavailable; offline fallback will apply.",
+                            src.upper(),
+                            env_cur.upper(),
+                        )
+
         snapshot_rates, snapshot_quality = _capture_fmv_snapshot(
-            cap_currency, sats_rates=sats_rates
+            cap_currency, sats_rates=sats_rates, cross_rates=cross_rates
         )
         row: _EnvelopeRow = {
             "id": envelope_id,
