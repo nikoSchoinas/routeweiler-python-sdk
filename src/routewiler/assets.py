@@ -58,10 +58,50 @@ _EURC = AssetMetadata(
     },
 )
 
-# All known assets, keyed by canonical name.
+# ---------------------------------------------------------------------------
+# Tempo TIP-20 tokens
+# TIP-20 uses 6 decimal places (same as ERC-20 USDC).
+# Chain ID 42431 = Tempo Moderato testnet (public, no native gas token).
+# Mainnet addresses are forward-compat entries; not exercised in W13 tests.
+# ---------------------------------------------------------------------------
+
+_PATHUSD = AssetMetadata(
+    canonical_name="pathusd",
+    symbol="PathUSD",
+    decimals=6,
+    peg_currency="usd",
+    addresses={
+        # Moderato testnet — from Stripe docs (crypto_display_details example).
+        "tempo-moderato": "0x20c0000000000000000000000000000000000000",
+    },
+)
+
+_TEMPO_USDC = AssetMetadata(
+    canonical_name="usdc",
+    symbol="USDC",
+    decimals=6,
+    peg_currency="usd",
+    addresses={
+        # Tempo mainnet — from Stripe docs (crypto_display_details example).
+        # NOT exercised in W13 tests; Moderato testnet uses PathUSD.
+        "tempo": "0x20c000000000000000000000b9537d11c60e8b50",
+    },
+)
+
+# All known assets, keyed by (network, canonical_name) so Tempo USDC and EVM
+# USDC can coexist. The top-level ASSETS dict by canonical_name is kept for
+# backward compatibility with code that doesn't care about the network.
 ASSETS: dict[str, AssetMetadata] = {
     "usdc": _USDC,
     "eurc": _EURC,
+    "pathusd": _PATHUSD,
+}
+
+# Tempo-specific assets keyed by (network, canonical_name).
+# Allows address lookup for Tempo TIP-20 tokens without colliding with EVM.
+TEMPO_ASSETS: dict[tuple[str, str], AssetMetadata] = {
+    ("tempo-moderato", "pathusd"): _PATHUSD,
+    ("tempo", "usdc"): _TEMPO_USDC,
 }
 
 # ---------------------------------------------------------------------------
@@ -73,14 +113,21 @@ CANONICAL_ADDRESSES: dict[tuple[str, str], str] = {}
 for _name, _meta in ASSETS.items():
     for _net, _addr in _meta.addresses.items():
         CANONICAL_ADDRESSES[(_net, _name)] = _addr.lower()
+# Also include Tempo-specific assets not already in ASSETS.
+for (_tnet, _tname), _tmeta in TEMPO_ASSETS.items():
+    for _taddr in _tmeta.addresses.values():
+        CANONICAL_ADDRESSES[(_tnet, _tname)] = _taddr.lower()
 
-# Lowercase ERC-20 address → AssetMetadata (reverse lookup).
+# Lowercase address → AssetMetadata (reverse lookup — covers EVM + Tempo).
 ASSETS_BY_ADDRESS: dict[str, AssetMetadata] = {}
 for _meta in ASSETS.values():
     for _addr in _meta.addresses.values():
         ASSETS_BY_ADDRESS[_addr.lower()] = _meta
+for _tmeta in TEMPO_ASSETS.values():
+    for _taddr in _tmeta.addresses.values():
+        ASSETS_BY_ADDRESS[_taddr.lower()] = _tmeta
 
-# EIP-155 chain IDs for EVM networks.
+# EIP-155 / network chain IDs.
 CHAIN_IDS: dict[str, int] = {
     "base": 8453,
     "base-sepolia": 84532,
@@ -88,4 +135,7 @@ CHAIN_IDS: dict[str, int] = {
     "arbitrum": 42161,
     "world": 480,
     "ethereum": 1,
+    # Tempo networks
+    "tempo": 42430,  # mainnet (reserved; not yet exercised in tests)
+    "tempo-moderato": 42431,  # Moderato testnet
 }

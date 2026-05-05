@@ -110,7 +110,11 @@ class NoFeasibleRailError(PaymentError):
 
 
 class ChallengeExpiredError(ChallengeParseError):
-    """The BOLT-11 invoice or L402 macaroon `valid_until` caveat is already expired."""
+    """Rail challenge expired before the client could pay.
+
+    Examples: BOLT-11 invoice expiry, L402 macaroon ``valid_until`` caveat,
+    MPP challenge ``expires`` auth-param.
+    """
 
 
 class InvoicePaymentError(PaymentError):
@@ -140,3 +144,20 @@ class ManifestParseError(CredentialError):
 
 class ManifestNotFoundError(CredentialError):
     """No loaded service-shape manifest matches the given URL's domain."""
+
+
+class MppChargeFailedError(PaymentError):
+    """MPP server rejected the credential or payment did not settle.
+
+    Returned when the server responds 402 with a Problem-Details body
+    (``verification-failed``, ``payment-insufficient``, ``invalid-challenge``)
+    or with a non-2xx status that lacks a ``Payment-Receipt`` header.
+    """
+
+
+class MppReceiptVerificationError(PaymentError):
+    """The ``Payment-Receipt`` header is malformed or mismatches our credential.
+
+    Raised when the receipt cannot be decoded, fails Pydantic validation, or
+    the ``challengeId`` / ``method`` fields do not match what we sent.
+    """
