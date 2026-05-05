@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 
 from routewiler._base import RoutewilerModel
+from routewiler.credentials.schema import CredentialState
 from routewiler.normalized import NormalizedChallenge, ProofType, Rail
 
 # Re-export ProofType so existing importers of this module are unaffected.
@@ -86,4 +87,4 @@ class TraceEvent(RoutewilerModel):
     # Credential lifecycle fields — populated only by emit_credential_manual_hold.
     # The hosted dashboard queries payload->>'credential_state' = 'manual_hold' (§6.6).
     credential_id: str | None = None
-    credential_state: str | None = None
+    credential_state: CredentialState | None = None

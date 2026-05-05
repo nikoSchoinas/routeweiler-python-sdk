@@ -7,8 +7,6 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from routewiler.normalized import NormalizedChallenge, Payee, Price, Resource, X402RailRaw
 from routewiler.trace.emitter import TraceEmitter
 from routewiler.trace.schema import Outcome, Reconciliation, TraceEvent
@@ -158,12 +156,6 @@ async def test_url_mode_drop_stored_on_sink(tmp_trace_sink: SqliteTraceSink) -> 
     sink = TraceSink.sqlite(tmp_trace_sink.db_path.parent / "drop.db", url_mode="drop")
     assert sink.url_mode == "drop"
     await sink.aclose()
-
-
-def test_hashed_url_mode_raises() -> None:
-    """url_mode='hash' raises NotImplementedError until Week 18."""
-    with pytest.raises(NotImplementedError, match="Week 18"):
-        TraceSink.sqlite("/tmp/irrelevant.db", url_mode="hash")
 
 
 async def test_url_mode_drop_strips_query_in_emitted_event(tmp_path: Path) -> None:

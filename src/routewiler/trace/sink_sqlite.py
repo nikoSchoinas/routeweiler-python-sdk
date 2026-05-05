@@ -119,13 +119,7 @@ class TraceSink:
         Args:
             path:     File path for the SQLite database (created if absent).
             url_mode: Controls URL storage. ``"raw"`` stores full URLs (local
-                      default). ``"drop"`` strips query strings. ``"hash"``
-                      (hosted-mode default) is not yet implemented — it ships
-                      with the hosted uploader in Week 18.
+                      default). ``"drop"`` strips query strings (recommended
+                      when URLs carry PII or secrets in query params).
         """
-        if url_mode == "hash":
-            raise NotImplementedError(
-                "url_mode='hash' requires the hosted uploader (Week 18). "
-                "Use 'raw' or 'drop' for local sinks."
-            )
         return SqliteTraceSink(Path(path), url_mode)

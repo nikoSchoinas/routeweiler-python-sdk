@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_never
 from urllib.parse import urlparse, urlunparse
-from uuid import uuid4
 
 import httpx
 
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD as _HTTP_CLIENT_ERROR_THRESHOLD
 from routewiler.budgets.fmv import fmv_for_trace as _fmv_for_trace
+from routewiler.budgets.receipts import uuid7 as _uuid7
 from routewiler.trace.schema import (
     Outcome,
     OutcomeError,
@@ -58,7 +58,7 @@ class TraceEmitter:
         request: httpx.Request,
         challenge: NormalizedChallenge,
         payment_result: PaymentResult,
-        settlement: SettlementInfo | None,
+        settlement: SettlementInfo,
         final_response: httpx.Response,
         ts_start: datetime,
         ts_retry: datetime,
@@ -67,8 +67,6 @@ class TraceEmitter:
         snapshot_rates: dict[str, Decimal] | None = None,
     ) -> None:
         settlement_ms = _ms(ts_retry, ts_end)
-        total_ms = _ms(ts_start, ts_end)
-
         challenge = _apply_url_mode(challenge, self._url_mode)
         payment = _build_payment(
             challenge,
@@ -88,12 +86,12 @@ class TraceEmitter:
             challenge=challenge,
             selected_rail=challenge.rail,
             fallback_from=fallback_from,
+            facilitator=settlement.facilitator,
             payment=payment,
             outcome=outcome,
             timestamp_start=ts_start,
             timestamp_end=ts_end,
         )
-        _ = total_ms  # available for future latency breakdown fields
         await self._sink.emit(event)
 
     async def emit_passthrough(
@@ -209,7 +207,7 @@ class TraceEmitter:
 
 
 def _request_id() -> str:
-    return uuid4().hex
+    return _uuid7()
 
 
 def _apply_url_mode(challenge: NormalizedChallenge, url_mode: UrlEncoding) -> NormalizedChallenge:
@@ -217,7 +215,6 @@ def _apply_url_mode(challenge: NormalizedChallenge, url_mode: UrlEncoding) -> No
 
     ``"raw"``  — unchanged (fast path, no copy needed).
     ``"drop"`` — query string stripped; ``url_encoding`` set to ``"drop"``.
-    ``"hash"`` — not yet implemented; gated at sink construction.
     """
     if url_mode == "raw":
         return challenge
@@ -228,8 +225,7 @@ def _apply_url_mode(challenge: NormalizedChallenge, url_mode: UrlEncoding) -> No
             update={"url": clean_url, "url_encoding": "drop"}
         )
         return challenge.model_copy(update={"resource": new_resource})
-    # "hash" is gated at TraceSink.sqlite construction; should never reach here.
-    return challenge  # pragma: no cover
+    assert_never(url_mode)
 
 
 def _ms(start: datetime, end: datetime) -> int:
@@ -239,7 +235,7 @@ def _ms(start: datetime, end: datetime) -> int:
 def _build_payment(
     challenge: NormalizedChallenge,
     payment_result: PaymentResult,
-    settlement: SettlementInfo | None,
+    settlement: SettlementInfo,
     settlement_latency_ms: int,
     envelope_currency: str,
     snapshot_rates: dict[str, Decimal] | None = None,
@@ -253,9 +249,7 @@ def _build_payment(
 
     # proof_value: prefer the value set by the rail adapter in pay() (e.g. L402 preimage);
     # fall back to the tx_hash from the server's settlement response (x402).
-    proof_value = payment_result.proof_value or (
-        settlement.tx_hash if settlement is not None else None
-    )
+    proof_value = payment_result.proof_value or settlement.tx_hash
 
     return PaymentDetails(
         proof_type=payment_result.proof_type,
