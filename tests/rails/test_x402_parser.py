@@ -5,12 +5,11 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
-from routewiler.errors import ChallengeParseError, NoFundingForRailError
+from routewiler.errors import ChallengeParseError
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.normalized import NormalizedChallenge, X402RailRaw
 from routewiler.rails.x402 import X402Adapter
@@ -30,7 +29,7 @@ def _encode(data: dict) -> str:  # type: ignore[type-arg]
 
 @pytest.fixture
 def adapter(base_usdc_funding: EvmFundingSource) -> X402Adapter:
-    return X402Adapter([base_usdc_funding], _x402_client=MagicMock())
+    return X402Adapter([base_usdc_funding])
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +68,30 @@ def test_parse_multi_accept_picks_matching(
     assert len(challenge.raw.accepts) == 2  # full array preserved
 
 
-def test_parse_multi_accept_picks_testnet(
+def test_parse_multi_accept_always_picks_first_exact(
     base_sepolia_usdc_funding: EvmFundingSource,
     challenge_multi_accept_header: str,
 ) -> None:
-    adapter = X402Adapter([base_sepolia_usdc_funding], _x402_client=MagicMock())
+    # parse() is funding-agnostic: always picks the first exact entry (base mainnet here)
+    # regardless of which funding sources are registered.  Funding-based selection
+    # happens in match_funding() and pay(), not parse().
+    adapter = X402Adapter([base_sepolia_usdc_funding])
     challenge = adapter.parse(_make_request(), _make_402(challenge_multi_accept_header))
-    # Should pick the second entry (base-sepolia)
-    assert challenge.price.currency.startswith("eip155:84532/")
+    assert challenge.price.currency.startswith("eip155:8453/")  # first entry wins
+    assert len(challenge.raw.accepts) == 2  # full array preserved for later funding check
+
+
+def test_match_funding_multi_accept_finds_testnet(
+    base_sepolia_usdc_funding: EvmFundingSource,
+    challenge_multi_accept_header: str,
+) -> None:
+    # Even though parse() picked the first exact entry, match_funding() searches
+    # all exact accepts and returns the funding source that actually matches.
+    adapter = X402Adapter([base_sepolia_usdc_funding])
+    challenge = adapter.parse(_make_request(), _make_402(challenge_multi_accept_header))
+    matched = adapter.match_funding(challenge, [base_sepolia_usdc_funding])
+    assert matched is not None
+    assert matched.network == "base-sepolia"
 
 
 def test_parse_nonce_from_extra(
@@ -144,15 +159,21 @@ def test_parse_empty_accepts_list(adapter: X402Adapter) -> None:
         adapter.parse(_make_request(), _make_402(payload))
 
 
-def test_parse_no_matching_funding(
+def test_match_funding_returns_none_when_no_funding_matches(
     base_usdc_funding: EvmFundingSource,
     challenge_base_usdc_dict: dict,  # type: ignore[type-arg]
 ) -> None:
-    # Only testnet funding, mainnet challenge → NoFundingForRailError
+    # parse() no longer raises NoFundingForRailError — that check moved to match_funding/pay().
+    # With testnet-only funding against a mainnet challenge, parse() succeeds and
+    # match_funding() returns None (router drops the candidate at funding-filter step).
     testnet_adapter = X402Adapter(
-        [EvmFundingSource(wallet=base_usdc_funding.wallet, network="base-sepolia", asset="usdc")],
-        _x402_client=MagicMock(),
+        [EvmFundingSource(wallet=base_usdc_funding.wallet, network="base-sepolia", asset="usdc")]
     )
     header = base64.b64encode(json.dumps(challenge_base_usdc_dict).encode()).decode()
-    with pytest.raises(NoFundingForRailError):
-        testnet_adapter.parse(_make_request(), _make_402(header))
+    challenge = testnet_adapter.parse(_make_request(), _make_402(header))
+    assert challenge is not None  # parse() succeeds regardless of funding
+    matched = testnet_adapter.match_funding(
+        challenge,
+        [EvmFundingSource(wallet=base_usdc_funding.wallet, network="base-sepolia", asset="usdc")],
+    )
+    assert matched is None  # funding filter correctly drops this candidate

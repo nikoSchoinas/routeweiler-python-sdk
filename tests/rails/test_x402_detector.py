@@ -1,7 +1,5 @@
 """Tests for X402Adapter.can_handle()."""
 
-from unittest.mock import MagicMock
-
 import httpx
 import pytest
 
@@ -15,7 +13,7 @@ def _make_response(status: int, headers: dict | None = None) -> httpx.Response:
 
 @pytest.fixture
 def adapter(base_usdc_funding: EvmFundingSource) -> X402Adapter:
-    return X402Adapter([base_usdc_funding], _x402_client=MagicMock())
+    return X402Adapter([base_usdc_funding])
 
 
 def test_detects_402_with_header(adapter: X402Adapter, challenge_base_usdc_header: str) -> None:
