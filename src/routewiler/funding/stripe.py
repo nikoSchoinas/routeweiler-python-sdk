@@ -62,18 +62,18 @@ class StripeSptCreator:
     Defers ``import stripe`` to ``create_spt()`` call time so users who never
     use the SPT path do not pay the import cost.
 
-    The Stripe SPT resource (``shared_payment.granted_token``) was introduced
+    The Stripe SPT resource (``shared_payment.issued_token``) was introduced
     alongside MPP in March 2026.  SDK >=12 exposes it via ``raw_request_async``
     since the typed resource surface may lag behind the API.  This creator calls
-    ``POST /v1/shared_payment/granted_tokens`` via ``StripeClient.raw_request_async``;
+    ``POST /v1/shared_payment/issued_tokens`` via ``StripeClient.raw_request_async``;
     the response ``id`` field is the ``spt_<id>`` string.
 
-    If a future SDK release adds a typed ``client.shared_payment.granted_tokens``
+    If a future SDK release adds a typed ``client.shared_payment.issued_tokens``
     resource, replace the raw_request call with the typed one — the Protocol
     interface stays the same.
     """
 
-    _SPT_ENDPOINT = "/v1/shared_payment/granted_tokens"
+    _SPT_ENDPOINT = "/v1/shared_payment/issued_tokens"
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -94,12 +94,10 @@ class StripeSptCreator:
             "payment_method": payment_method,
             "usage_limits": usage_limits,
         }
-        if seller_details:
-            params["seller_details"] = seller_details
+        params["seller_details"] = seller_details
 
-        resp = await client.raw_request_async("POST", self._SPT_ENDPOINT, **params)
-        data: dict[str, Any] = _stripe.util.convert_to_dict(resp)  # type: ignore[attr-defined]
-        spt_id: str = data["id"]
+        resp = await client.raw_request_async("post", self._SPT_ENDPOINT, **params)
+        spt_id: str = resp.data["id"]  # type: ignore[index]
         return spt_id
 
 
