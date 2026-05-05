@@ -196,6 +196,44 @@ def test_discriminator_mpp_spt() -> None:
     data["rail"] = "mpp-spt"
     c = NormalizedChallenge.model_validate(data)
     assert isinstance(c.raw, MppSptRailRaw)
+    assert c.raw.kind == "mpp-spt"
+    assert c.raw.seller_details == {"account": "acct_xyz"}
+    assert c.raw.payment_method_hint is None
+
+
+def test_discriminator_mpp_spt_with_full_parser_output() -> None:
+    """Round-trip a NormalizedChallenge as produced by MppSptAdapter.parse()."""
+    from routewiler.rails._mpp_http import b64url_encode, jcs_encode  # noqa: PLC0415
+    from routewiler.rails.mpp_spt import MppSptAdapter  # noqa: PLC0415
+
+    req_json = {
+        "amount": "500",
+        "currency": "usd",
+        "recipient": "acct_sptmerchant",
+        "methodDetails": {
+            "paymentMethodHint": "pm_card_visa",
+            "sellerDetails": {"account": "acct_sptmerchant"},
+        },
+    }
+    req_b64 = b64url_encode(jcs_encode(req_json))
+    www_auth = (
+        f'Payment id="SPT_ROUNDTRIP_01", method="stripe", '
+        f'request="{req_b64}", expires="2099-12-31T23:59:59Z"'
+    )
+    adapter = MppSptAdapter([])
+    import httpx  # noqa: PLC0415
+
+    request = httpx.Request("GET", "https://vendor.example.com/resource")
+    response = httpx.Response(402, headers={"WWW-Authenticate": www_auth})
+    c = adapter.parse(request, response)
+
+    assert c.rail == "mpp-spt"
+    assert c.price.currency == "usd-fiat"
+    assert c.price.amount == 500
+    assert isinstance(c.raw, MppSptRailRaw)
+    assert c.raw.payment_method_hint == "pm_card_visa"
+    assert c.raw.seller_details == {"account": "acct_sptmerchant"}
+    assert c.raw.extra["iso_currency"] == "usd"
 
 
 def test_invalid_rail_value() -> None:
