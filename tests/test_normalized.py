@@ -94,10 +94,10 @@ def test_camel_case_json_roundtrip() -> None:
     assert dumped["payee"]["identifier"] == "0xAbCd"
 
 
-def test_payee_metadata_optional() -> None:
+def test_payee_metadata_defaults_to_empty_dict() -> None:
     data = _base_challenge(_X402_RAW_CAMEL)
     c = NormalizedChallenge.model_validate(data)
-    assert c.payee.metadata is None
+    assert c.payee.metadata == {}
 
 
 def test_extra_field_forbidden() -> None:

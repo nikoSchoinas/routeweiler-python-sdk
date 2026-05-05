@@ -5,18 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import Field
 
-from routewiler._base import RoutewilerModel
+from routewiler._base import RoutewilerLooseModel, RoutewilerModel
 
 # ---------------------------------------------------------------------------
 # Shared type aliases
 # ---------------------------------------------------------------------------
 
 Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
-Scheme = Literal["exact", "upto", "stream"]
-UrlEncoding = Literal["raw", "hash", "drop"]
+# Only "exact" is production-ready; "upto"/"stream" are deferred to §17.
+Scheme = Literal["exact"]
+# "hash" requires the hosted uploader (Phase 2); narrowed away until then.
+UrlEncoding = Literal["raw", "drop"]
 ProofType = Literal["txid", "preimage", "spt_id"]
 
 # ---------------------------------------------------------------------------
@@ -45,25 +46,19 @@ class Price(RoutewilerModel):
 
 class Payee(RoutewilerModel):
     identifier: str  # address, Lightning pubkey, Stripe account
-    metadata: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # x402-specific payment requirements — mirrors the wire format exactly.
 # One entry per element of the server's `accepts` array.
-# extra="ignore" so future x402 spec additions don't break parsing.
+# Uses RoutewilerLooseModel (extra="ignore") so future x402 spec additions
+# don't break parsing.
 # ---------------------------------------------------------------------------
 
 
-class X402PaymentRequirements(RoutewilerModel):
+class X402PaymentRequirements(RoutewilerLooseModel):
     """One payment option from the x402 server's `accepts` array."""
-
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="ignore",  # x402 spec evolves; silently drop unknown fields
-        frozen=False,
-    )
 
     scheme: Literal["exact", "upto", "stream"]
     network: str  # "base" | "base-sepolia" | "polygon" | "arbitrum" | "world" | "solana"
@@ -90,7 +85,6 @@ class X402RailRaw(RoutewilerModel):
     # Full list of payment options from the wire's `accepts` array.
     # The chosen alternative is captured in NormalizedChallenge.price at parse time.
     accepts: list[X402PaymentRequirements]
-    facilitator_hint: str | None = None
     x402_version: int = 1  # round-tripped from the wire's x402Version field
 
 
