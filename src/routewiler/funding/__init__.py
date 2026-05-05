@@ -83,6 +83,7 @@ class Funding:
             signer=EthAccountTempoSigner(wallet=wallet, chain_id=42431),
             network="tempo-moderato",
             asset="pathusd",
+            rpc_url="https://rpc.moderato.tempo.xyz",
         )
 
     @staticmethod
@@ -131,4 +132,5 @@ class Funding:
             signer=EthAccountTempoSigner(wallet=wallet, chain_id=42430),
             network="tempo",
             asset="usdc",
+            rpc_url="https://rpc.tempo.xyz",
         )

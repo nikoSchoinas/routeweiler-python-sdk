@@ -76,6 +76,28 @@ _AUTHORIZATION_HEADER = "Authorization"
 # Default nonce when the caller doesn't supply one (mock / offline tests).
 _DEFAULT_NONCE = 0
 
+
+async def _fetch_nonce(rpc_url: str, address: str) -> int:
+    """Fetch the pending transaction count for ``address`` via ``eth_getTransactionCount``.
+
+    Returns 0 if ``rpc_url`` is empty (offline / test mode).
+    """
+    if not rpc_url:
+        return 0
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_getTransactionCount",
+        "params": [address, "pending"],
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(rpc_url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(f"eth_getTransactionCount RPC error: {data['error']}")
+        return int(data["result"], 16)
+
 # Default validity window: 5 minutes from signing time.
 _DEFAULT_VALIDITY_SECONDS = 300
 
@@ -359,11 +381,11 @@ class MppTempoAdapter:
         fee_payer: bool = challenge.raw.extra.get("fee_payer", False)
 
         # Compute a validity window from the challenge expiry
-        valid_until = int(challenge.expires_at.timestamp())
+        valid_before = int(challenge.expires_at.timestamp())
 
-        # Nonce: in production this must be fetched from the Tempo RPC.
-        # For W13 we default to 0 (acceptable for testnet / single-use challenges).
-        nonce = 0
+        # Fetch the current on-chain nonce. Falls back to 0 when rpc_url is empty
+        # (offline / unit-test mode where FakeTempoSigner is used).
+        nonce = await _fetch_nonce(source.rpc_url, source.signer.address)
 
         try:
             signed_tx_hex = await source.signer.sign_transaction(
@@ -372,7 +394,7 @@ class MppTempoAdapter:
                 amount=challenge.price.amount,
                 nonce_key=0,
                 nonce=nonce,
-                valid_until=valid_until,
+                valid_before=valid_before,
                 fee_payer=fee_payer,
             )
         except Exception as exc:
