@@ -1,9 +1,10 @@
 """Live MPP-SPT test against Stripe test mode.
 
 Gated by ``--run-live`` marker. Requires environment variables:
-    STRIPE_TEST_API_KEY      — Stripe secret key in test mode (sk_test_...)
-    STRIPE_TEST_CUSTOMER     — Stripe test customer id (cus_...)
+    STRIPE_TEST_API_KEY        — Stripe secret key in test mode (sk_test_...)
+    STRIPE_TEST_CUSTOMER       — Stripe test customer id (cus_...)
     STRIPE_TEST_PAYMENT_METHOD — Saved Stripe test payment method id (pm_...)
+    STRIPE_TEST_SELLER_PROFILE — Seller's network business profile id (profile_...)
 
 This test:
   1. Creates a real Stripe SPT via ``StripeSptCreator`` against Stripe's test API.
@@ -29,11 +30,12 @@ async def test_live_spt_creation() -> None:
     api_key = os.environ.get("STRIPE_TEST_API_KEY", "")
     customer = os.environ.get("STRIPE_TEST_CUSTOMER", "")
     payment_method = os.environ.get("STRIPE_TEST_PAYMENT_METHOD", "")
+    seller_profile = os.environ.get("STRIPE_TEST_SELLER_PROFILE", "")
 
-    if not api_key or not customer or not payment_method:
+    if not api_key or not customer or not payment_method or not seller_profile:
         pytest.skip(
             "Live SPT test requires STRIPE_TEST_API_KEY, STRIPE_TEST_CUSTOMER, "
-            "and STRIPE_TEST_PAYMENT_METHOD env vars."
+            "STRIPE_TEST_PAYMENT_METHOD, and STRIPE_TEST_SELLER_PROFILE env vars."
         )
 
     creator = StripeSptCreator(api_key=api_key)
@@ -43,7 +45,7 @@ async def test_live_spt_creation() -> None:
         "max_amount": 100,  # $1.00
         "expires_at": int(time.time()) + 300,  # 5 minutes from now
     }
-    seller_details: dict[str, str] = {}
+    seller_details = {"network_business_profile": seller_profile}
 
     spt_id = await creator.create_spt(
         usage_limits=usage_limits,
