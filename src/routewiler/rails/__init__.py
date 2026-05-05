@@ -7,16 +7,25 @@ from typing import TYPE_CHECKING
 
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource
+from routewiler.funding.stripe import StripeFundingSource
 from routewiler.funding.tempo import TempoFundingSource
 from routewiler.rails.base import RailAdapter
 from routewiler.rails.l402 import L402Adapter
+from routewiler.rails.mpp_spt import MppSptAdapter
 from routewiler.rails.mpp_tempo import MppTempoAdapter
 from routewiler.rails.x402 import X402Adapter
 
 if TYPE_CHECKING:
     from routewiler.funding import FundingSource
 
-__all__ = ["ADAPTER_REGISTRY", "L402Adapter", "MppTempoAdapter", "RailAdapter", "X402Adapter"]
+__all__ = [
+    "ADAPTER_REGISTRY",
+    "L402Adapter",
+    "MppSptAdapter",
+    "MppTempoAdapter",
+    "RailAdapter",
+    "X402Adapter",
+]
 
 
 def _x402_factory(funding: list[FundingSource]) -> RailAdapter | None:
@@ -43,10 +52,18 @@ def _mpp_tempo_factory(funding: list[FundingSource]) -> RailAdapter | None:
     return MppTempoAdapter(tempo)
 
 
+def _mpp_spt_factory(funding: list[FundingSource]) -> RailAdapter | None:
+    """Return an MppSptAdapter if any Stripe funding sources are present."""
+    stripe = [f for f in funding if isinstance(f, StripeFundingSource)]
+    if not stripe:
+        return None
+    return MppSptAdapter(stripe)
+
+
 # Each entry is a factory: (list[FundingSource]) -> RailAdapter | None.
-# Month 4 W14: append _mpp_spt_factory for Stripe SPT (fiat fallback).
 ADAPTER_REGISTRY: list[Callable[[list[FundingSource]], RailAdapter | None]] = [
     _x402_factory,
     _l402_factory,
     _mpp_tempo_factory,
+    _mpp_spt_factory,
 ]
