@@ -215,11 +215,12 @@ class TestRouterScoring:
 
 class TestRouterPolicyFiltering:
     @pytest.mark.anyio
-    async def test_prefer_filter_drops_non_preferred_rail(self) -> None:
+    async def test_prefer_boosts_preferred_rail_to_winner(self) -> None:
+        # prefer is a scoring boost: the preferred rail wins over non-preferred
+        # when both are available, even though non-preferred is not dropped.
         x402 = MockRailAdapter(rail="x402")
         l402 = MockRailAdapter(rail="l402")
         router = Router([x402, l402])
-        # Policy prefers only l402.
         choice = await router.decide(
             request=_request(),
             response=_402_response(),
@@ -260,20 +261,20 @@ class TestRouterPolicyFiltering:
         assert choice.candidate.adapter is x402
 
     @pytest.mark.anyio
-    async def test_prefer_filter_no_match_raises_no_feasible(self) -> None:
+    async def test_prefer_falls_back_to_available_rail(self) -> None:
+        # prefer is a scoring boost (§7.1), not a hard filter.
+        # When policy prefers l402 but only x402 is available, x402 is still selected.
         x402 = MockRailAdapter(rail="x402")
         router = Router([x402])
-        with pytest.raises(NoFeasibleRailError):
-            await router.decide(
-                request=_request(),
-                response=_402_response(),
-                policy_engine=_policy_engine_prefer(
-                    "l402"
-                ),  # only l402 preferred, but x402 available
-                funding=[],
-                envelope_currency=None,
-                fmv_snapshot=None,
-            )
+        choice = await router.decide(
+            request=_request(),
+            response=_402_response(),
+            policy_engine=_policy_engine_prefer("l402"),  # prefer l402, but only x402 exists
+            funding=[],
+            envelope_currency=None,
+            fmv_snapshot=None,
+        )
+        assert choice.candidate.adapter is x402  # falls back gracefully
 
 
 class TestRouterFundingFilter:

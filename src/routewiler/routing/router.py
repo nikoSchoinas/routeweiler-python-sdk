@@ -176,17 +176,18 @@ class Router:
         2. Parse each adapter into a NormalizedChallenge (swallows per-adapter
            parse failures so a malformed header for one rail doesn't block others).
         3. Evaluate policy per challenge; drop candidates where ``deny`` is True.
-        4. Filter by ``policy_decision.prefer`` (if non-empty).
-        5. Filter by funding availability via ``match_funding``.
-        6. FMV-convert quote to envelope minor units (0 when budget not active).
-        7. Score remaining candidates.
-        8. Apply sticky: if the cached rail is among survivors, pick it directly.
-        9. Return winner; tie-break by prefer order then adapter order.
+           ``prefer`` is a scoring boost (step 7), not a filter — non-prefer rails
+           remain eligible.
+        4. Filter by funding availability via ``match_funding``.
+        5. FMV-convert quote to envelope minor units (0 when budget not active).
+        6. Score remaining candidates; preferred rails receive a privacy-score boost.
+        7. Apply sticky: if the cached rail is among survivors, pick it directly.
+        8. Return winner; tie-break by prefer order then adapter order.
 
         Raises:
             RailNotSupportedError:  No adapter's ``can_handle`` matched (before any filtering).
             PolicyDeniedError:      All matching candidates were denied by policy.
-            NoFeasibleRailError:    Candidates exist but all filtered out by prefer/funding.
+            NoFeasibleRailError:    Candidates exist but all filtered out by deny/funding.
         """
         # Step 1: detect
         can_handle = [
@@ -209,6 +210,8 @@ class Router:
             )
 
         # Steps 3-4: policy filter
+        # ``deny`` is a hard exclusion; ``prefer`` is a scoring boost (§7.1) — non-prefer
+        # rails are NOT dropped here, they just score lower on the privacy dimension.
         policy_filtered: list[tuple[RailAdapter, NormalizedChallenge, PolicyDecision]] = []
         last_deny: PolicyDecision | None = None
         for adapter, challenge in parsed:
@@ -220,13 +223,6 @@ class Router:
             if decision.deny:
                 last_deny = decision
                 _log.debug("Adapter %r denied by policy rule %r.", adapter.rail, decision.rule_name)
-                continue
-            if decision.prefer and adapter.rail not in decision.prefer:
-                _log.debug(
-                    "Adapter %r not in policy prefer list %r; dropping.",
-                    adapter.rail,
-                    decision.prefer,
-                )
                 continue
             policy_filtered.append((adapter, challenge, decision))
 
@@ -382,7 +378,9 @@ def _score_breakdown(
 
     reliability_score = reliability.get(rail, _FALLBACK_RELIABILITY)
 
-    privacy_fit_score = 1.0 if decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
+    # prefer is a scoring boost: preferred rails get privacy_fit_score=1.0; others
+    # keep their inherent score so they remain eligible but rank lower.
+    privacy_fit_score = 1.0 if rail in decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
 
     return {
         "cost": weights.cost * cost_score,

@@ -151,11 +151,8 @@ class MockRailAdapter:
         self,
         result: PaymentResult,
         response: httpx.Response,
-    ) -> SettlementInfo | None:
-        return self.parse_settlement(response)
-
-    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
-        return None
+    ) -> SettlementInfo:
+        return SettlementInfo(success=response.is_success)
 
 
 # Ensure MockRailAdapter satisfies the runtime-checkable protocol.

@@ -26,11 +26,10 @@ _EXPIRES = datetime.now(UTC) + timedelta(hours=1)
 
 def _x402_challenge(
     url: str = "https://api.example.com/data",
-    scheme: str = "exact",
     network: str = "base",
 ) -> NormalizedChallenge:
     req = X402PaymentRequirements(
-        scheme=scheme,  # type: ignore[arg-type]
+        scheme="exact",
         network=network,
         max_amount_required="1000",
         resource=url,
@@ -46,7 +45,7 @@ def _x402_challenge(
             human_amount="0.001 USDC",
         ),
         payee=Payee(identifier="0xabc"),
-        scheme=scheme,  # type: ignore[arg-type]
+        scheme="exact",
         nonce="abc123",
         expires_at=_EXPIRES,
         raw=X402RailRaw(kind="x402", accepts=[req]),
@@ -66,13 +65,13 @@ def _l402_challenge(url: str = "https://api.example.com/data") -> NormalizedChal
     )
 
 
-def _mpp_stream_challenge(url: str = "https://api.inference.com/chat") -> NormalizedChallenge:
+def _mpp_exact_challenge(url: str = "https://api.inference.com/chat") -> NormalizedChallenge:
     return NormalizedChallenge(
         rail="mpp-tempo",
         resource=Resource(method="POST", url=url, url_encoding="raw"),
         price=Price(amount=100, currency="usd-fiat", human_amount="$1.00"),
         payee=Payee(identifier="merchant_123"),
-        scheme="stream",
+        scheme="exact",
         nonce="abc123",
         expires_at=_EXPIRES,
         raw=MppTempoRailRaw(kind="mpp-tempo", charge_id="ch_123", settlement_network="tempo"),
@@ -174,19 +173,19 @@ def test_any_or_short_circuit():
     assert engine.evaluate(_x402_challenge("https://api.example.com/data")).rule_name is None
 
 
-def test_scheme_match_streaming():
+def test_scheme_match_exact():
     doc = PolicyDocument.model_validate(
         {
             "version": 1,
             "default": {"rail": "x402"},
             "rules": [
-                {"name": "streaming", "when": {"scheme": "stream"}, "prefer": ["mpp-tempo"]},
+                {"name": "mpp-exact", "when": {"scheme": "exact"}, "prefer": ["mpp-tempo"]},
             ],
         }
     )
     engine = PolicyEngine(doc)
-    assert engine.evaluate(_mpp_stream_challenge()).rule_name == "streaming"
-    assert engine.evaluate(_x402_challenge(scheme="exact")).rule_name is None
+    assert engine.evaluate(_mpp_exact_challenge()).rule_name == "mpp-exact"
+    assert engine.evaluate(_x402_challenge()).rule_name == "mpp-exact"
 
 
 def test_network_match_x402_only():
@@ -228,14 +227,11 @@ def test_and_conditions_all_must_match():
     )
     engine = PolicyEngine(doc)
     # Both conditions match
-    assert (
-        engine.evaluate(_x402_challenge(network="base-sepolia", scheme="exact")).rule_name
-        == "testnet-exact"
-    )
-    # Only network matches
-    assert engine.evaluate(_x402_challenge(network="base-sepolia", scheme="upto")).rule_name is None
+    assert engine.evaluate(_x402_challenge(network="base-sepolia")).rule_name == "testnet-exact"
+    # Only scheme matches (network mismatch)
+    assert engine.evaluate(_x402_challenge(network="base")).rule_name is None
     # Only scheme matches
-    assert engine.evaluate(_x402_challenge(network="base", scheme="exact")).rule_name is None
+    assert engine.evaluate(_x402_challenge(network="base")).rule_name is None
 
 
 # ---------------------------------------------------------------------------
@@ -265,12 +261,12 @@ def test_max_per_call_captured():
             "version": 1,
             "default": {"rail": "x402"},
             "rules": [
-                {"name": "capped", "when": {"scheme": "stream"}, "max_per_call_minor_units": 500},
+                {"name": "capped", "when": {"scheme": "exact"}, "max_per_call_minor_units": 500},
             ],
         }
     )
     engine = PolicyEngine(doc)
-    decision = engine.evaluate(_mpp_stream_challenge())
+    decision = engine.evaluate(_mpp_exact_challenge())
     assert decision.max_per_call_minor_units == 500
     assert decision.deny is False
 

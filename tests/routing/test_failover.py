@@ -115,7 +115,7 @@ def _build_auth(
 ) -> tuple[RoutewilerAuth, StickyCache]:
     key = EnvelopeKeystore(root=db_path.parent / "keys")
     store = BudgetStore(db_path, key)
-    currency = store._get_envelope_currency_sync("default")
+    currency = store.get_envelope_currency_sync("default")
 
     sink = TraceSink.sqlite(db_path, url_mode="raw")
     emitter = TraceEmitter(

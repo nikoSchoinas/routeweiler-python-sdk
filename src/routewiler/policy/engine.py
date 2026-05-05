@@ -43,9 +43,8 @@ class PolicyEngine:
                 )
         # No rule matched → use the default block.
         # `prefer` is left empty so all capable adapters are considered; the
-        # router uses `default.rail` as a scoring tiebreaker (§7.1), not as a
-        # hard filter.  Hard filtering is only applied when a rule explicitly
-        # sets `prefer`.
+        # router gives preferred rails a privacy-score boost (§7.1), not a
+        # hard filter.  Only `deny` performs hard exclusion.
         return PolicyDecision(
             rule_name=None,
             deny=False,
