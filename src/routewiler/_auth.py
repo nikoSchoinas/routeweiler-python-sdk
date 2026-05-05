@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 import httpx
 
 from routewiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.budgets.local import BudgetStore
+from routewiler.budgets.receipts import uuid7 as _uuid7
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
     NoFeasibleRailError,
@@ -141,7 +141,7 @@ class RoutewilerAuth(httpx.Auth):
         # Drain the 402 body so the connection returns to the pool.
         await response.aread()
 
-        request_id = uuid4().hex
+        request_id = _uuid7()
         sticky_key = StickyKey(
             origin=_origin(request.url),
             agent_id=self._agent_id,
@@ -444,9 +444,6 @@ class RoutewilerAuth(httpx.Auth):
         if receipt is None or self._budget_store is None:
             return
         if budget_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-            # Use the reserved amount as the settled amount.  For x402 'exact' scheme
-            # reserved == settled by definition.  For 'upto' scheme this is
-            # conservative; a proper FMV re-conversion ships with the upto adapter.
             try:
                 await self._budget_store.confirm(
                     receipt.receipt_id, receipt.amount_reserved_minor_units

@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 
 from routewiler._auth import RoutewilerAuth
+from routewiler.budgets.ecb_provider import EcbRateProvider
+from routewiler.budgets.fmv_provider import FmvProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore
 from routewiler.credentials.manifest_strategy import ManifestRecoveryStrategy
@@ -19,6 +21,7 @@ from routewiler.errors import EnvelopeNotFoundError
 from routewiler.funding import FundingSource
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource
+from routewiler.funding.stripe import StripeFundingSource
 from routewiler.funding.tempo import TempoFundingSource
 from routewiler.policy.dsl import PolicyDocument, PolicyFile, compute_policy_hash, default_policy
 from routewiler.policy.engine import PolicyEngine
@@ -27,6 +30,73 @@ from routewiler.routing.router import Router
 from routewiler.routing.sticky import StickyCache
 from routewiler.trace.emitter import TraceEmitter
 from routewiler.trace.sink_sqlite import SqliteTraceSink
+
+
+class _EnvelopesNamespace:
+    """User-facing namespace for envelope management.
+
+    Obtain via ``client.envelopes``; requires a ``trace_sink`` on the parent
+    ``Routewiler`` instance:
+
+        async with Routewiler(funding=[...], trace_sink=TraceSink.sqlite("trace.db")) as c:
+            await c.envelopes.create(
+                "my-envelope",
+                cap_minor_units=100_00,    # 100.00 USD in cents
+                cap_currency="usd",
+                allowed_rails=["x402", "l402"],
+                ttl_seconds=86_400,
+            )
+    """
+
+    def __init__(self, store: BudgetStore | None) -> None:
+        self._store = store
+
+    def _require_store(self) -> BudgetStore:
+        if self._store is None:
+            raise RuntimeError(
+                "Envelope management requires a trace_sink. "
+                "Pass trace_sink=TraceSink.sqlite(...) when constructing Routewiler."
+            )
+        return self._store
+
+    async def create(
+        self,
+        envelope_id: str,
+        *,
+        cap_minor_units: int,
+        cap_currency: str,
+        allowed_rails: list[str],
+        allowed_origins_glob: list[str] | None = None,
+        ttl_seconds: int,
+        owner_agent_id: str | None = None,
+    ) -> None:
+        """Create a new spending envelope.
+
+        Args:
+            envelope_id:          Unique identifier for this envelope.
+            cap_minor_units:      Spending cap in the currency's minor units
+                                  (e.g. cents for USD, pence for GBP).
+            cap_currency:         ISO 4217 currency code (e.g. ``"usd"``).
+            allowed_rails:        Rails permitted for draws (e.g. ``["x402", "l402"]``).
+            allowed_origins_glob: URL glob patterns allowed to draw from this envelope.
+                                  Defaults to ``["*"]`` (any origin).
+            ttl_seconds:          Envelope lifetime in seconds from now.
+            owner_agent_id:       Optional agent identifier for this envelope.
+
+        Raises:
+            sqlite3.IntegrityError: Envelope with this ID already exists.
+            RuntimeError:          ``trace_sink`` was not configured on the client.
+        """
+        store = self._require_store()
+        await store.create_envelope(
+            envelope_id,
+            cap_minor_units=cap_minor_units,
+            cap_currency=cap_currency,
+            allowed_rails=allowed_rails,
+            allowed_origins_glob=allowed_origins_glob,
+            ttl_seconds=ttl_seconds,
+            owner_agent_id=owner_agent_id,
+        )
 
 
 def _build_adapters(funding: list[FundingSource]) -> list[RailAdapter]:
@@ -48,6 +118,8 @@ def _funding_label(funding: list[FundingSource]) -> str | None:
         return f"lightning:{f.network}"
     if isinstance(f, TempoFundingSource):
         return f"mpp-tempo:{f.network}:{f.asset}"
+    if isinstance(f, StripeFundingSource):
+        return f"stripe:{f.currency}:{f.payment_method}"
     return repr(f)
 
 
@@ -91,6 +163,8 @@ class Routewiler:
         session_id: str | None = None,
         recovery_strategy: RecoveryStrategy | None = None,
         manifest_paths: list[Path] | None = None,
+        fmv_provider: FmvProvider | None = None,
+        ecb_provider: EcbRateProvider | None = None,
     ) -> None:
         self._funding = funding
         self._trace_sink = trace_sink
@@ -121,10 +195,15 @@ class Routewiler:
                 if keystore_root is None
                 else EnvelopeKeystore(root=keystore_root)
             )
-            budget_store = BudgetStore(trace_sink.db_path, keystore)
+            budget_store = BudgetStore(
+                trace_sink.db_path,
+                keystore,
+                fmv_provider=fmv_provider,
+                ecb_provider=ecb_provider,
+            )
 
             # Resolve the envelope's declared currency from the DB.
-            envelope_currency = budget_store._get_envelope_currency_sync(envelope_id)
+            envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
             if envelope_currency is None:
                 raise EnvelopeNotFoundError(
                     f"Envelope '{envelope_id}' not found. "
@@ -147,6 +226,11 @@ class Routewiler:
             # Default: ManifestRecoveryStrategy with bundled manifests (or overridden paths).
             # A separate plain httpx.AsyncClient is used so recovery calls never trigger
             # Routewiler's own auth flow (we're replaying an existing credential, not paying).
+            if recovery_strategy is not None and manifest_paths is not None:
+                raise ValueError(
+                    "Specify either 'recovery_strategy' or 'manifest_paths', not both. "
+                    "When 'recovery_strategy' is provided, 'manifest_paths' is ignored."
+                )
             _effective_strategy: RecoveryStrategy
             if recovery_strategy is not None:
                 _effective_strategy = recovery_strategy
@@ -169,6 +253,7 @@ class Routewiler:
             )
 
         self._budget_store = budget_store
+        self._envelopes = _EnvelopesNamespace(budget_store)
         self._credential_store = credential_store
         self._emitter = emitter
         adapters = _build_adapters(funding)
@@ -189,6 +274,19 @@ class Routewiler:
             recoverer=recoverer,
         )
         self._http = httpx.AsyncClient(auth=auth)
+
+    # ------------------------------------------------------------------
+    # Public namespace accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def envelopes(self) -> _EnvelopesNamespace:
+        """Namespace for creating and managing spending envelopes.
+
+        Requires ``trace_sink`` to be configured; methods raise ``RuntimeError``
+        when called without one.
+        """
+        return self._envelopes
 
     # ------------------------------------------------------------------
     # Internal trace helper
