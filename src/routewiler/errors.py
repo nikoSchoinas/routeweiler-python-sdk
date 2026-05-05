@@ -146,6 +146,15 @@ class ManifestNotFoundError(CredentialError):
     """No loaded service-shape manifest matches the given URL's domain."""
 
 
+class SptCreationError(PaymentError):
+    """Stripe rejected or failed to create the Shared Payment Token.
+
+    Raised when the Stripe API call in ``MppSptAdapter.pay()`` fails for any
+    reason: network error, declined card, invalid customer or payment_method,
+    expired payment method, Stripe API outage, etc.
+    """
+
+
 class MppChargeFailedError(PaymentError):
     """MPP server rejected the credential or payment did not settle.
 
