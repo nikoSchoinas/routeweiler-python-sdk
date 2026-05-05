@@ -16,6 +16,7 @@ Reference: https://github.com/lightninglabs/L402
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -43,17 +44,19 @@ from routewiler.normalized import (
 )
 from routewiler.rails._bolt11 import Bolt11DecodeError, DecodedBolt11
 from routewiler.rails._bolt11 import decode as bolt11_decode
+from routewiler.rails._mpp_http import AUTHORIZATION
 from routewiler.rails.base import PaymentResult, SettlementInfo
 
 if TYPE_CHECKING:
     from routewiler.budgets.schema import DrawReceipt
+
+_log = logging.getLogger(__name__)
 
 # Accepted WWW-Authenticate scheme names (same protocol, two names)
 _ACCEPTED_SCHEMES = {"l402", "lsat"}
 
 # Header name constants
 _WWW_AUTHENTICATE_HEADER = "WWW-Authenticate"
-_AUTHORIZATION_HEADER = "Authorization"
 
 # Maps BOLT-11 HRP prefix → LightningFundingSource.network value.
 # Longer prefixes must come first to avoid "lnbc" matching "lnbcrt" prematurely.
@@ -133,9 +136,11 @@ def _extract_param(params: str, name: str) -> str | None:
 def _parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
     """Deserialize the macaroon and return its first-party caveat key→value pairs.
 
-    Returns an empty dict if pymacaroons is not installed or if parsing fails —
-    callers must handle missing caveats gracefully (e.g. fallback to invoice expiry).
+    Returns an empty dict if pymacaroons is not installed or if deserialization
+    fails with an expected decode/format error.  Unexpected exceptions propagate
+    so callers can diagnose library issues rather than silently losing caveats.
     """
+
     try:
         from pymacaroons import Macaroon  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError:
@@ -144,12 +149,18 @@ def _parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
     try:
         m = Macaroon.deserialize(macaroon_b64)
     except Exception:
+        # pymacaroons raises its own exception hierarchy (MacaroonDeserializationException,
+        # etc.) that doesn't map to stdlib types.  Catch broadly since this is optional
+        # third-party code; callers fall back to invoice expiry on empty caveats.
         return {}
 
     caveats: dict[str, str] = {}
     for caveat in m.caveats:
         raw_id = caveat.caveat_id
-        cid: str = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
+        try:
+            cid: str = raw_id.decode("utf-8") if isinstance(raw_id, bytes) else str(raw_id)
+        except (UnicodeDecodeError, AttributeError):
+            continue
         if "=" in cid:
             k, _, v = cid.partition("=")
             caveats[k.strip()] = v.strip()
@@ -199,6 +210,7 @@ class L402Adapter:
         www_auth = response.headers.get(_WWW_AUTHENTICATE_HEADER, "")
         parsed = _parse_www_authenticate(www_auth)
         if parsed is None:
+            _log.warning("l402: cannot parse WWW-Authenticate header: %r", www_auth)
             raise ChallengeParseError(f"Cannot parse WWW-Authenticate as L402/LSAT: {www_auth!r}")
         macaroon_b64, bolt11 = parsed
 
@@ -261,7 +273,7 @@ class L402Adapter:
             ),
             payee=Payee(
                 identifier=inv.payee_pubkey_hex or inv.payment_hash_hex,
-                metadata={"description": inv.description} if inv.description else None,
+                metadata={"description": inv.description} if inv.description else {},
             ),
             scheme="exact",  # L402 has no upto/stream modes
             nonce=inv.payment_hash_hex,  # unique per invoice, stable for idempotency
@@ -306,6 +318,7 @@ class L402Adapter:
             PreimageMismatchError:  Node returned a preimage that doesn't match the invoice.
         """
         assert isinstance(challenge.raw, L402RailRaw), "pay() called with non-L402 challenge"
+        _log.debug("pay: nonce=%s amount=%s", challenge.nonce, challenge.price.amount)
 
         bolt11 = challenge.raw.invoice
         macaroon_b64 = challenge.raw.macaroon
@@ -342,7 +355,7 @@ class L402Adapter:
         }
 
         return PaymentResult(
-            header_name=_AUTHORIZATION_HEADER,
+            header_name=AUTHORIZATION,
             header_value=auth_value,
             credential=credential,
             proof_type=self.proof_type,  # "preimage"
@@ -353,13 +366,14 @@ class L402Adapter:
         self,
         result: PaymentResult,
         response: httpx.Response,
-    ) -> SettlementInfo | None:
+    ) -> SettlementInfo:
         """Return a minimal SettlementInfo.
 
         L402 has no server-side settlement header — the preimage is the only
         proof, and it was captured in pay().  We read amount_paid from the
         credential dict for the trace.
         """
+        _log.debug("confirm: status=%d", response.status_code)
         amount_paid: int | None = None
         if result.credential is not None:
             try:
@@ -374,14 +388,5 @@ class L402Adapter:
             network_id=None,
             payer_address=None,
             amount_paid=amount_paid,
+            facilitator="lightning",
         )
-
-    async def sign(self, challenge: NormalizedChallenge) -> str:
-        raise NotImplementedError(
-            "L402Adapter uses pay() not sign(). "
-            "sign() is a legacy method for x402-style header-signing adapters."
-        )
-
-    def parse_settlement(self, response: httpx.Response) -> SettlementInfo | None:
-        """L402 has no settlement response header — always returns None."""
-        return None

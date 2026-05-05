@@ -212,7 +212,7 @@ class TestConfirm:
         payment_result = await adapter.pay(challenge)
         response = httpx.Response(200)
         settlement = await adapter.confirm(payment_result, response)
-        assert settlement is not None
+
         assert settlement.success is True
 
     async def test_confirm_failure_on_401(self, adapter: L402Adapter) -> None:
@@ -220,7 +220,7 @@ class TestConfirm:
         payment_result = await adapter.pay(challenge)
         response = httpx.Response(401)
         settlement = await adapter.confirm(payment_result, response)
-        assert settlement is not None
+
         assert settlement.success is False
 
     async def test_confirm_amount_paid_in_sats(self, adapter: L402Adapter) -> None:
@@ -228,15 +228,6 @@ class TestConfirm:
         payment_result = await adapter.pay(challenge)
         response = httpx.Response(200)
         settlement = await adapter.confirm(payment_result, response)
-        assert settlement is not None
+
         # MOCK_BOLT11 = 50000n msat = 5000 sats
         assert settlement.amount_paid == 5000
-
-    async def test_parse_settlement_always_returns_none(self, adapter: L402Adapter) -> None:
-        assert adapter.parse_settlement(httpx.Response(200)) is None
-        assert adapter.parse_settlement(httpx.Response(402)) is None
-
-    async def test_sign_raises_not_implemented(self, adapter: L402Adapter) -> None:
-        challenge = _make_challenge()
-        with pytest.raises(NotImplementedError):
-            await adapter.sign(challenge)
