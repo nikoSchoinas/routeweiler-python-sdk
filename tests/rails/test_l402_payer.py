@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import InvoicePaymentError, NoFundingForRailError, PreimageMismatchError
 from routewiler.funding.evm import EvmFundingSource
 from routewiler.funding.lightning import LightningFundingSource
@@ -194,10 +193,9 @@ class TestPay:
         with pytest.raises(NoFundingForRailError):
             await empty_adapter.pay(challenge)
 
-    async def test_receipt_arg_accepted_but_unused(self, adapter: L402Adapter) -> None:
+    async def test_pay_returns_preimage_proof(self, adapter: L402Adapter) -> None:
         challenge = _make_challenge()
-        receipt = MagicMock(spec=DrawReceipt)
-        result = await adapter.pay(challenge, receipt=receipt)  # must not raise
+        result = await adapter.pay(challenge)
         assert result.proof_type == "preimage"
 
 

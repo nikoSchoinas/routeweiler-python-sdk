@@ -11,7 +11,6 @@ import httpx
 from routewiler.normalized import NormalizedChallenge, ProofType, Rail
 
 if TYPE_CHECKING:
-    from routewiler.budgets.schema import DrawReceipt
     from routewiler.funding import FundingSource
 
 
@@ -110,7 +109,6 @@ class RailAdapter(Protocol):
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Execute the payment and return a PaymentResult.
 

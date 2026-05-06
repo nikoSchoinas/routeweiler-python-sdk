@@ -20,7 +20,7 @@ import logging
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 
@@ -46,9 +46,6 @@ from routewiler.rails._bolt11 import Bolt11DecodeError, DecodedBolt11
 from routewiler.rails._bolt11 import decode as bolt11_decode
 from routewiler.rails._mpp_http import AUTHORIZATION
 from routewiler.rails.base import PaymentResult, SettlementInfo
-
-if TYPE_CHECKING:
-    from routewiler.budgets.schema import DrawReceipt
 
 _log = logging.getLogger(__name__)
 
@@ -300,7 +297,6 @@ class L402Adapter:
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Pay the BOLT-11 invoice and return a PaymentResult with the Authorization header.
 

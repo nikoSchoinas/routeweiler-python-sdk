@@ -173,15 +173,18 @@ class RoutewilerAuth(httpx.Auth):
                 )
             except (RailNotSupportedError, PolicyDeniedError, NoFeasibleRailError) as err:
                 if self._emitter:
-                    await self._emitter.emit_error(
-                        request=request,
-                        response=response,
-                        error=err,
-                        challenge=None,
-                        ts_start=ts_start,
-                        ts_end=datetime.now(UTC),
-                        fallback_from=state.prior_rail,
-                    )
+                    try:
+                        await self._emitter.emit_error(
+                            request=request,
+                            response=response,
+                            error=err,
+                            challenge=None,
+                            ts_start=ts_start,
+                            ts_end=datetime.now(UTC),
+                            fallback_from=state.prior_rail,
+                        )
+                    except Exception:
+                        _log.exception("Trace emit failed.")
                 raise
 
             challenge = choice.candidate.challenge
@@ -203,15 +206,18 @@ class RoutewilerAuth(httpx.Auth):
                     limit=decision.max_per_call_minor_units,
                 )
                 if self._emitter:
-                    await self._emitter.emit_error(
-                        request=request,
-                        response=response,
-                        error=exc,
-                        challenge=challenge,
-                        ts_start=ts_start,
-                        ts_end=datetime.now(UTC),
-                        fallback_from=choice.fallback_from,
-                    )
+                    try:
+                        await self._emitter.emit_error(
+                            request=request,
+                            response=response,
+                            error=exc,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            ts_end=datetime.now(UTC),
+                            fallback_from=choice.fallback_from,
+                        )
+                    except Exception:
+                        _log.exception("Trace emit failed.")
                 raise exc
 
             # -----------------------------------------------------------------
@@ -236,15 +242,18 @@ class RoutewilerAuth(httpx.Auth):
                     )
                 except Exception as exc:
                     if self._emitter:
-                        await self._emitter.emit_error(
-                            request=request,
-                            response=response,
-                            error=exc,
-                            challenge=challenge,
-                            ts_start=ts_start,
-                            ts_end=datetime.now(UTC),
-                            fallback_from=choice.fallback_from,
-                        )
+                        try:
+                            await self._emitter.emit_error(
+                                request=request,
+                                response=response,
+                                error=exc,
+                                challenge=challenge,
+                                ts_start=ts_start,
+                                ts_end=datetime.now(UTC),
+                                fallback_from=choice.fallback_from,
+                            )
+                        except Exception:
+                            _log.exception("Trace emit failed.")
                     raise  # budget errors are not failover-able
 
             # -----------------------------------------------------------------
@@ -252,7 +261,7 @@ class RoutewilerAuth(httpx.Auth):
             # On failure: rollback, exclude this rail, attempt failover.
             # -----------------------------------------------------------------
             try:
-                payment_result = await adapter.pay(challenge, receipt)
+                payment_result = await adapter.pay(challenge)
             except Exception:
                 _log.warning(
                     "Pay failed for rail %r on attempt %d; rolling back and trying next rail.",
@@ -286,15 +295,18 @@ class RoutewilerAuth(httpx.Auth):
                 await self._rollback_safe(receipt)
                 await self._attempt_recovery_safe(credential_record, last_response=None)
                 if self._emitter:
-                    await self._emitter.emit_error(
-                        request=request,
-                        response=response,
-                        error=exc,
-                        challenge=challenge,
-                        ts_start=ts_start,
-                        ts_end=datetime.now(UTC),
-                        fallback_from=choice.fallback_from,
-                    )
+                    try:
+                        await self._emitter.emit_error(
+                            request=request,
+                            response=response,
+                            error=exc,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            ts_end=datetime.now(UTC),
+                            fallback_from=choice.fallback_from,
+                        )
+                    except Exception:
+                        _log.exception("Trace emit failed.")
                 self._sticky_cache.forget(sticky_key)
                 state.advance(adapter.rail)
                 continue
@@ -321,19 +333,22 @@ class RoutewilerAuth(httpx.Auth):
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
 
             if self._emitter:
-                settlement = await adapter.confirm(payment_result, budget_response)
-                await self._emitter.emit_paid(
-                    request=request,
-                    challenge=challenge,
-                    payment_result=payment_result,
-                    settlement=settlement,
-                    final_response=budget_response,
-                    ts_start=ts_start,
-                    ts_retry=ts_retry,
-                    ts_end=ts_end,
-                    fallback_from=choice.fallback_from,
-                    snapshot_rates=fmv_snapshot,
-                )
+                try:
+                    settlement = await adapter.confirm(payment_result, budget_response)
+                    await self._emitter.emit_paid(
+                        request=request,
+                        challenge=challenge,
+                        payment_result=payment_result,
+                        settlement=settlement,
+                        final_response=budget_response,
+                        ts_start=ts_start,
+                        ts_retry=ts_retry,
+                        ts_end=ts_end,
+                        fallback_from=choice.fallback_from,
+                        snapshot_rates=fmv_snapshot,
+                    )
+                except Exception:
+                    _log.exception("Trace emit_paid failed; continuing.")
 
             return  # success — exit the failover loop
 
