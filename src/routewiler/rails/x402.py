@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 from x402 import parse_payment_required, x402Client
@@ -15,8 +15,8 @@ from x402.mechanisms.evm.exact.register import register_exact_evm_client
 from x402.mechanisms.evm.signers import EthAccountSigner
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
-from routewiler.assets import ASSETS, ASSETS_BY_ADDRESS, CANONICAL_ADDRESSES, CHAIN_IDS
-from routewiler.budgets.receipts import uuid7 as _uuid7
+from routewiler.assets import CANONICAL_ADDRESSES, CHAIN_IDS
+from routewiler.assets import human_amount as _human_amount_asset
 from routewiler.errors import (
     ChallengeExpiredError,
     ChallengeParseError,
@@ -36,9 +36,6 @@ from routewiler.normalized import (
     X402RailRaw,
 )
 from routewiler.rails.base import PaymentResult, SettlementInfo
-
-if TYPE_CHECKING:
-    from routewiler.budgets.schema import DrawReceipt
 
 
 def _resolve_asset(network: str, asset: str) -> str:
@@ -61,21 +58,6 @@ def _to_caip19(network: str, asset: str) -> str:
         return f"{network}/{asset.lower()}"
     address = _resolve_asset(network, asset)
     return f"eip155:{chain_id}/erc20:{address}"
-
-
-def _human_amount(asset: str, raw_str: str) -> str:
-    """Format a human-readable amount string, e.g. "0.01 USDC"."""
-    asset_lower = asset.lower()
-    try:
-        raw = int(raw_str)
-    except (ValueError, TypeError):
-        return f"{raw_str} {asset}"
-    # Look up by canonical name first, then by address, then fall back to 18.
-    meta = ASSETS.get(asset_lower) or ASSETS_BY_ADDRESS.get(asset_lower)
-    decimals = meta.decimals if meta else 18
-    symbol = meta.symbol if meta else asset[:8]
-    human = raw / 10**decimals
-    return f"{human:g} {symbol}"
 
 
 def _find_match(
@@ -181,7 +163,15 @@ class X402Adapter:
         raw = X402RailRaw(kind="x402", accepts=accepts, x402_version=x402_version)
 
         # Nonce and expiry live in chosen.extra for EVM schemes.
-        nonce: str = chosen.extra.get("nonce") or _uuid7()
+        # EIP-3009 transferWithAuthorization requires a server-assigned nonce; a
+        # client-fabricated one produces a signature the facilitator rejects.
+        raw_nonce = chosen.extra.get("nonce")
+        if not raw_nonce:
+            raise ChallengeParseError(
+                "x402 exact scheme requires a server-supplied 'nonce' in extra; "
+                "the server omitted it which would cause the facilitator to reject the signature"
+            )
+        nonce: str = raw_nonce
         valid_before = chosen.extra.get("validBefore")
         if valid_before:
             expires_at = datetime.fromtimestamp(int(valid_before), tz=UTC)
@@ -204,7 +194,7 @@ class X402Adapter:
             price=Price(
                 amount=int(chosen.max_amount_required),
                 currency=_to_caip19(chosen.network, chosen.asset),
-                human_amount=_human_amount(chosen.asset, chosen.max_amount_required),
+                human_amount=_human_amount_asset(chosen.asset, chosen.max_amount_required),
             ),
             payee=Payee(identifier=chosen.pay_to),
             scheme="exact",
@@ -253,7 +243,6 @@ class X402Adapter:
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Sign the x402 challenge and return a PaymentResult with the header.
 

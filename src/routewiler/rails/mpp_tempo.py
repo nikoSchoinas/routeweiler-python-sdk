@@ -31,7 +31,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
-from routewiler.assets import ASSETS_BY_ADDRESS, CANONICAL_ADDRESSES, CHAIN_IDS
+from routewiler.assets import CANONICAL_ADDRESSES, CHAIN_IDS
+from routewiler.assets import human_amount as _human_amount_asset
 from routewiler.errors import (
     ChallengeParseError,
     MppChargeFailedError,
@@ -61,7 +62,6 @@ from routewiler.rails._tempo_tx import tx_hash as tempo_tx_hash
 from routewiler.rails.base import PaymentResult, SettlementInfo
 
 if TYPE_CHECKING:
-    from routewiler.budgets.schema import DrawReceipt
     from routewiler.funding import FundingSource
 
 # ---------------------------------------------------------------------------
@@ -123,17 +123,6 @@ def _tip20_currency_string(contract: str) -> str:
     The FMV module treats any ``<x>-tip20`` with a known peg as stablecoin_peg.
     """
     return contract.lower() + _TIP20_SUFFIX
-
-
-def _human_amount(contract_addr: str, amount: int) -> str:
-    """Best-effort human amount string for a TIP-20 token."""
-    meta = ASSETS_BY_ADDRESS.get(contract_addr.lower())
-    if meta is None:
-        return f"{amount} units"
-    decimals = meta.decimals
-    human = amount / (10**decimals)
-    symbol = meta.symbol
-    return f"{human:.6g} {symbol}"
 
 
 def _resolve_contract(network: str, asset: str) -> str | None:
@@ -218,7 +207,7 @@ class MppTempoAdapter:
 
         # Currency string for Price
         currency_str = _tip20_currency_string(currency_contract)
-        human = _human_amount(currency_contract, amount)
+        human = _human_amount_asset(currency_contract, amount)
 
         # Determine network name from chain_id
         network = _CHAIN_ID_TO_NETWORK.get(chain_id, f"tempo-chain-{chain_id}")
@@ -297,7 +286,6 @@ class MppTempoAdapter:
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Sign a type-0x76 Tempo Transaction and build the MPP credential.
 

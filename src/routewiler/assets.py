@@ -127,6 +127,26 @@ for _tmeta in TEMPO_ASSETS.values():
     for _taddr in _tmeta.addresses.values():
         ASSETS_BY_ADDRESS[_taddr.lower()] = _tmeta
 
+
+def human_amount(asset_or_address: str, raw: int | str) -> str:
+    """Format a human-readable token amount string, e.g. ``"0.01 USDC"``.
+
+    Looks up the asset by canonical name first, then by address; falls back
+    to 18 decimals and a truncated symbol when the asset is unrecognised.
+    """
+    key = asset_or_address.lower()
+    meta = ASSETS.get(key) or ASSETS_BY_ADDRESS.get(key)
+    try:
+        raw_int = int(raw)
+    except (ValueError, TypeError):
+        symbol = meta.symbol if meta else asset_or_address[:8]
+        return f"{raw} {symbol}"
+    decimals = meta.decimals if meta else 18
+    symbol = meta.symbol if meta else asset_or_address[:8]
+    human = raw_int / 10**decimals
+    return f"{human:g} {symbol}"
+
+
 # EIP-155 / network chain IDs.
 CHAIN_IDS: dict[str, int] = {
     "base": 8453,
