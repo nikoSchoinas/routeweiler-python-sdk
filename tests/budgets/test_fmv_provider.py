@@ -201,10 +201,15 @@ async def test_budget_store_create_envelope_no_sats_for_x402_only(
 
 
 @pytest.mark.asyncio
-async def test_budget_store_create_envelope_propagates_fmv_error_for_l402(
+async def test_budget_store_create_envelope_degrades_gracefully_on_fmv_outage(
     tmp_path: pytest.fixture,
 ) -> None:
-    """FmvUnavailableError propagates when l402 is in allowed_rails and provider fails."""
+    """FMV provider outage at envelope creation is a warning, not a fatal error.
+
+    The envelope is created without sats rates; L402 draws will raise
+    FmvUnavailableError at draw time rather than blocking envelope creation.
+    This matches §10.3: only call-time cap enforcement fails closed.
+    """
 
     class FailingProvider:
         async def fetch_btc_to(self, currency: str) -> Decimal:
@@ -214,12 +219,19 @@ async def test_budget_store_create_envelope_propagates_fmv_error_for_l402(
     keystore = EnvelopeKeystore(root=tmp_path / "keys")
     store = BudgetStore(db_path, keystore, fmv_provider=FailingProvider())  # type: ignore[arg-type]
 
-    with pytest.raises(FmvUnavailableError, match="CoinGecko down"):
-        await store.create_envelope(
-            "test-env",
-            cap_minor_units=10_000,
-            cap_currency="usd",
-            allowed_rails=["l402", "x402"],
-            ttl_seconds=3600,
-        )
+    # No exception expected — envelope creation must succeed even when FMV provider is down.
+    await store.create_envelope(
+        "test-env",
+        cap_minor_units=10_000,
+        cap_currency="usd",
+        allowed_rails=["l402", "x402"],
+        ttl_seconds=3600,
+    )
     await store.aclose()
+
+    # Envelope must exist and snapshot must lack sats rates (degraded mode).
+    store2 = BudgetStore(db_path, keystore)
+    snapshot = store2.load_fmv_snapshot_sync("test-env")
+    await store2.aclose()
+    assert snapshot is not None, "Envelope FMV snapshot must be written even on provider outage"
+    assert "sats->usd" not in snapshot, "No sats rates expected when provider failed"

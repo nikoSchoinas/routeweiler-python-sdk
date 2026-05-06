@@ -22,7 +22,7 @@ import pytest
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.schema import DrawReceipt
-from routewiler.errors import BudgetExceededError
+from routewiler.errors import BudgetError, BudgetExceededError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -544,3 +544,37 @@ async def test_double_rollback_is_noop(tmp_path: Path, tmp_keystore: EnvelopeKey
     row = conn.execute("SELECT state FROM draws WHERE id=?", (r.receipt_id,)).fetchone()
     conn.close()
     assert row[0] == "rolled_back"
+
+
+@pytest.mark.asyncio
+async def test_confirm_unknown_draw_raises(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
+    """confirm() with an unknown draw_id raises BudgetError, not a silent no-op."""
+    db = tmp_path / "bad_confirm.db"
+    s = BudgetStore(db, tmp_keystore)
+    await s.create_envelope(
+        "env_unk",
+        cap_minor_units=100,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3600,
+    )
+    with pytest.raises(BudgetError, match="not found"):
+        await s.confirm("nonexistent-draw-id", 10)
+    await s.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rollback_unknown_draw_raises(tmp_path: Path, tmp_keystore: EnvelopeKeystore) -> None:
+    """rollback() with an unknown draw_id raises BudgetError, not a silent no-op."""
+    db = tmp_path / "bad_rollback.db"
+    s = BudgetStore(db, tmp_keystore)
+    await s.create_envelope(
+        "env_unk2",
+        cap_minor_units=100,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3600,
+    )
+    with pytest.raises(BudgetError, match="not found"):
+        await s.rollback("nonexistent-draw-id")
+    await s.aclose()

@@ -25,6 +25,7 @@ from routewiler.budgets.receipts import issue as _issue_receipt
 from routewiler.budgets.receipts import uuid7
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
+    BudgetError,
     BudgetExceededError,
     EnvelopeExpiredError,
     EnvelopeFrozenError,
@@ -266,14 +267,22 @@ class BudgetStore:
         private_key = self._keystore.create(envelope_id)
         pub_key_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
 
-        # Fetch per-satoshi rate — required for L402 budget enforcement.
-        # Propagate FmvUnavailableError so the caller knows the envelope is
-        # not safe for L402 draws rather than silently creating a broken envelope.
+        # Fetch per-satoshi rate for L402 budget enforcement.
+        # A provider outage must not block envelope creation — log a warning and proceed
+        # without sats rates; draws on l402 will raise FmvUnavailableError at runtime until
+        # a new envelope is created with fresh rates (§10.3 daily refresh is post-MVP).
         sats_rates: dict[str, Decimal] | None = None
         if "l402" in allowed_rails:
             if self._fmv_provider is not None:
-                rate = await self._fmv_provider.fetch_btc_to(cap_currency)
-                sats_rates = {f"sats->{cap_currency.lower()}": rate}
+                try:
+                    rate = await self._fmv_provider.fetch_btc_to(cap_currency)
+                    sats_rates = {f"sats->{cap_currency.lower()}": rate}
+                except FmvUnavailableError:
+                    _log.warning(
+                        "Envelope '%s': BTC FMV fetch failed at creation (provider unreachable); "
+                        "L402 draws will raise FmvUnavailableError until rates are available.",
+                        envelope_id,
+                    )
             else:
                 _log.warning(
                     "Envelope '%s' includes the l402 rail but no fmv_provider was supplied; "
@@ -527,11 +536,17 @@ class BudgetStore:
 
     def _confirm_sync(self, draw_id: str, amount_settled_minor_units: int) -> None:
         now = datetime.now(UTC)
-        self._conn.execute(
+        cursor = self._conn.execute(
             "UPDATE draws SET state='settled', amount_settled_minor_units=?, "
             "settled_at=? WHERE id=? AND state='reserved'",
             (amount_settled_minor_units, now.isoformat(), draw_id),
         )
+        if cursor.rowcount == 0:
+            row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
+            if row is None:
+                raise BudgetError(f"confirm: draw '{draw_id}' not found.")
+            # Draw already in a terminal state (settled or rolled_back) — either an idempotent
+            # re-confirm or the losing side of a concurrent rollback+confirm race. Both are safe.
 
     async def rollback(self, draw_id: str) -> None:
         """Transition a reserved draw to rolled_back, freeing its reserved capacity."""
@@ -539,7 +554,13 @@ class BudgetStore:
             await asyncio.to_thread(self._rollback_sync, draw_id)
 
     def _rollback_sync(self, draw_id: str) -> None:
-        self._conn.execute(
+        cursor = self._conn.execute(
             "UPDATE draws SET state='rolled_back' WHERE id=? AND state='reserved'",
             (draw_id,),
         )
+        if cursor.rowcount == 0:
+            row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
+            if row is None:
+                raise BudgetError(f"rollback: draw '{draw_id}' not found.")
+            # Draw already in a terminal state (settled or rolled_back) — either an idempotent
+            # re-rollback or the losing side of a concurrent rollback+confirm race. Both are safe.
