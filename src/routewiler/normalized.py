@@ -9,20 +9,12 @@ from pydantic import Field
 
 from routewiler._base import RoutewilerLooseModel, RoutewilerModel
 
-# ---------------------------------------------------------------------------
-# Shared type aliases
-# ---------------------------------------------------------------------------
-
 Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
 # Only "exact" is production-ready; "upto"/"stream" are deferred to §17.
 Scheme = Literal["exact"]
 # "hash" requires the hosted uploader (Phase 2); narrowed away until then.
 UrlEncoding = Literal["raw", "drop"]
 ProofType = Literal["txid", "preimage", "spt_id"]
-
-# ---------------------------------------------------------------------------
-# Nested models
-# ---------------------------------------------------------------------------
 
 
 class Resource(RoutewilerModel):
@@ -50,14 +42,8 @@ class Payee(RoutewilerModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
 # x402-specific payment requirements — mirrors the wire format exactly.
-# One entry per element of the server's `accepts` array.
-# Uses RoutewilerLooseModel (extra="ignore") so future x402 spec additions
-# don't break parsing.
-# ---------------------------------------------------------------------------
-
-
+# Uses RoutewilerLooseModel so future x402 spec additions don't break parsing.
 class X402PaymentRequirements(RoutewilerLooseModel):
     """One payment option from the x402 server's `accepts` array."""
 
@@ -73,12 +59,6 @@ class X402PaymentRequirements(RoutewilerLooseModel):
     output_schema: dict[str, Any] | None = None
     # EVM extension data: nonce, validBefore, validAfter, token name/version
     extra: dict[str, Any] = Field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# RailRaw — discriminated union per rail
-# Each variant carries the verbatim rail payload for the adapter.
-# ---------------------------------------------------------------------------
 
 
 class X402RailRaw(RoutewilerModel):
@@ -98,6 +78,7 @@ class L402RailRaw(RoutewilerModel):
 class MppTempoRailRaw(RoutewilerModel):
     kind: Literal["mpp-tempo"]
     charge_id: str
+    auth_params: dict[str, str] = Field(default_factory=dict)
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -105,6 +86,7 @@ class MppSptRailRaw(RoutewilerModel):
     kind: Literal["mpp-spt"]
     seller_details: dict[str, Any]
     payment_method_hint: str | None = None
+    auth_params: dict[str, str] = Field(default_factory=dict)
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -112,10 +94,6 @@ RailRaw = Annotated[
     X402RailRaw | L402RailRaw | MppTempoRailRaw | MppSptRailRaw,
     Field(discriminator="kind"),
 ]
-
-# ---------------------------------------------------------------------------
-# NormalizedChallenge
-# ---------------------------------------------------------------------------
 
 
 class NormalizedChallenge(RoutewilerModel):
