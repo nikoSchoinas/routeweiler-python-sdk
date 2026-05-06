@@ -55,12 +55,12 @@ from routewiler.normalized import (
 from routewiler.rails._mpp_http import (
     AUTHORIZATION,
     WWW_AUTHENTICATE,
-    build_authorization_header,
-    build_mpp_challenge_echo,
+    build_mpp_credential,
     compute_mpp_expiry,
     confirm_mpp_receipt,
+    is_mpp_payment_for,
     parse_mpp_envelope,
-    parse_payment_challenge,
+    parse_required_request_fields,
 )
 from routewiler.rails.base import PaymentResult, SettlementInfo
 
@@ -71,8 +71,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-_WWW_AUTH_HEADER = WWW_AUTHENTICATE  # "www-authenticate" (httpx lower-cases)
 
 _HANDLED_METHODS = {"stripe", "card"}
 
@@ -118,18 +116,7 @@ class MppSptAdapter:
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True for a 402 with ``WWW-Authenticate: Payment method=stripe|card``."""
-        if response.status_code != HTTP_STATUS_PAYMENT_REQUIRED:
-            return False
-        header = response.headers.get(_WWW_AUTH_HEADER, "")
-        if not header:
-            return False
-        if not header.strip().lower().startswith("payment"):
-            return False
-        try:
-            params = parse_payment_challenge(header)
-        except Exception:
-            return False
-        return params.get("method", "").lower() in _HANDLED_METHODS
+        return is_mpp_payment_for(response, _HANDLED_METHODS)
 
     def parse(self, request: httpx.Request, response: httpx.Response) -> NormalizedChallenge:
         """Decode the MPP-SPT 402 challenge into a ``NormalizedChallenge``.
@@ -138,14 +125,12 @@ class MppSptAdapter:
             ChallengeParseError:   Malformed header, missing required fields.
             ChallengeExpiredError: Challenge ``expires`` is in the past.
         """
-        header = response.headers.get(_WWW_AUTH_HEADER, "")
+        header = response.headers.get(WWW_AUTHENTICATE, "")
         challenge_id, req, params = parse_mpp_envelope(header, rail_prefix="MPP-SPT")
 
-        for required_field in ("amount", "currency", "recipient"):
-            if required_field not in req:
-                raise ChallengeParseError(
-                    f"MPP-SPT: 'request' missing required field '{required_field}'"
-                )
+        parse_required_request_fields(
+            req, fields=("amount", "currency", "recipient"), rail_label="MPP-SPT"
+        )
 
         try:
             amount = int(req["amount"])
@@ -192,7 +177,7 @@ class MppSptAdapter:
                 method=request.method,
                 url=str(request.url),
                 url_encoding="raw",
-                original_status=402,
+                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
             ),
             price=Price(
                 amount=amount,
@@ -268,7 +253,9 @@ class MppSptAdapter:
             SptCreationError:      Stripe API call failed.
         """
         assert isinstance(challenge.raw, MppSptRailRaw), "pay() called with non-MPP-SPT challenge"
-        _log.debug("pay: nonce=%s amount=%s", challenge.nonce, challenge.price.amount)
+        _log.debug(
+            "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
+        )
 
         source = self.match_funding(challenge, self._funding)
         if source is None:
@@ -302,18 +289,13 @@ class MppSptAdapter:
             ) from exc
 
         # Build the MPP credential per draft-httpauth-payment-00.
-        credential: dict[str, Any] = {
-            "challenge": build_mpp_challenge_echo(
-                challenge.nonce, auth_params, default_method="stripe"
-            ),
-            "payload": {
-                "type": "shared_payment_granted_token",
-                "id": spt_id,
-            },
-            "source": f"stripe:customer:{source.customer}",
-        }
-
-        header_value = build_authorization_header(credential)
+        _, header_value = build_mpp_credential(
+            challenge_id=challenge.nonce,
+            auth_params=auth_params,
+            default_method="stripe",
+            payload={"type": "shared_payment_granted_token", "id": spt_id},
+            source=f"stripe:customer:{source.customer}",
+        )
 
         persisted: dict[str, Any] = {
             "charge_id": challenge.nonce,

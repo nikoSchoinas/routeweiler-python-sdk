@@ -32,6 +32,7 @@ import httpx
 from pydantic import field_validator
 
 from routewiler._base import RoutewilerLooseModel
+from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.errors import (
     ChallengeExpiredError,
     ChallengeParseError,
@@ -47,8 +48,8 @@ _log = logging.getLogger(__name__)
 # Wire-format header constants
 # ---------------------------------------------------------------------------
 
-WWW_AUTHENTICATE = "www-authenticate"  # lowercase for httpx header lookup
-AUTHORIZATION = "Authorization"
+WWW_AUTHENTICATE = "www-authenticate"
+AUTHORIZATION = "authorization"
 PAYMENT_RECEIPT = "payment-receipt"  # lowercase for httpx header lookup
 PAYMENT_SCHEME = "Payment"  # the auth-scheme name in both headers
 
@@ -157,11 +158,11 @@ def parse_payment_challenge(header_value: str) -> dict[str, str]:
         ValueError: if the header doesn't begin with the ``Payment`` scheme.
     """
     stripped = header_value.strip()
-    # Accept both "Payment ..." and bare params (for robustness in tests)
-    if stripped.lower().startswith("payment "):
-        stripped = stripped[len("payment ") :]
-    elif stripped.lower().startswith("payment"):
-        stripped = stripped[len("payment") :]
+    if not stripped.lower().startswith("payment "):
+        raise ValueError(
+            f"WWW-Authenticate header does not begin with 'Payment ': {header_value!r}"
+        )
+    stripped = stripped[len("payment ") :]
 
     result: dict[str, str] = {}
     for m in _AUTH_PARAM_RE.finditer(stripped):
@@ -285,6 +286,10 @@ def build_payment_receipt(
 # Shared MPP adapter helpers
 # ---------------------------------------------------------------------------
 
+# Fallback when the server omits the `expires` auth-param.  The MPP spec treats
+# `expires` as REQUIRED, but real deployments occasionally omit it.  We apply a
+# 5-minute window rather than raising ChallengeParseError so clients stay
+# resilient against non-conformant servers until stricter enforcement is needed.
 _DEFAULT_VALIDITY_SECONDS = 300
 
 
@@ -428,3 +433,72 @@ def confirm_mpp_receipt(
         amount_paid=amount_paid,
         facilitator=facilitator,
     )
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for MPP rail adapters (Tempo + SPT)
+# ---------------------------------------------------------------------------
+
+
+def is_mpp_payment_for(response: httpx.Response, methods: set[str]) -> bool:
+    """Return True when ``response`` is a 402 with a recognised MPP ``method`` value.
+
+    Encapsulates the boilerplate shared by every MPP ``can_handle`` implementation:
+    status-code check, header presence, ``Payment`` scheme prefix, and method match.
+    ``methods`` should be lower-cased (e.g. ``{"tempo"}`` or ``{"stripe", "card"}``).
+    """
+    if response.status_code != HTTP_STATUS_PAYMENT_REQUIRED:
+        return False
+    header = response.headers.get(WWW_AUTHENTICATE, "")
+    if not header or not header.strip().lower().startswith("payment"):
+        return False
+    try:
+        params = parse_payment_challenge(header)
+    except (ValueError, TypeError):
+        return False
+    return params.get("method", "").lower() in methods
+
+
+def parse_required_request_fields(
+    req: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    rail_label: str,
+) -> None:
+    """Raise ``ChallengeParseError`` when any of ``fields`` is absent from ``req``.
+
+    Args:
+        req:        Decoded ``request`` dict from the MPP challenge envelope.
+        fields:     Required field names (e.g. ``("amount", "currency", "recipient")``).
+        rail_label: Human-readable label used in the error message (e.g. ``"MPP-Tempo"``).
+    """
+    for field in fields:
+        if field not in req:
+            raise ChallengeParseError(f"{rail_label}: 'request' missing required field '{field}'")
+
+
+def build_mpp_credential(
+    *,
+    challenge_id: str,
+    auth_params: dict[str, Any],
+    default_method: str,
+    payload: dict[str, Any],
+    source: str,
+) -> tuple[dict[str, Any], str]:
+    """Build the MPP credential dict and the corresponding ``Authorization`` header value.
+
+    Both the Tempo and SPT adapters share this envelope structure; only ``payload``
+    and ``source`` differ between them.
+
+    Returns:
+        A ``(credential_dict, header_value)`` tuple where ``header_value`` is the
+        full ``Authorization: Payment <b64url>`` string ready to send.
+    """
+    credential: dict[str, Any] = {
+        "challenge": build_mpp_challenge_echo(
+            challenge_id, auth_params, default_method=default_method
+        ),
+        "payload": payload,
+        "source": source,
+    }
+    return credential, build_authorization_header(credential)

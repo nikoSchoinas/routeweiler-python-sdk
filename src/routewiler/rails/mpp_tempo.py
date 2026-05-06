@@ -50,12 +50,12 @@ from routewiler.normalized import (
 from routewiler.rails._mpp_http import (
     AUTHORIZATION,
     WWW_AUTHENTICATE,
-    build_authorization_header,
-    build_mpp_challenge_echo,
+    build_mpp_credential,
     compute_mpp_expiry,
     confirm_mpp_receipt,
+    is_mpp_payment_for,
     parse_mpp_envelope,
-    parse_payment_challenge,
+    parse_required_request_fields,
 )
 from routewiler.rails._tempo_tx import tx_hash as tempo_tx_hash
 from routewiler.rails.base import PaymentResult, SettlementInfo
@@ -67,8 +67,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-_WWW_AUTH_HEADER = WWW_AUTHENTICATE  # "www-authenticate" (httpx lower-cases)
 
 
 async def _fetch_nonce(rpc_url: str, address: str) -> int:
@@ -173,19 +171,7 @@ class MppTempoAdapter:
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True for a 402 with ``WWW-Authenticate: Payment method=tempo``."""
-        if response.status_code != HTTP_STATUS_PAYMENT_REQUIRED:
-            return False
-        header = response.headers.get(_WWW_AUTH_HEADER, "")
-        if not header:
-            return False
-        # Must start with "Payment" scheme (case-insensitive)
-        if not header.strip().lower().startswith("payment"):
-            return False
-        try:
-            params = parse_payment_challenge(header)
-        except Exception:
-            return False
-        return params.get("method", "").lower() == "tempo"
+        return is_mpp_payment_for(response, {"tempo"})
 
     def parse(self, request: httpx.Request, response: httpx.Response) -> NormalizedChallenge:
         """Decode the MPP-Tempo 402 challenge into a ``NormalizedChallenge``.
@@ -194,13 +180,12 @@ class MppTempoAdapter:
             ChallengeParseError:   Malformed header, missing required fields.
             ChallengeExpiredError: Challenge ``expires`` is in the past.
         """
-        header = response.headers.get(_WWW_AUTH_HEADER, "")
+        header = response.headers.get(WWW_AUTHENTICATE, "")
         challenge_id, req, params = parse_mpp_envelope(header, rail_prefix="MPP-Tempo")
 
-        # Validate required fields
-        for field in ("amount", "currency", "recipient"):
-            if field not in req:
-                raise ChallengeParseError(f"MPP-Tempo: 'request' missing required field '{field}'")
+        parse_required_request_fields(
+            req, fields=("amount", "currency", "recipient"), rail_label="MPP-Tempo"
+        )
 
         try:
             amount = int(req["amount"])
@@ -242,7 +227,6 @@ class MppTempoAdapter:
         raw = MppTempoRailRaw(
             kind="mpp-tempo",
             charge_id=challenge_id,
-            settlement_network="tempo",
             extra={
                 "realm": params.get("realm", ""),
                 "intent": params.get("intent", "charge"),
@@ -262,7 +246,7 @@ class MppTempoAdapter:
                 method=request.method,
                 url=str(request.url),
                 url_encoding="raw",
-                original_status=402,
+                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
             ),
             price=Price(
                 amount=amount,
@@ -332,7 +316,9 @@ class MppTempoAdapter:
         assert isinstance(challenge.raw, MppTempoRailRaw), (
             "pay() called with non-MPP-Tempo challenge"
         )
-        _log.debug("pay: charge_id=%s amount=%s", challenge.raw.charge_id, challenge.price.amount)
+        _log.debug(
+            "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
+        )
 
         source = self.match_funding(challenge, self._funding)
         if source is None:
@@ -375,18 +361,13 @@ class MppTempoAdapter:
 
         # Build the MPP credential per draft-httpauth-payment-00 / draft-tempo-charge-00
         auth_params = challenge.raw.extra.get("auth_params", {})
-        credential: dict[str, Any] = {
-            "challenge": build_mpp_challenge_echo(
-                challenge.raw.charge_id, auth_params, default_method="tempo"
-            ),
-            "payload": {
-                "type": "transaction",
-                "signature": signed_tx_hex,
-            },
-            "source": f"did:pkh:eip155:{chain_id}:{source.signer.address}",
-        }
-
-        header_value = build_authorization_header(credential)
+        credential, header_value = build_mpp_credential(
+            challenge_id=challenge.raw.charge_id,
+            auth_params=auth_params,
+            default_method="tempo",
+            payload={"type": "transaction", "signature": signed_tx_hex},
+            source=f"did:pkh:eip155:{chain_id}:{source.signer.address}",
+        )
 
         persisted: dict[str, Any] = {
             "charge_id": challenge.raw.charge_id,
