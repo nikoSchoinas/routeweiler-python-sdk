@@ -151,10 +151,6 @@ class Router:
         self._latency_p50_ms = latency_p50_ms
         self._reliability = reliability
 
-    @property
-    def adapters(self) -> list[RailAdapter]:
-        return self._adapters
-
     async def decide(
         self,
         *,
