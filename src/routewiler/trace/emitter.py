@@ -128,8 +128,8 @@ class TraceEmitter:
     ) -> None:
         """Emit a trace event when a credential enters MANUAL_HOLD terminal state.
 
-        The hosted dashboard queries `payload->>'credential_state' = 'manual_hold'`
-        (§6.6) to populate the manual-hold tab.
+        Sets ``credential_state = 'manual_hold'`` on the event so queries on the
+        trace store can identify credentials that require manual inspection.
         """
         event = TraceEvent(
             **self._base_event_kwargs(),
@@ -137,7 +137,7 @@ class TraceEmitter:
             selected_rail=credential.rail,
             payment=None,
             outcome=Outcome(
-                http_status=0,
+                http_status=None,
                 service_delivered=False,
                 service_latency_ms=0,
             ),
@@ -159,7 +159,7 @@ class TraceEmitter:
         ts_end: datetime,
         fallback_from: Rail | None = None,
     ) -> None:
-        http_status = response.status_code if response is not None else 0
+        http_status = response.status_code if response is not None else None
         service_ms = _ms(ts_start, ts_end)
         outcome = Outcome(
             http_status=http_status,

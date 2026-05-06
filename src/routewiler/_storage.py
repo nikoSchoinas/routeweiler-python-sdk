@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS trace_events (
     selected_rail           TEXT,               -- NULL for passthrough / pre-rail-selection errors
     fallback_from           TEXT,               -- NULL when no failover occurred
     facilitator             TEXT,
-    http_status             INTEGER NOT NULL,
+    http_status             INTEGER,            -- NULL when no HTTP response (MANUAL_HOLD events)
     service_delivered       INTEGER NOT NULL,   -- 0 | 1
     amount_native           TEXT,               -- base-units as string (bigint-safe)
     amount_native_currency  TEXT,
@@ -112,6 +112,40 @@ CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
 
 # Migration SQL — add fallback_from column to trace_events rows created before W7.
 _MIGRATION_TRACE_V1_ADD_FALLBACK_FROM = "ALTER TABLE trace_events ADD COLUMN fallback_from TEXT"
+
+# Migration: rebuild trace_events to allow NULL in http_status (MANUAL_HOLD events have no
+# HTTP response). SQLite doesn't support ALTER COLUMN, so we rename + recreate + copy + drop.
+_MIGRATION_TRACE_V2_HTTP_STATUS_NULLABLE = """
+    ALTER TABLE trace_events RENAME TO trace_events_v2_migrate;
+    CREATE TABLE trace_events (
+        request_id              TEXT    PRIMARY KEY,
+        envelope_id             TEXT    NOT NULL,
+        selected_rail           TEXT,
+        fallback_from           TEXT,
+        facilitator             TEXT,
+        http_status             INTEGER,
+        service_delivered       INTEGER NOT NULL,
+        amount_native           TEXT,
+        amount_native_currency  TEXT,
+        amount_envelope         REAL,
+        amount_envelope_currency TEXT,
+        fmv_quality             TEXT,
+        ts_start                TEXT    NOT NULL,
+        ts_end                  TEXT    NOT NULL,
+        shipped_at              TEXT,
+        payload                 TEXT    NOT NULL
+    );
+    INSERT INTO trace_events SELECT
+        request_id, envelope_id, selected_rail, fallback_from, facilitator,
+        http_status, service_delivered,
+        amount_native, amount_native_currency,
+        amount_envelope, amount_envelope_currency, fmv_quality,
+        ts_start, ts_end, shipped_at, payload
+    FROM trace_events_v2_migrate;
+    DROP TABLE trace_events_v2_migrate;
+    CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
+        ON trace_events (envelope_id, ts_start DESC);
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +189,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _migrate_trace_schema(conn: sqlite3.Connection) -> None:
     """Apply pending trace_events schema migrations."""
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(trace_events)")}
-    if "fallback_from" not in existing_cols:
+    col_info = {
+        row[1]: {"notnull": row[3]} for row in conn.execute("PRAGMA table_info(trace_events)")
+    }
+    if "fallback_from" not in col_info:
         conn.execute(_MIGRATION_TRACE_V1_ADD_FALLBACK_FROM)
+    if col_info.get("http_status", {}).get("notnull", 0) == 1:
+        conn.executescript(_MIGRATION_TRACE_V2_HTTP_STATUS_NULLABLE)

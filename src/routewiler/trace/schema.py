@@ -43,7 +43,7 @@ class OutcomeError(RoutewilerModel):
 
 
 class Outcome(RoutewilerModel):
-    http_status: int
+    http_status: int | None
     service_delivered: bool
     service_latency_ms: int
     error: OutcomeError | None = None
@@ -85,6 +85,5 @@ class TraceEvent(RoutewilerModel):
     timestamp_end: datetime
     schema_version: Literal["1.0"] = "1.0"
     # Credential lifecycle fields — populated only by emit_credential_manual_hold.
-    # The hosted dashboard queries payload->>'credential_state' = 'manual_hold' (§6.6).
     credential_id: str | None = None
     credential_state: CredentialState | None = None
