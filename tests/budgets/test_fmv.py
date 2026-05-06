@@ -10,7 +10,7 @@ import pytest
 from routewiler.budgets.fmv import (
     amount_to_envelope_minor_units,
     capture_fmv_snapshot,
-    ecb_rate_stub,
+    ecb_rate,
 )
 from routewiler.errors import FmvUnavailableError
 
@@ -105,17 +105,17 @@ def test_unknown_asset_raises() -> None:
 
 
 def test_ecb_stub_same_currency() -> None:
-    assert ecb_rate_stub("usd", "usd") == Decimal("1")
+    assert ecb_rate("usd", "usd") == Decimal("1")
 
 
 def test_ecb_stub_known_pair() -> None:
-    rate = ecb_rate_stub("usd", "eur")
+    rate = ecb_rate("usd", "eur")
     assert rate is not None
     assert 0 < float(rate) < 2
 
 
 def test_ecb_stub_unknown_pair() -> None:
-    assert ecb_rate_stub("usd", "xyz") is None
+    assert ecb_rate("usd", "xyz") is None
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ def test_capture_fmv_snapshot_offline_used_for_missing_live_pair() -> None:
     """Pairs absent from cross_rates still get the offline fallback value."""
     live = {"usd->eur": Decimal("0.95")}  # gbp->eur not provided
     rates, _ = capture_fmv_snapshot("eur", cross_rates=live)
-    assert rates["gbp->eur"] == ecb_rate_stub("gbp", "eur")
+    assert rates["gbp->eur"] == ecb_rate("gbp", "eur")
 
 
 # ---------------------------------------------------------------------------

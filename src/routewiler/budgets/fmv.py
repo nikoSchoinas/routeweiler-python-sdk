@@ -69,7 +69,7 @@ _ECB_OFFLINE_FALLBACK: dict[tuple[str, str], Decimal] = {
 }
 
 
-def ecb_rate_stub(src: str, dst: str) -> Decimal | None:
+def ecb_rate(src: str, dst: str) -> Decimal | None:
     """Return a hardcoded offline ECB reference rate for src→dst, or None if unknown."""
     if src == dst:
         return Decimal("1")
@@ -167,7 +167,7 @@ def _resolve_rate(src: str, dst: str, snapshot_rates: dict[str, Decimal] | None)
 
     # Fall back to offline reference rates — snapshot is missing this pair.
     # This typically means the envelope was created without a live ECB provider.
-    rate = ecb_rate_stub(src, dst)
+    rate = ecb_rate(src, dst)
     if rate is not None:
         _log.warning(
             "Using offline ECB fallback for %s→%s (rate: %s). "
@@ -220,10 +220,10 @@ def fmv_for_trace(
             key = f"{src}->{env_cur}"
             rate = snapshot_rates.get(key)
             if rate is None:
-                rate = ecb_rate_stub(src, env_cur)
+                rate = ecb_rate(src, env_cur)
             if rate is not None:
                 return float(Decimal(str(amount_native)) * rate), "fx_leg"
-        rate = ecb_rate_stub(src, env_cur)
+        rate = ecb_rate(src, env_cur)
         if rate is not None:
             return float(Decimal(str(amount_native)) * rate), "fx_leg"
         return None, "unavailable"
