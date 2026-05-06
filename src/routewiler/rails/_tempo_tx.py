@@ -36,6 +36,15 @@ from eth_hash.auto import keccak
 from eth_keys.datatypes import PrivateKey as EthPrivateKey
 
 # ---------------------------------------------------------------------------
+# Gas defaults for Tempo Transactions (draft-tempo-charge-00 pull mode).
+# These reflect Tempo Moderato network parameters; adjust if the network changes.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 0  # Tempo pays no priority tip
+_DEFAULT_MAX_FEE_PER_GAS_WEI = 20_000_000_000  # 20 Gwei base-fee ceiling
+_DEFAULT_GAS_LIMIT = 350_000  # covers a single TIP-20 transfer
+
+# ---------------------------------------------------------------------------
 # TIP-20 ABI encoding helpers
 # ---------------------------------------------------------------------------
 
@@ -132,9 +141,9 @@ def sign_tempo_transaction(
     valid_before: int,
     valid_after: int = 0,
     fee_payer: bool = False,
-    max_priority_fee_per_gas: int = 0,
-    max_fee_per_gas: int = 20_000_000_000,
-    gas_limit: int = 350_000,
+    max_priority_fee_per_gas: int = _DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    max_fee_per_gas: int = _DEFAULT_MAX_FEE_PER_GAS_WEI,
+    gas_limit: int = _DEFAULT_GAS_LIMIT,
 ) -> str:
     """Build and sign a Tempo Transaction (type 0x76) for a single TIP-20 transfer.
 
