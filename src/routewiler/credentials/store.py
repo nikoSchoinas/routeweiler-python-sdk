@@ -41,6 +41,7 @@ _VALID_TRANSITIONS: dict[CredentialState, set[CredentialState]] = {
         CredentialState.MANUAL_HOLD,
     },
     CredentialState.RECOVERING: {
+        CredentialState.RECOVERING,
         CredentialState.REDEEMED,
         CredentialState.MANUAL_HOLD,
     },

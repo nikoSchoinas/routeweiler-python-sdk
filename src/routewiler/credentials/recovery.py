@@ -150,26 +150,22 @@ class CredentialRecoverer:
             await self._terminal(credential, ManualHoldReason.EXPIRED)
             return RecoveryOutcome(succeeded=False, response=None, reason=ManualHoldReason.EXPIRED)
 
-        # Enter RECOVERING state, or resume if already there (process-crash resume path).
-        # A crash between the RECOVERING transition and strategy completion leaves the
-        # credential in RECOVERING; on the next call we skip the re-transition and run
-        # the strategy again so the credential can reach a terminal state.
-        if credential.state != CredentialState.RECOVERING:
-            try:
-                credential = await self._store.transition(
-                    credential_id, to_state=CredentialState.RECOVERING
-                )
-            except sqlite3.OperationalError:
-                # Infrastructure failure (e.g. DB busy) — surface it; don't silently eat it.
-                _log.exception("DB error transitioning credential %r to RECOVERING.", credential_id)
-                raise
-            except Exception:
-                # Transition rejected (InvalidCredentialTransitionError) or other error —
-                # credential stays PERSISTED for inspection.
-                _log.exception("Failed to transition credential %r to RECOVERING.", credential_id)
-                return RecoveryOutcome(
-                    succeeded=False, response=None, reason=ManualHoldReason.EXHAUSTED
-                )
+        # Enter RECOVERING state (idempotent — state machine allows RECOVERING→RECOVERING
+        # so process-crash resume works without a separate guard here).
+        try:
+            credential = await self._store.transition(
+                credential_id, to_state=CredentialState.RECOVERING
+            )
+        except sqlite3.OperationalError:
+            # Infrastructure failure (e.g. DB busy) — surface it; don't silently eat it.
+            _log.exception("DB error transitioning credential %r to RECOVERING.", credential_id)
+            raise
+        except Exception:
+            # Transition rejected or other error — credential stays in current state for inspection.
+            _log.exception("Failed to transition credential %r to RECOVERING.", credential_id)
+            return RecoveryOutcome(
+                succeeded=False, response=None, reason=ManualHoldReason.EXHAUSTED
+            )
 
         # Delegate to the strategy (NoOp in Week 10; manifest-driven in Week 11).
         try:
