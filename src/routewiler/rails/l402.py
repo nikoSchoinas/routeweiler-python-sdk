@@ -20,7 +20,7 @@ import logging
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -40,12 +40,11 @@ from routewiler.normalized import (
     Price,
     ProofType,
     Rail,
-    Resource,
 )
 from routewiler.rails._bolt11 import Bolt11DecodeError, DecodedBolt11
 from routewiler.rails._bolt11 import decode as bolt11_decode
 from routewiler.rails._mpp_http import AUTHORIZATION
-from routewiler.rails.base import PaymentResult, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo, resource_from_request
 
 _log = logging.getLogger(__name__)
 
@@ -165,11 +164,6 @@ def _parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
     return caveats
 
 
-# ---------------------------------------------------------------------------
-# L402Adapter
-# ---------------------------------------------------------------------------
-
-
 class L402Adapter:
     """Rail adapter for the L402 (formerly LSAT) Lightning payment protocol.
 
@@ -185,10 +179,6 @@ class L402Adapter:
 
     def __init__(self, funding_sources: list[LightningFundingSource]) -> None:
         self._funding = funding_sources
-
-    # ------------------------------------------------------------------
-    # RailAdapter protocol
-    # ------------------------------------------------------------------
 
     def can_handle(self, response: httpx.Response) -> bool:
         if response.status_code != HTTP_STATUS_PAYMENT_REQUIRED:
@@ -257,12 +247,7 @@ class L402Adapter:
 
         return NormalizedChallenge(
             rail="l402",
-            resource=Resource(
-                method=request.method,
-                url=str(request.url),
-                url_encoding="raw",
-                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
-            ),
+            resource=resource_from_request(request),
             price=Price(
                 amount=sats,
                 currency="btc-lightning",
@@ -313,15 +298,14 @@ class L402Adapter:
             InvoicePaymentError:    Node returned a terminal payment failure.
             PreimageMismatchError:  Node returned a preimage that doesn't match the invoice.
         """
-        assert isinstance(challenge.raw, L402RailRaw), "pay() called with non-L402 challenge"
         _log.debug(
             "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
         )
 
-        bolt11 = challenge.raw.invoice
-        macaroon_b64 = challenge.raw.macaroon
+        l402_raw = cast(L402RailRaw, challenge.raw)
+        bolt11 = l402_raw.invoice
+        macaroon_b64 = l402_raw.macaroon
 
-        # Locate the funding source (match_funding is cheap, call inline)
         source = self.match_funding(challenge, self._funding)
         if source is None:
             target = _invoice_network(bolt11)

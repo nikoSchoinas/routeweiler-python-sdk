@@ -1,30 +1,11 @@
 """MPP-SPT rail adapter — Stripe Shared Payment Token for fiat payments.
 
-Implements ``RailAdapter`` for the MPP ``stripe`` (and ``card``) charge method.
-This is the fiat fallback path: when a vendor's 402 advertises ``method=stripe``
-or ``method=card``, Routewiler mints a scoped ``spt_<id>`` from the buyer's
-saved Stripe payment method and delivers it in the ``Authorization: Payment``
-retry header.  The merchant redeems the SPT server-side via a Stripe
-``PaymentIntent``; Routewiler does not participate in redemption.
-
-Flow:
-    1. ``can_handle``   — 402 with ``WWW-Authenticate: Payment method=stripe|card``.
-    2. ``parse``        — decode auth-params + JCS-JSON request into
-                          ``NormalizedChallenge`` (``price.currency = "<iso>-fiat"``).
-    3. ``match_funding``— find a ``StripeFundingSource`` whose currency matches
-                          the challenge's ISO currency (+ optional payment-method hint).
-    4. ``pay``          — call ``SptCreator.create_spt``; build MPP credential;
-                          return ``Authorization: Payment <b64url(JCS)>``.
-    5. ``confirm``      — decode ``Payment-Receipt`` (method=stripe|card); return
-                          ``SettlementInfo`` with the PaymentIntent reference.
-
-Week 14 scope:
-    - ``exact`` scheme only (single SPT per challenge).
-    - ``method=stripe`` and ``method=card`` accepted (both route here).
-    - ``method=tempo`` is left for ``MppTempoAdapter``.
+Implements ``RailAdapter`` for the MPP ``stripe`` and ``card`` charge methods
+(IETF ``draft-httpauth-payment-00``, https://paymentauth.org).  Mints a scoped
+``spt_<id>`` from the buyer's saved Stripe payment method; the merchant redeems
+it via a Stripe ``PaymentIntent``.
 
 References:
-    - MPP draft: https://paymentauth.org
     - Stripe SPT: https://docs.stripe.com/agentic-commerce/concepts/shared-payment-tokens
 """
 
@@ -32,11 +13,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
-from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.errors import (
     ChallengeParseError,
     NoFundingForRailError,
@@ -50,7 +30,6 @@ from routewiler.normalized import (
     Price,
     ProofType,
     Rail,
-    Resource,
 )
 from routewiler.rails._mpp_http import (
     AUTHORIZATION,
@@ -62,14 +41,10 @@ from routewiler.rails._mpp_http import (
     parse_mpp_envelope,
     parse_required_request_fields,
 )
-from routewiler.rails.base import PaymentResult, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo, resource_from_request
 
 if TYPE_CHECKING:
     from routewiler.funding import FundingSource
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _HANDLED_METHODS = {"stripe", "card"}
 
@@ -81,11 +56,6 @@ _STRIPE_KNOWN_FIATS = {"usd", "eur", "gbp", "cad", "aud", "nzd", "chf", "sek", "
 _log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _human_fiat(amount_minor: int, iso_currency: str) -> str:
     """Human-readable fiat amount, e.g. ``"$5.00"`` or ``"¥500"``."""
     symbols = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥"}
@@ -93,11 +63,6 @@ def _human_fiat(amount_minor: int, iso_currency: str) -> str:
     if iso_currency.lower() == "jpy":
         return f"{sym}{amount_minor}"
     return f"{sym}{amount_minor / 100:.2f}"
-
-
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
 
 
 class MppSptAdapter:
@@ -113,10 +78,6 @@ class MppSptAdapter:
 
     def __init__(self, funding_sources: list[StripeFundingSource]) -> None:
         self._funding = funding_sources
-
-    # ------------------------------------------------------------------
-    # RailAdapter protocol
-    # ------------------------------------------------------------------
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True for a 402 with ``WWW-Authenticate: Payment method=stripe|card``."""
@@ -172,22 +133,17 @@ class MppSptAdapter:
             kind="mpp-spt",
             seller_details=seller_details,
             payment_method_hint=payment_method_hint,
+            auth_params=dict(params),
             extra={
                 "iso_currency": iso_currency,
                 "amount": amount,
                 "recipient": recipient,
-                "auth_params": dict(params),
             },
         )
 
         return NormalizedChallenge(
             rail="mpp-spt",
-            resource=Resource(
-                method=request.method,
-                url=str(request.url),
-                url_encoding="raw",
-                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
-            ),
+            resource=resource_from_request(request),
             price=Price(
                 amount=amount,
                 currency=f"{iso_currency}-fiat",
@@ -260,23 +216,22 @@ class MppSptAdapter:
             NoFundingForRailError: No matching ``StripeFundingSource``.
             SptCreationError:      Stripe API call failed.
         """
-        assert isinstance(challenge.raw, MppSptRailRaw), "pay() called with non-MPP-SPT challenge"
         _log.debug(
             "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
         )
 
+        spt_raw = cast(MppSptRailRaw, challenge.raw)
         source = self.match_funding(challenge, self._funding)
         if source is None:
-            iso = challenge.raw.extra.get("iso_currency", "?")
+            iso = spt_raw.extra.get("iso_currency", "?")
             available = [f.currency for f in self._funding if isinstance(f, StripeFundingSource)]
             raise NoFundingForRailError(
                 f"No StripeFundingSource matches currency={iso!r}. "
                 f"Available currencies: {available}"
             )
 
-        iso_currency: str = challenge.raw.extra.get("iso_currency", source.currency)
-        seller_details: dict[str, Any] = challenge.raw.seller_details
-        auth_params: dict[str, Any] = challenge.raw.extra.get("auth_params", {})
+        iso_currency: str = spt_raw.extra.get("iso_currency", source.currency)
+        seller_details: dict[str, Any] = spt_raw.seller_details
 
         usage_limits: dict[str, Any] = {
             "currency": iso_currency,
@@ -299,7 +254,7 @@ class MppSptAdapter:
         # Build the MPP credential per draft-httpauth-payment-00.
         _, header_value = build_mpp_credential(
             challenge_id=challenge.nonce,
-            auth_params=auth_params,
+            auth_params=spt_raw.auth_params,
             default_method="stripe",
             payload={"type": "shared_payment_granted_token", "id": spt_id},
             source=f"stripe:customer:{source.customer}",

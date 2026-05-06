@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from x402 import parse_payment_required, x402Client
@@ -31,11 +31,10 @@ from routewiler.normalized import (
     Price,
     ProofType,
     Rail,
-    Resource,
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routewiler.rails.base import PaymentResult, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo, resource_from_request
 
 
 def _resolve_asset(network: str, asset: str) -> str:
@@ -63,8 +62,8 @@ def _to_caip19(network: str, asset: str) -> str:
 def _find_match(
     accepts: list[X402PaymentRequirements],
     funding: Sequence[FundingSource],
-) -> tuple[X402PaymentRequirements, EvmFundingSource] | None:
-    """Return the first (PaymentRequirements, EvmFundingSource) pair that matches, or None."""
+) -> EvmFundingSource | None:
+    """Return the first EvmFundingSource that matches any entry in ``accepts``, or None."""
     for pr in accepts:
         for fs in funding:
             if not isinstance(fs, EvmFundingSource):
@@ -72,13 +71,9 @@ def _find_match(
             if pr.network != fs.network:
                 continue
             if _resolve_asset(pr.network, pr.asset) == _resolve_asset(fs.network, fs.asset):
-                return pr, fs
+                return fs
     return None
 
-
-# ---------------------------------------------------------------------------
-# X402Adapter
-# ---------------------------------------------------------------------------
 
 _log = logging.getLogger(__name__)
 
@@ -105,10 +100,6 @@ class X402Adapter:
         for fs in funding_sources:
             register_exact_evm_client(self._x402, EthAccountSigner(fs.wallet))
 
-    # ------------------------------------------------------------------
-    # RailAdapter protocol
-    # ------------------------------------------------------------------
-
     def can_handle(self, response: httpx.Response) -> bool:
         return (
             response.status_code == HTTP_STATUS_PAYMENT_REQUIRED
@@ -126,7 +117,6 @@ class X402Adapter:
 
         x402_version: int = int(data.get("x402Version", 1))
 
-        # The x402 wire uses "accepts";
         if "accepts" in data:
             accepts_raw = data["accepts"]
         else:
@@ -185,12 +175,7 @@ class X402Adapter:
 
         return NormalizedChallenge(
             rail="x402",
-            resource=Resource(
-                method=request.method,
-                url=str(request.url),
-                url_encoding="raw",  # emitter overwrites this based on configured url_mode
-                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
-            ),
+            resource=resource_from_request(request),
             price=Price(
                 amount=int(chosen.max_amount_required),
                 currency=_to_caip19(chosen.network, chosen.asset),
@@ -204,12 +189,10 @@ class X402Adapter:
         )
 
     async def _sign(self, challenge: NormalizedChallenge) -> str:
-        assert isinstance(challenge.raw, X402RailRaw), "_sign called with non-x402 challenge"
-        # Reconstruct a typed PaymentRequired so the x402 SDK can select and sign.
-        # Use the version captured from the original wire payload (not hardcoded 1).
+        x402_raw = cast(X402RailRaw, challenge.raw)
         raw_dict: dict[str, Any] = {
-            "x402Version": challenge.raw.x402_version,
-            "accepts": [pr.model_dump(by_alias=True) for pr in challenge.raw.accepts],
+            "x402Version": x402_raw.x402_version,
+            "accepts": [pr.model_dump(by_alias=True) for pr in x402_raw.accepts],
         }
         payment_required = parse_payment_required(raw_dict)
         try:
@@ -237,8 +220,7 @@ class X402Adapter:
         if not isinstance(challenge.raw, X402RailRaw):
             return None
         exact_accepts = [pr for pr in challenge.raw.accepts if pr.scheme == "exact"]
-        match = _find_match(exact_accepts, funding)
-        return match[1] if match is not None else None
+        return _find_match(exact_accepts, funding)
 
     async def pay(
         self,
@@ -250,12 +232,12 @@ class X402Adapter:
             NoFundingForRailError: No funding source matches this challenge.
             SigningError:          x402 SDK signing failed.
         """
-        assert isinstance(challenge.raw, X402RailRaw), "pay() called with non-x402 challenge"
         _log.debug(
             "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
         )
 
-        exact_accepts = [pr for pr in challenge.raw.accepts if pr.scheme == "exact"]
+        x402_raw = cast(X402RailRaw, challenge.raw)
+        exact_accepts = [pr for pr in x402_raw.accepts if pr.scheme == "exact"]
         if _find_match(exact_accepts, self._funding) is None:
             raise NoFundingForRailError(
                 f"No funding source matches any of the {len(exact_accepts)} offered exact "
@@ -291,7 +273,7 @@ class X402Adapter:
             return SettlementInfo(success=response.is_success)
         try:
             data: dict[str, Any] = json.loads(base64.b64decode(raw))
-        except Exception:
+        except (ValueError, TypeError):
             return SettlementInfo(success=response.is_success)
         amount_raw = data.get("amountPaid")
         amount_paid: int | None = None

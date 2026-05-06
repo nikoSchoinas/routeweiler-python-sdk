@@ -1,36 +1,19 @@
 """MPP-Tempo rail adapter — client-signed stablecoin payments on Tempo.
 
 Implements ``RailAdapter`` for the MPP ``tempo`` charge method
-(https://paymentauth.org/draft-tempo-charge-00.html, IETF draft).
-
-Flow (pull mode — server broadcasts the signed transaction):
-    1. ``can_handle``   — 402 with ``WWW-Authenticate: Payment method=tempo``.
-    2. ``parse``        — decode auth-params + JCS-JSON request into
-                          ``NormalizedChallenge``.
-    3. ``match_funding``— find a ``TempoFundingSource`` whose chain ID and asset
-                          match the challenge's methodDetails.chainId / currency.
-    4. ``pay``          — sign a type-0x76 Tempo Transaction via the signer;
-                          wrap in MPP credential; build ``Authorization: Payment``.
-    5. ``confirm``      — decode ``Payment-Receipt`` header; return
-                          ``SettlementInfo`` with the on-chain tx hash.
-
-Week 13 scope:
-    - pull mode only (client signs, server broadcasts).
-    - Single TIP-20 transfer per transaction.
-    - Non-zero amounts only (zero-amount proof path is a follow-up).
-    - method=tempo only (method=stripe / method=card handled by MppSptAdapter
-      in Week 14).
+(IETF ``draft-httpauth-payment-00`` / ``draft-tempo-charge-00``,
+https://paymentauth.org).  Pull mode: the client signs a type-0x76 Tempo
+Transaction; the server broadcasts it.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
-from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 from routewiler.assets import CANONICAL_ADDRESSES, CHAIN_IDS
 from routewiler.assets import human_amount as _human_amount_asset
 from routewiler.errors import (
@@ -46,7 +29,6 @@ from routewiler.normalized import (
     Price,
     ProofType,
     Rail,
-    Resource,
 )
 from routewiler.rails._mpp_http import (
     AUTHORIZATION,
@@ -59,14 +41,10 @@ from routewiler.rails._mpp_http import (
     parse_required_request_fields,
 )
 from routewiler.rails._tempo_tx import tx_hash as tempo_tx_hash
-from routewiler.rails.base import PaymentResult, SettlementInfo
+from routewiler.rails.base import PaymentResult, SettlementInfo, resource_from_request
 
 if TYPE_CHECKING:
     from routewiler.funding import FundingSource
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 
 async def _fetch_nonce(rpc_url: str, address: str) -> int:
@@ -111,11 +89,6 @@ _CHAIN_ID_TO_NETWORK: dict[int, str] = {v: k for k, v in CHAIN_IDS.items() if "t
 _TIP20_SUFFIX = "-tip20"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _tip20_currency_string(contract: str) -> str:
     """Return the Price.currency string for a TIP-20 contract.
 
@@ -135,11 +108,6 @@ def _resolve_contract(network: str, asset: str) -> str | None:
     return CANONICAL_ADDRESSES.get((network, asset))
 
 
-# ---------------------------------------------------------------------------
-# Adapter
-# ---------------------------------------------------------------------------
-
-
 class MppTempoAdapter:
     """MPP-Tempo rail adapter.
 
@@ -153,10 +121,6 @@ class MppTempoAdapter:
 
     def __init__(self, funding_sources: list[TempoFundingSource]) -> None:
         self._funding = funding_sources
-
-    # ------------------------------------------------------------------
-    # RailAdapter protocol
-    # ------------------------------------------------------------------
 
     def can_handle(self, response: httpx.Response) -> bool:
         """Return True for a 402 with ``WWW-Authenticate: Payment method=tempo``."""
@@ -196,11 +160,10 @@ class MppTempoAdapter:
         fee_payer: bool = bool(method_details.get("feePayer", False))
         supported_modes: list[str] = method_details.get("supportedModes", ["pull"])
 
-        # Validate that pull mode is supported (W13 only implements pull)
         if "pull" not in [m.lower() for m in supported_modes]:
             raise ChallengeParseError(
                 f"MPP-Tempo: challenge only offers modes {supported_modes!r}; "
-                "Routewiler W13 requires 'pull' mode"
+                "only 'pull' mode is supported"
             )
 
         expires_at = compute_mpp_expiry(params, challenge_id, rail_prefix="MPP-Tempo")
@@ -212,16 +175,15 @@ class MppTempoAdapter:
         # Determine network name from chain_id
         network = _CHAIN_ID_TO_NETWORK.get(chain_id, f"tempo-chain-{chain_id}")
 
-        # Store all auth-params in raw.extra for round-tripping on the retry
         raw = MppTempoRailRaw(
             kind="mpp-tempo",
             charge_id=challenge_id,
+            auth_params=dict(params),
             extra={
                 "realm": params.get("realm", ""),
                 "intent": params.get("intent", "charge"),
                 "opaque": params.get("opaque", ""),
                 "request_decoded": req,
-                "auth_params": dict(params),
                 "chain_id": chain_id,
                 "fee_payer": fee_payer,
                 "supported_modes": supported_modes,
@@ -231,12 +193,7 @@ class MppTempoAdapter:
 
         return NormalizedChallenge(
             rail="mpp-tempo",
-            resource=Resource(
-                method=request.method,
-                url=str(request.url),
-                url_encoding="raw",
-                original_status=HTTP_STATUS_PAYMENT_REQUIRED,
-            ),
+            resource=resource_from_request(request),
             price=Price(
                 amount=amount,
                 currency=currency_str,
@@ -246,7 +203,7 @@ class MppTempoAdapter:
                 identifier=recipient,
                 metadata={"currency_contract": currency_contract, "chain_id": chain_id},
             ),
-            scheme="exact",  # MPP charge is always exact in W13
+            scheme="exact",
             nonce=challenge_id,  # challenge ID is the cryptographic binding
             expires_at=expires_at,
             raw=raw,
@@ -301,27 +258,25 @@ class MppTempoAdapter:
             NoFundingForRailError:  No ``TempoFundingSource`` matches this challenge.
             MppChargeFailedError:   Signer raised an unexpected error.
         """
-        assert isinstance(challenge.raw, MppTempoRailRaw), (
-            "pay() called with non-MPP-Tempo challenge"
-        )
         _log.debug(
             "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
         )
 
+        tempo_raw = cast(MppTempoRailRaw, challenge.raw)
         source = self.match_funding(challenge, self._funding)
         if source is None:
             raise NoFundingForRailError(
                 f"No TempoFundingSource matches chain_id="
-                f"{challenge.raw.extra.get('chain_id')!r}, "
+                f"{tempo_raw.extra.get('chain_id')!r}, "
                 f"currency={challenge.payee.metadata.get('currency_contract')!r}. "
                 f"Available: {[(f.signer.chain_id, f.asset) for f in self._funding]}"
             )
 
-        req: dict[str, Any] = challenge.raw.extra.get("request_decoded", {})
+        req: dict[str, Any] = tempo_raw.extra.get("request_decoded", {})
         currency_contract: str = req.get("currency", "")
         recipient: str = req.get("recipient", "")
-        chain_id: int = int(challenge.raw.extra["chain_id"])
-        fee_payer: bool = bool(challenge.raw.extra.get("fee_payer", False))
+        chain_id: int = int(tempo_raw.extra["chain_id"])
+        fee_payer: bool = bool(tempo_raw.extra.get("fee_payer", False))
 
         # Compute a validity window from the challenge expiry
         valid_before = int(challenge.expires_at.timestamp())
@@ -342,23 +297,21 @@ class MppTempoAdapter:
             )
         except Exception as exc:
             raise MppChargeFailedError(
-                f"MPP-Tempo signing failed for challenge {challenge.raw.charge_id!r}: {exc}"
+                f"MPP-Tempo signing failed for challenge {tempo_raw.charge_id!r}: {exc}"
             ) from exc
 
         computed_hash = tempo_tx_hash(signed_tx_hex)
 
-        # Build the MPP credential per draft-httpauth-payment-00 / draft-tempo-charge-00
-        auth_params = challenge.raw.extra.get("auth_params", {})
         credential, header_value = build_mpp_credential(
-            challenge_id=challenge.raw.charge_id,
-            auth_params=auth_params,
+            challenge_id=tempo_raw.charge_id,
+            auth_params=tempo_raw.auth_params,
             default_method="tempo",
             payload={"type": "transaction", "signature": signed_tx_hex},
             source=f"did:pkh:eip155:{chain_id}:{source.signer.address}",
         )
 
         persisted: dict[str, Any] = {
-            "charge_id": challenge.raw.charge_id,
+            "charge_id": tempo_raw.charge_id,
             "signed_tx": signed_tx_hex,
             "tx_hash": computed_hash,
             "chain_id": chain_id,
