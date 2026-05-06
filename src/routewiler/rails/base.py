@@ -8,10 +8,21 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import httpx
 
-from routewiler.normalized import NormalizedChallenge, ProofType, Rail
+from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
+from routewiler.normalized import NormalizedChallenge, ProofType, Rail, Resource
 
 if TYPE_CHECKING:
     from routewiler.funding import FundingSource
+
+
+def resource_from_request(request: httpx.Request) -> Resource:
+    """Build the ``Resource`` block common to every adapter's ``parse()``."""
+    return Resource(
+        method=request.method,
+        url=str(request.url),
+        url_encoding="raw",
+        original_status=HTTP_STATUS_PAYMENT_REQUIRED,
+    )
 
 
 @dataclass(frozen=True)
@@ -34,23 +45,19 @@ class SettlementInfo:
 class PaymentResult:
     """Output of ``RailAdapter.pay()``.
 
-    For x402-style adapters the result carries a header to attach to the retry.
-    For L402 (Month 3) ``header_name`` / ``header_value`` are None and
-    ``credential`` carries the persisted ``{macaroon, preimage}`` pair.
-
     Attributes:
         header_name:   HTTP header to set on the retry request (e.g.
-                       ``"PAYMENT-SIGNATURE"`` for x402); ``None`` for
-                       credential-based rails like L402.
-        header_value:  The header string; ``None`` for L402.
+                       ``"PAYMENT-SIGNATURE"`` for x402, ``"Authorization"``
+                       for L402/MPP).
+        header_value:  The header string.
         credential:    Rail-specific persisted credential (e.g.
                        ``{"macaroon": ..., "preimage": ...}`` for L402);
                        ``None`` for x402.
         proof_type:    Category of payment proof produced by this rail.
-        proof_value:   Proof string (preimage hex for L402, set directly in
-                       ``pay()``).  For x402, ``pay()`` sets this to ``None``
-                       and ``emitter._build_payment`` falls back to
-                       ``settlement.tx_hash`` from the PAYMENT-RESPONSE header.
+        proof_value:   Proof string (preimage hex for L402, SPT id for MPP-SPT,
+                       tx hash for MPP-Tempo). For x402, ``pay()`` sets this to
+                       ``None``; the emitter falls back to ``settlement.tx_hash``
+                       from the PAYMENT-RESPONSE header.
     """
 
     header_name: str | None
@@ -112,10 +119,6 @@ class RailAdapter(Protocol):
     ) -> PaymentResult:
         """Execute the payment and return a PaymentResult.
 
-        For x402: signs the EIP-3009 authorization and returns the
-        PAYMENT-SIGNATURE header.  For L402 (Month 3): pays the Lightning
-        invoice and returns the macaroon+preimage credential.
-
         Raises SigningError (or a rail-specific payment error) on failure.
         """
         ...
@@ -126,9 +129,6 @@ class RailAdapter(Protocol):
         response: httpx.Response,
     ) -> SettlementInfo:
         """Read settlement proof from the server's successful reply.
-
-        For x402: decodes the PAYMENT-RESPONSE header into SettlementInfo.
-        For L402: returns a minimal SettlementInfo with the preimage as proof.
 
         When no settlement header is present (mock/testnet), returns a
         SettlementInfo with ``tx_hash=None`` and ``success`` derived from the
