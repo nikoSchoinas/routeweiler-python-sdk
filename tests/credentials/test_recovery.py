@@ -258,3 +258,52 @@ async def test_recoverer_successful_strategy_transitions_to_redeemed(
     final = await store.get(record.credential_id)
     assert final is not None
     assert final.state == CredentialState.REDEEMED
+
+
+# ---------------------------------------------------------------------------
+# Process-crash resume: credential stuck in RECOVERING
+# ---------------------------------------------------------------------------
+
+
+async def test_recoverer_resumes_from_recovering_state(
+    store: CredentialStore,
+) -> None:
+    """A credential already in RECOVERING (e.g. from a prior crash) can reach a terminal state.
+
+    The recoverer must skip the PERSISTED→RECOVERING transition when the credential
+    is already in RECOVERING, then hand it to the strategy so it can exit to REDEEMED
+    or MANUAL_HOLD.  Without the skip, the transition attempt raises
+    InvalidCredentialTransitionError and the credential is permanently jammed.
+    """
+
+    class AlwaysSucceedsStrategy:
+        async def recover(
+            self, credential: CredentialRecord, last_response: httpx.Response | None
+        ) -> RecoveryOutcome:
+            return RecoveryOutcome(succeeded=True, response=None, reason=None)
+
+    recoverer = CredentialRecoverer(
+        store=store,
+        strategy=AlwaysSucceedsStrategy(),
+        emitter=None,
+    )
+
+    record = await store.persist(
+        request_id="r_crash", rail="l402", challenge_url="http://x.com", payload={}
+    )
+    # Simulate a prior crash: manually drive the credential to RECOVERING.
+    await store.transition(record.credential_id, to_state=CredentialState.RECOVERING)
+
+    # Verify the credential is in RECOVERING.
+    stuck = await store.get(record.credential_id)
+    assert stuck is not None
+    assert stuck.state == CredentialState.RECOVERING
+
+    # A second call to attempt_recovery must NOT raise InvalidCredentialTransitionError;
+    # it must resume the strategy and bring the credential to REDEEMED.
+    outcome = await recoverer.attempt_recovery(record.credential_id, last_response=None)
+    assert outcome.succeeded is True
+
+    final = await store.get(record.credential_id)
+    assert final is not None
+    assert final.state == CredentialState.REDEEMED
