@@ -35,7 +35,7 @@ def test_bundled_lightning_shop_has_one_flow_step() -> None:
     step = shape.flow[0]
     assert step.challenge_path == "/checkout/*"
     assert step.fulfil_path_template == "/orders/{order_id}/fulfil"
-    assert step.id_extractor == "path:checkout/([^/]+)"
+    assert step.id_extractor == "path:^/checkout/([^/]+)$"
 
 
 # ---------------------------------------------------------------------------
