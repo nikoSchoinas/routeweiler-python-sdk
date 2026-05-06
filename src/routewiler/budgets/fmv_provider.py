@@ -53,6 +53,7 @@ class CoinGeckoProvider:
         self._timeout = timeout
         self._cache_ttl = cache_ttl_seconds
         self._cache: dict[str, tuple[Decimal, float]] = {}
+        self._client: httpx.AsyncClient | None = None
 
     async def fetch_btc_to(self, currency: str) -> Decimal:
         """Return the per-satoshi rate, e.g. ``Decimal("0.000001")`` for 1 sat = $0.000001."""
@@ -64,19 +65,26 @@ class CoinGeckoProvider:
             if time.monotonic() < expires_at:
                 return rate
 
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self._timeout)
+
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.get(
-                    _COINGECKO_URL,
-                    params={"ids": "bitcoin", "vs_currencies": cur},
-                    headers={"User-Agent": "routewiler/fmv-provider"},
-                )
-                response.raise_for_status()
-                data = response.json()
-                btc_price = Decimal(str(data["bitcoin"][cur]))
+            response = await self._client.get(
+                _COINGECKO_URL,
+                params={"ids": "bitcoin", "vs_currencies": cur},
+                headers={"User-Agent": "routewiler/fmv-provider"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            btc_price = Decimal(str(data["bitcoin"][cur]))
         except Exception as exc:
             raise FmvUnavailableError(f"CoinGecko BTC/{cur.upper()} fetch failed: {exc}") from exc
 
         rate = btc_price / _SATS_PER_BTC
         self._cache[cur] = (rate, time.monotonic() + self._cache_ttl)
         return rate
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
