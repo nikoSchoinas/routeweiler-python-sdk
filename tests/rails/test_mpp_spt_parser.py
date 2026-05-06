@@ -78,7 +78,7 @@ def test_parse_extra_contains_auth_params_echo() -> None:
     assert raw.extra["iso_currency"] == MOCK_CURRENCY
     assert raw.extra["amount"] == int(MOCK_AMOUNT)
     assert raw.extra["recipient"] == MOCK_RECIPIENT
-    assert "auth_params" in raw.extra
+    assert raw.auth_params  # promoted to typed field
 
 
 def test_parse_seller_details_from_method_details() -> None:

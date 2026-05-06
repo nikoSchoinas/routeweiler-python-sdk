@@ -128,11 +128,7 @@ class Funding:
 
     @staticmethod
     def tempo_usdc(*, wallet: LocalAccount) -> TempoFundingSource:
-        """USDC on Tempo mainnet (chain ID 42430).
-
-        Not exercised in Week 13 tests; use ``tempo_pathusd_moderato`` for
-        testnet development.
-        """
+        """USDC on Tempo mainnet (chain ID 42430)."""
         return TempoFundingSource(
             signer=EthAccountTempoSigner(wallet=wallet, chain_id=42430),
             network="tempo",
