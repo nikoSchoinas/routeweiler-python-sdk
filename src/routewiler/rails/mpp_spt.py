@@ -65,7 +65,6 @@ from routewiler.rails._mpp_http import (
 from routewiler.rails.base import PaymentResult, SettlementInfo
 
 if TYPE_CHECKING:
-    from routewiler.budgets.schema import DrawReceipt
     from routewiler.funding import FundingSource
 
 # ---------------------------------------------------------------------------
@@ -73,6 +72,11 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _HANDLED_METHODS = {"stripe", "card"}
+
+# Stripe's documented minimum per-call amount for fiat currencies (minor units).
+# Applies to known fiat ISO codes; leave non-fiat/exotic currencies unchecked.
+_STRIPE_FIAT_MIN_MINOR_UNITS = 50
+_STRIPE_KNOWN_FIATS = {"usd", "eur", "gbp", "cad", "aud", "nzd", "chf", "sek", "dkk", "nok"}
 
 _log = logging.getLogger(__name__)
 
@@ -147,6 +151,11 @@ class MppSptAdapter:
                 f"MPP-SPT: 'currency' must be a 2-4 char ISO-4217 code, got {raw_currency!r}"
             )
         iso_currency = raw_currency.lower()
+        if iso_currency in _STRIPE_KNOWN_FIATS and amount < _STRIPE_FIAT_MIN_MINOR_UNITS:
+            raise ChallengeParseError(
+                f"MPP-SPT: amount {amount} {raw_currency.upper()} is below the minimum "
+                f"{_STRIPE_FIAT_MIN_MINOR_UNITS} minor units required for fiat charges"
+            )
         recipient: str = req["recipient"]
 
         method_details: dict[str, Any] = req.get("methodDetails", {})
@@ -236,7 +245,6 @@ class MppSptAdapter:
     async def pay(
         self,
         challenge: NormalizedChallenge,
-        receipt: DrawReceipt | None = None,
     ) -> PaymentResult:
         """Mint a Stripe SPT and build the MPP credential.
 
