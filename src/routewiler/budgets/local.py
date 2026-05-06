@@ -23,6 +23,7 @@ from routewiler.budgets.fmv_provider import FmvProvider
 from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.receipts import issue as _issue_receipt
 from routewiler.budgets.receipts import uuid7
+from routewiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import (
     BudgetError,
@@ -31,6 +32,7 @@ from routewiler.errors import (
     EnvelopeFrozenError,
     EnvelopeNotFoundError,
     FmvUnavailableError,
+    ReceiptVerificationError,
 )
 from routewiler.normalized import Rail
 
@@ -109,6 +111,8 @@ class BudgetStore:
 
     async def start(self) -> None:
         """Start the reaper background task. Idempotent."""
+        if self._closed:
+            raise RuntimeError("BudgetStore is closed; cannot restart.")
         if self._reaper_task is None or self._reaper_task.done():
             self._reaper_task = asyncio.create_task(self._reap_loop(), name="routewiler-reaper")
 
@@ -141,6 +145,10 @@ class BudgetStore:
             self._reaper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._reaper_task
+        if self._fmv_provider is not None and hasattr(self._fmv_provider, "aclose"):
+            await self._fmv_provider.aclose()
+        if self._ecb_provider is not None and hasattr(self._ecb_provider, "aclose"):
+            await self._ecb_provider.aclose()
         async with self._lock:
             await asyncio.to_thread(self._conn.close)
 
@@ -509,7 +517,7 @@ class BudgetStore:
             conn.execute("COMMIT")
 
             private_key = self._keystore.load(envelope_id)
-            return _issue_receipt(
+            receipt = _issue_receipt(
                 private_key=private_key,
                 public_key_b64=str(pub_key_b64),
                 receipt_id=draw_id,
@@ -522,6 +530,18 @@ class BudgetStore:
                 issued_at=now,
                 expires_at=expires,
             )
+            # Defense-in-depth: verify the receipt against the trusted key in the DB
+            # to catch key-swap attacks before returning the receipt to the caller.
+            try:
+                _verify_against_envelope(receipt, conn)
+            except ReceiptVerificationError:
+                _log.error(
+                    "Receipt '%s' failed key verification; rolling back draw.",
+                    draw_id,
+                )
+                self._rollback_sync(draw_id)
+                raise
+            return receipt
         except Exception:
             try:
                 conn.execute("ROLLBACK")
