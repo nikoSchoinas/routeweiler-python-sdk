@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from routewiler.credentials.recovery import CredentialRecoverer
     from routewiler.credentials.schema import CredentialRecord
     from routewiler.credentials.store import CredentialStore
-    from routewiler.normalized import Rail
+    from routewiler.normalized import NormalizedChallenge, Rail
     from routewiler.rails.base import PaymentResult
     from routewiler.trace.emitter import TraceEmitter
 
@@ -359,7 +359,7 @@ class RoutewilerAuth(httpx.Auth):
         rail: Rail,
         challenge_url: str,
         payment_result: PaymentResult,
-        challenge: Any,
+        challenge: NormalizedChallenge,
     ) -> CredentialRecord | None:
         if payment_result.credential is None or self._credential_store is None:
             return None
