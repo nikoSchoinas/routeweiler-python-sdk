@@ -318,7 +318,9 @@ class L402Adapter:
             PreimageMismatchError:  Node returned a preimage that doesn't match the invoice.
         """
         assert isinstance(challenge.raw, L402RailRaw), "pay() called with non-L402 challenge"
-        _log.debug("pay: nonce=%s amount=%s", challenge.nonce, challenge.price.amount)
+        _log.debug(
+            "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
+        )
 
         bolt11 = challenge.raw.invoice
         macaroon_b64 = challenge.raw.macaroon
@@ -352,6 +354,7 @@ class L402Adapter:
             "preimage_hex": preimage_hex,
             "invoice": bolt11,
             "payment_hash_hex": expected_hash,
+            "amount_paid_sats": challenge.price.amount,
         }
 
         return PaymentResult(
@@ -376,11 +379,9 @@ class L402Adapter:
         _log.debug("confirm: status=%d", response.status_code)
         amount_paid: int | None = None
         if result.credential is not None:
-            try:
-                inv = bolt11_decode(result.credential["invoice"])
-                amount_paid = (inv.amount_msat or 0) // 1000  # sats
-            except Exception:
-                pass
+            raw = result.credential.get("amount_paid_sats")
+            if isinstance(raw, int):
+                amount_paid = raw
 
         return SettlementInfo(
             success=response.is_success,

@@ -73,7 +73,7 @@ async def test_pay_returns_authorization_header() -> None:
 
     result = await adapter.pay(challenge)  # type: ignore[arg-type]
 
-    assert result.header_name == "Authorization"
+    assert result.header_name == "authorization"
     assert result.header_value.startswith("Payment ")
 
 

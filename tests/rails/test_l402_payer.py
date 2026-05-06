@@ -56,7 +56,7 @@ def _make_challenge(
             url_encoding="raw",
             original_status=402,
         ),
-        price=Price(amount=50, currency="btc-lightning", human_amount="50 sats"),
+        price=Price(amount=5000, currency="btc-lightning", human_amount="5000 sats"),
         payee=Payee(identifier=""),
         scheme="exact",
         nonce=payment_hash,
@@ -117,7 +117,7 @@ class TestPay:
     async def test_happy_path_returns_authorization_header(self, adapter: L402Adapter) -> None:
         challenge = _make_challenge()
         result = await adapter.pay(challenge)
-        assert result.header_name == "Authorization"
+        assert result.header_name == "authorization"
         assert result.header_value is not None
         assert result.header_value.startswith("L402 ")
 

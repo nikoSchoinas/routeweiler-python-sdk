@@ -262,7 +262,9 @@ class X402Adapter:
             SigningError:          x402 SDK signing failed.
         """
         assert isinstance(challenge.raw, X402RailRaw), "pay() called with non-x402 challenge"
-        _log.debug("pay: nonce=%s amount=%s", challenge.nonce, challenge.price.amount)
+        _log.debug(
+            "pay: rail=%s nonce=%s amount=%s", self.rail, challenge.nonce, challenge.price.amount
+        )
 
         exact_accepts = [pr for pr in challenge.raw.accepts if pr.scheme == "exact"]
         if _find_match(exact_accepts, self._funding) is None:
