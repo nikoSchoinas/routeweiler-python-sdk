@@ -25,6 +25,22 @@ class PolicyDecision:
     reason: str | None
 
 
+def _default_decision() -> PolicyDecision:
+    """Return the allow-all decision used when no rule matches.
+
+    `prefer` is empty so all capable adapters are considered; the router gives
+    preferred rails a score boost (§7.1), not a hard filter. Only `deny`
+    performs hard exclusion.
+    """
+    return PolicyDecision(
+        rule_name=None,
+        deny=False,
+        prefer=(),
+        max_per_call_minor_units=None,
+        reason=None,
+    )
+
+
 class PolicyEngine:
     """Evaluates a NormalizedChallenge against a PolicyDocument (first-match wins)."""
 
@@ -41,17 +57,7 @@ class PolicyEngine:
                     max_per_call_minor_units=rule.max_per_call_minor_units,
                     reason=rule.reason,
                 )
-        # No rule matched → use the default block.
-        # `prefer` is left empty so all capable adapters are considered; the
-        # router gives preferred rails a privacy-score boost (§7.1), not a
-        # hard filter.  Only `deny` performs hard exclusion.
-        return PolicyDecision(
-            rule_name=None,
-            deny=False,
-            prefer=(),
-            max_per_call_minor_units=None,
-            reason=None,
-        )
+        return _default_decision()
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import httpx
 from routewiler.budgets.fmv import amount_to_envelope_minor_units
 from routewiler.errors import NoFeasibleRailError, PolicyDeniedError, RailNotSupportedError
 from routewiler.normalized import NormalizedChallenge, Rail
-from routewiler.policy.engine import PolicyDecision
+from routewiler.policy.engine import PolicyDecision, _default_decision
 
 if TYPE_CHECKING:
     from routewiler.funding import FundingSource
@@ -52,6 +52,7 @@ DEFAULT_RELIABILITY: dict[str, float] = {
     "mpp-spt": 0.90,
 }
 
+# Fallback for unknown rails; replaced by rolling 24h trace data post-MVP per §7.4.
 _FALLBACK_LATENCY_MS = 5000
 _FALLBACK_RELIABILITY = 0.5
 
@@ -437,13 +438,3 @@ def _fmv_quote(
             envelope_currency,
         )
         return None
-
-
-def _default_decision() -> PolicyDecision:
-    return PolicyDecision(
-        rule_name=None,
-        deny=False,
-        prefer=(),
-        max_per_call_minor_units=None,
-        reason=None,
-    )
