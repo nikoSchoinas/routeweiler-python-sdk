@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +12,13 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.receipts import canonical_payload, issue, uuid7, verify
+from routewiler.budgets.receipts import (
+    canonical_payload,
+    issue,
+    uuid7,
+    verify,
+    verify_against_envelope,
+)
 from routewiler.budgets.schema import DrawReceipt
 from routewiler.errors import ReceiptVerificationError
 
@@ -160,3 +167,67 @@ def test_keystore_issue_and_verify(tmp_path: Path) -> None:
         expires_at=EXPIRES,
     )
     verify(receipt)
+
+
+# ---------------------------------------------------------------------------
+# verify_against_envelope — key-swap attack prevention
+# ---------------------------------------------------------------------------
+
+
+def _make_in_memory_db(envelope_id: str, trusted_pub_b64: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE envelopes (id TEXT PRIMARY KEY, counter_public_key TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO envelopes (id, counter_public_key) VALUES (?, ?)",
+        (envelope_id, trusted_pub_b64),
+    )
+    conn.commit()
+    return conn
+
+
+def test_verify_against_envelope_accepts_matching_key(keypair: tuple) -> None:
+    receipt = _make_receipt(keypair)
+    conn = _make_in_memory_db(receipt.envelope_id, receipt.counter_public_key)
+    verify_against_envelope(receipt, conn)  # must not raise
+
+
+def test_verify_against_envelope_rejects_swapped_key(keypair: tuple) -> None:
+    """Attacker generates a fresh key pair, re-signs the receipt, and presents it.
+
+    verify() alone would accept it because it reads the pubkey from the receipt.
+    verify_against_envelope() must reject it because the DB stores a different trusted key.
+    """
+    receipt = _make_receipt(keypair)
+
+    # Attacker generates their own keypair and re-signs.
+    attacker_key = Ed25519PrivateKey.generate()
+    attacker_pub_b64 = base64.b64encode(attacker_key.public_key().public_bytes_raw()).decode()
+    forged = issue(
+        private_key=attacker_key,
+        public_key_b64=attacker_pub_b64,
+        receipt_id=receipt.receipt_id,
+        envelope_id=receipt.envelope_id,
+        request_id=receipt.request_id,
+        idempotency_key=receipt.idempotency_key,
+        amount_reserved_minor_units=receipt.amount_reserved_minor_units,
+        amount_reserved_currency=receipt.amount_reserved_currency,
+        rail_quoted=receipt.rail_quoted,
+        issued_at=NOW,
+        expires_at=EXPIRES,
+    )
+    # verify() accepts the forged receipt because it reads the pubkey from the receipt itself.
+    verify(forged)
+
+    # verify_against_envelope() must reject it because the DB still holds the original key.
+    conn = _make_in_memory_db(receipt.envelope_id, receipt.counter_public_key)
+    with pytest.raises(ReceiptVerificationError, match="public key mismatch"):
+        verify_against_envelope(forged, conn)
+
+
+def test_verify_against_envelope_raises_on_missing_envelope(keypair: tuple) -> None:
+    receipt = _make_receipt(keypair)
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE envelopes (id TEXT PRIMARY KEY, counter_public_key TEXT NOT NULL)")
+    conn.commit()
+    with pytest.raises(ReceiptVerificationError, match="not found"):
+        verify_against_envelope(receipt, conn)

@@ -7,6 +7,7 @@ from routewiler.budgets.keystore import EnvelopeKeystore
 from routewiler.budgets.local import BudgetStore
 from routewiler.budgets.receipts import issue as issue_receipt
 from routewiler.budgets.receipts import verify as verify_receipt
+from routewiler.budgets.receipts import verify_against_envelope
 from routewiler.budgets.schema import (
     BudgetEnvelope,
     DrawReceipt,
@@ -28,5 +29,6 @@ __all__ = [
     "amount_to_envelope_minor_units",
     "capture_fmv_snapshot",
     "issue_receipt",
+    "verify_against_envelope",
     "verify_receipt",
 ]

@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -126,6 +127,11 @@ def issue(
 def verify(receipt: DrawReceipt) -> None:
     """Verify the Ed25519 signature on a DrawReceipt.
 
+    The public key is read from the receipt itself.  Callers who need protection
+    against a key-swap attack (where an attacker replaces ``counter_public_key``
+    with a different key they control) should use ``verify_against_envelope``
+    instead, which reads the trusted key from the envelope row in the database.
+
     Raises:
         ReceiptVerificationError: Signature is invalid or payload was tampered with.
     """
@@ -142,3 +148,41 @@ def verify(receipt: DrawReceipt) -> None:
         raise ReceiptVerificationError(
             f"Receipt '{receipt.receipt_id}' verification failed: {exc}"
         ) from exc
+
+
+def verify_against_envelope(receipt: DrawReceipt, conn: sqlite3.Connection) -> None:
+    """Verify the receipt signature against the trusted public key in the envelopes table.
+
+    Unlike ``verify()``, this reads ``counter_public_key`` from the database row
+    rather than from the receipt itself, preventing a key-swap attack where an
+    attacker presents a receipt signed by a different key pair.
+
+    Verification is a two-step process:
+    1. Fetch the trusted public key from the ``envelopes`` table.
+    2. Assert the receipt's embedded ``counter_public_key`` matches the trusted key.
+    3. Verify the Ed25519 signature using the trusted key.
+
+    Args:
+        receipt: The DrawReceipt to verify.
+        conn:    A sqlite3.Connection open to the Routewiler DB (same connection
+                 used by ``BudgetStore``).
+
+    Raises:
+        ReceiptVerificationError: Key mismatch, signature invalid, or envelope not found.
+    """
+    row = conn.execute(
+        "SELECT counter_public_key FROM envelopes WHERE id = ?",
+        (receipt.envelope_id,),
+    ).fetchone()
+    if row is None:
+        raise ReceiptVerificationError(
+            f"Receipt '{receipt.receipt_id}': envelope '{receipt.envelope_id}' not found "
+            "in the database — cannot verify against a trusted key."
+        )
+    trusted_pub_b64 = str(row[0])
+    if trusted_pub_b64 != receipt.counter_public_key:
+        raise ReceiptVerificationError(
+            f"Receipt '{receipt.receipt_id}': public key mismatch — "
+            "the receipt's counter_public_key differs from the envelope's trusted key."
+        )
+    verify(receipt)
