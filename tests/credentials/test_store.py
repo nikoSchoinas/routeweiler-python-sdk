@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from routewiler.credentials.schema import CredentialState, ManualHoldReason
-from routewiler.credentials.store import CredentialStore
-from routewiler.errors import CredentialNotFoundError, InvalidCredentialTransitionError
+from routeweiler.credentials.schema import CredentialState, ManualHoldReason
+from routeweiler.credentials.store import CredentialStore
+from routeweiler.errors import CredentialNotFoundError, InvalidCredentialTransitionError
 
 
 def _raw_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]

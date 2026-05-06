@@ -1,11 +1,11 @@
-"""Budget enforcement integration tests — routewiler.get() + x402 mock + SQLite counter.
+"""Budget enforcement integration tests — routeweiler.get() + x402 mock + SQLite counter.
 
 Tests the full stack end-to-end:
     ASGI mock server → 402 → BudgetStore.draw() → X402Adapter.sign() → retry → 200 / 5xx
     → BudgetStore.confirm() / rollback() → TraceEmitter → SqliteTraceSink
 
 These are the milestone tests for Week 4:
-    routewiler.get(...) pays via x402, logs a trace event, and enforces a flat cap.
+    routeweiler.get(...) pays via x402, logs a trace event, and enforces a flat cap.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler import BudgetExceededError, Funding, Routewiler
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import BudgetExceededError, Funding, Routeweiler
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_CHALLENGE_B64, MOCK_TX_HASH
 
 # ---------------------------------------------------------------------------
@@ -56,13 +56,13 @@ def _make_client(
     db_path: Path,
     budget_envelope: str | None = None,
     keystore_root: Path | None = None,
-) -> Routewiler:
-    """Build a Routewiler client backed by the given ASGI transport and DB.
+) -> Routeweiler:
+    """Build a Routeweiler client backed by the given ASGI transport and DB.
 
     Patches the x402 SDK so no on-chain interaction happens.
     """
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    with patch("routewiler.rails.x402.x402Client") as mock_cls:
+    with patch("routeweiler.rails.x402.x402Client") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(
             return_value={
@@ -88,7 +88,7 @@ def _make_client(
         if keystore_root is not None:
             kwargs["keystore_root"] = keystore_root
 
-        client = Routewiler(
+        client = Routeweiler(
             funding=[Funding.base_sepolia_usdc(wallet=test_account)],
             trace_sink=sink,
             **kwargs,  # type: ignore[arg-type]
@@ -122,13 +122,13 @@ def _make_failing_server() -> httpx.ASGITransport:
 # ---------------------------------------------------------------------------
 
 
-async def test_routewiler_get_pays_x402_settles_under_cap(
+async def test_routeweiler_get_pays_x402_settles_under_cap(
     test_account: LocalAccount,
     mock_x402_app: httpx.ASGITransport,
     tmp_trace_db_path: Path,
 ) -> None:
     """
-    MILESTONE: routewiler.get(...) pays via x402, logs a trace event, enforces a flat cap.
+    MILESTONE: routeweiler.get(...) pays via x402, logs a trace event, enforces a flat cap.
 
     One call against the default 10000-cent cap; the mock challenge is 1000 base units
     of Base-Sepolia USDC = 1 cent. Asserts:
@@ -239,7 +239,7 @@ async def test_failed_retry_rolls_back_reservation(
 
     # The call settles the payment signature but the server rejects with 500.
     resp = await client.get("http://mock/protected")
-    # Routewiler still returns the final response to the caller (it's not an exception).
+    # Routeweiler still returns the final response to the caller (it's not an exception).
     assert resp.status_code == 500
 
     draws = _draw_rows(tmp_trace_db_path)

@@ -37,12 +37,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler import Routewiler
-from routewiler.budgets.fmv_provider import CoinGeckoProvider
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.funding.lightning import LightningFundingSource, LndClient
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Routeweiler
+from routeweiler.budgets.fmv_provider import CoinGeckoProvider
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.funding.lightning import LightningFundingSource, LndClient
+from routeweiler.trace.sink_sqlite import TraceSink
 
 pytestmark = pytest.mark.live
 
@@ -101,7 +101,7 @@ def polar_l402_server(polar_merchant_client: LndClient) -> httpx.ASGITransport:
             def _add_invoice() -> tuple[str, str]:
                 invoice_response = client._make_client().add_invoice(  # type: ignore[attr-defined]
                     value=1,
-                    memo="Routewiler Polar live test",
+                    memo="Routeweiler Polar live test",
                 )
                 payment_hash_hex = invoice_response.r_hash.hex()
                 bolt11 = invoice_response.payment_request
@@ -155,7 +155,7 @@ class TestL402LivePolar:
     ) -> None:
         db_path = tmp_path / "polar-test.db"  # type: ignore[operator]
         sink = TraceSink.sqlite(db_path, url_mode="raw")
-        client = Routewiler(funding=[polar_payer_source], trace_sink=sink)
+        client = Routeweiler(funding=[polar_payer_source], trace_sink=sink)
         client._http = httpx.AsyncClient(
             auth=client._http.auth,
             event_hooks=client._http.event_hooks,
@@ -178,8 +178,8 @@ class TestL402LivePolar:
     ) -> None:
         """Live L402 payment draws from a USD envelope, verifying FMV budget enforcement.
 
-        The sats→USD rate is read from ROUTEWILER_TEST_SATS_USD if set (e.g.
-        ``ROUTEWILER_TEST_SATS_USD=0.00065``), otherwise fetched live from CoinGecko.
+        The sats→USD rate is read from ROUTEWEILER_TEST_SATS_USD if set (e.g.
+        ``ROUTEWEILER_TEST_SATS_USD=0.00065``), otherwise fetched live from CoinGecko.
         """
         db_path: Path = tmp_path / "polar-usd-test.db"  # type: ignore[operator]
         keystore_root: Path = tmp_path / "polar-usd-keys"  # type: ignore[operator]
@@ -187,7 +187,7 @@ class TestL402LivePolar:
 
         # Use an env-override rate if provided so CI doesn't need a live CoinGecko call;
         # fall back to real CoinGecko for manual Polar runs.
-        env_rate = os.environ.get("ROUTEWILER_TEST_SATS_USD")
+        env_rate = os.environ.get("ROUTEWEILER_TEST_SATS_USD")
 
         class _StaticProvider:
             async def fetch_btc_to(self, currency: str) -> Decimal:
@@ -206,7 +206,7 @@ class TestL402LivePolar:
         await setup_store.aclose()
 
         sink = TraceSink.sqlite(db_path, url_mode="raw")
-        client = Routewiler(
+        client = Routeweiler(
             funding=[polar_payer_source],
             trace_sink=sink,
             budget_envelope="polar-usd",

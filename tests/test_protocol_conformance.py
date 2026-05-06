@@ -7,11 +7,11 @@ check here keeps side effects out of production import paths.
 
 from __future__ import annotations
 
-from routewiler.rails.base import RailAdapter
-from routewiler.rails.l402 import L402Adapter
-from routewiler.rails.mpp_spt import MppSptAdapter
-from routewiler.rails.mpp_tempo import MppTempoAdapter
-from routewiler.rails.x402 import X402Adapter
+from routeweiler.rails.base import RailAdapter
+from routeweiler.rails.l402 import L402Adapter
+from routeweiler.rails.mpp_spt import MppSptAdapter
+from routeweiler.rails.mpp_tempo import MppTempoAdapter
+from routeweiler.rails.x402 import X402Adapter
 
 
 def test_x402_adapter_satisfies_rail_adapter_protocol() -> None:

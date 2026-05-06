@@ -7,7 +7,7 @@ Exposes three routes:
 The 404 from /checkout/{id} after payment mirrors the incident described at:
   https://refinedelement.com/blog/l402-broke-at-the-worst-possible-moment-here-s-what-we-learned
 
-A naive client would stop here; Routewiler's split-URL recovery consults the
+A naive client would stop here; Routeweiler's split-URL recovery consults the
 lightning-shop manifest and retries at /orders/{id}/fulfil with the same credential.
 """
 

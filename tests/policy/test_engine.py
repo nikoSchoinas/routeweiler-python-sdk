@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from routewiler.normalized import (
+from routeweiler.normalized import (
     L402RailRaw,
     MppTempoRailRaw,
     NormalizedChallenge,
@@ -14,8 +14,8 @@ from routewiler.normalized import (
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routewiler.policy.dsl import PolicyDocument, default_policy
-from routewiler.policy.engine import PolicyEngine
+from routeweiler.policy.dsl import PolicyDocument, default_policy
+from routeweiler.policy.engine import PolicyEngine
 
 # ---------------------------------------------------------------------------
 # Challenge builders

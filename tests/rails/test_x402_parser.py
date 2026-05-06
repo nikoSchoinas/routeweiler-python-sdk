@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from routewiler.errors import ChallengeParseError
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.normalized import NormalizedChallenge, X402RailRaw
-from routewiler.rails.x402 import X402Adapter
+from routeweiler.errors import ChallengeParseError
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.normalized import NormalizedChallenge, X402RailRaw
+from routeweiler.rails.x402 import X402Adapter
 
 
 def _make_request(method: str = "GET", url: str = "https://api.example.com/data") -> httpx.Request:

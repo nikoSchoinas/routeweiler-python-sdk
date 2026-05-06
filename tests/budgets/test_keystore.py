@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.errors import KeystoreAlreadyExistsError, KeystoreNotFoundError
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.errors import KeystoreAlreadyExistsError, KeystoreNotFoundError
 
 
 @pytest.fixture

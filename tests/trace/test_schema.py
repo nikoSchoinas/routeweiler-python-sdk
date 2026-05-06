@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from routewiler.normalized import NormalizedChallenge, X402RailRaw
-from routewiler.trace.schema import (
+from routeweiler.normalized import NormalizedChallenge, X402RailRaw
+from routeweiler.trace.schema import (
     FmvQuality,
     Outcome,
     OutcomeError,

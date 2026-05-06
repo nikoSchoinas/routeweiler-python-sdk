@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tests.fixtures.l402_mock_server import MOCK_PREIMAGE
 
-from routewiler.errors import InvoicePaymentError
+from routeweiler.errors import InvoicePaymentError
 
 
 class FakeLndClient:

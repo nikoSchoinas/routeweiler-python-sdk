@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.errors import BudgetExceededError
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.errors import BudgetExceededError
 
 # Reaper fires every 50 ms in tests — short enough to keep suite fast.
 _FAST_REAPER = 0.05

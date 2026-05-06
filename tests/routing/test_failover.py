@@ -20,17 +20,17 @@ import httpx
 import pytest
 from eth_account import Account
 
-from routewiler._auth import RoutewilerAuth, _make_idempotency_key
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.errors import NoFeasibleRailError
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
-from routewiler.policy.engine import PolicyEngine
-from routewiler.routing.router import Router
-from routewiler.routing.sticky import StickyCache, StickyKey
-from routewiler.trace.emitter import TraceEmitter
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler._auth import RouteweilerAuth, _make_idempotency_key
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.errors import NoFeasibleRailError
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
+from routeweiler.policy.engine import PolicyEngine
+from routeweiler.routing.router import Router
+from routeweiler.routing.sticky import StickyCache, StickyKey
+from routeweiler.trace.emitter import TraceEmitter
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.mock_rail import MockRailAdapter
 
 
@@ -112,7 +112,7 @@ def _build_auth(
     db_path: Path,
     *,
     policy_engine: PolicyEngine | None = None,
-) -> tuple[RoutewilerAuth, StickyCache]:
+) -> tuple[RouteweilerAuth, StickyCache]:
     key = EnvelopeKeystore(root=db_path.parent / "keys")
     store = BudgetStore(db_path, key)
     currency = store.get_envelope_currency_sync("default")
@@ -131,7 +131,7 @@ def _build_auth(
     account = Account.from_key("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
     funding = [EvmFundingSource(wallet=account, network="base-sepolia", asset="usdc")]
 
-    auth = RoutewilerAuth(
+    auth = RouteweilerAuth(
         router=router,
         sticky_cache=sticky,
         funding=funding,

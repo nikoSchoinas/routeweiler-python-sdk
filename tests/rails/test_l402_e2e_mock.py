@@ -7,7 +7,7 @@ Covers the full round-trip:
 No real Lightning node required — a FakeLndClient returns a deterministic
 preimage that the mock server validates.
 
-Follows the same pattern as test_x402_e2e_mock.py: Routewiler is constructed
+Follows the same pattern as test_x402_e2e_mock.py: Routeweiler is constructed
 first, then the httpx transport is swapped to the in-process ASGI server.
 """
 
@@ -22,10 +22,10 @@ import pytest
 import respx
 from eth_account import Account
 
-from routewiler import Funding, Routewiler
-from routewiler.errors import NoFeasibleRailError, RailNotSupportedError
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Funding, Routeweiler
+from routeweiler.errors import NoFeasibleRailError, RailNotSupportedError
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import MOCK_PREIMAGE, MOCK_WWW_AUTHENTICATE, mock_l402_app
 
@@ -41,14 +41,14 @@ def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
 def _make_l402_client(
     transport: httpx.ASGITransport,
     db_path: Path,
-) -> Routewiler:
+) -> Routeweiler:
     source = LightningFundingSource(
         client=FakeLndClient(preimage=MOCK_PREIMAGE),
         network="bitcoin-regtest",
         node_pubkey="03" + "ab" * 32,
     )
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    client = Routewiler(funding=[source], trace_sink=sink)
+    client = Routeweiler(funding=[source], trace_sink=sink)
     client._http = httpx.AsyncClient(
         auth=client._http.auth,
         event_hooks=client._http.event_hooks,
@@ -132,7 +132,7 @@ async def test_wrong_preimage_exhausts_rails(
         node_pubkey="03" + "ab" * 32,
     )
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
-    client = Routewiler(funding=[source], trace_sink=sink)
+    client = Routeweiler(funding=[source], trace_sink=sink)
     client._http = httpx.AsyncClient(
         auth=client._http.auth,
         event_hooks=client._http.event_hooks,
@@ -157,7 +157,7 @@ async def test_l402_challenge_without_lightning_funding_raises(
     key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     wallet = Account.from_key(key)
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
-    client = Routewiler(
+    client = Routeweiler(
         funding=[Funding.base_sepolia_usdc(wallet=wallet)],
         trace_sink=sink,
     )

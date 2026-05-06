@@ -1,8 +1,8 @@
-"""Tests for the Routewiler exception hierarchy."""
+"""Tests for the Routeweiler exception hierarchy."""
 
 import pytest
 
-from routewiler.errors import (
+from routeweiler.errors import (
     BudgetError,
     BudgetExceededError,
     ChallengeExpiredError,
@@ -22,14 +22,14 @@ from routewiler.errors import (
     RailNotSupportedError,
     RailParsingError,
     ReceiptVerificationError,
-    RoutewilerError,
+    RouteweilerError,
     SigningError,
     SptCreationError,
 )
 
 
 def test_hierarchy():
-    assert issubclass(PaymentError, RoutewilerError)
+    assert issubclass(PaymentError, RouteweilerError)
     assert issubclass(RailNotSupportedError, PaymentError)
     assert issubclass(ChallengeParseError, PaymentError)
     assert issubclass(SigningError, PaymentError)
@@ -74,7 +74,7 @@ def test_intermediate_base_classes():
 
 def test_all_are_exceptions():
     for cls in (
-        RoutewilerError,
+        RouteweilerError,
         PaymentError,
         RailNotSupportedError,
         ChallengeParseError,
@@ -85,7 +85,7 @@ def test_all_are_exceptions():
 
 
 def test_raise_and_catch_base():
-    with pytest.raises(RoutewilerError):
+    with pytest.raises(RouteweilerError):
         raise ChallengeParseError("bad header")
 
 

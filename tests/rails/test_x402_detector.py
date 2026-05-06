@@ -3,8 +3,8 @@
 import httpx
 import pytest
 
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.rails.x402 import X402Adapter
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.rails.x402 import X402Adapter
 
 
 def _make_response(status: int, headers: dict | None = None) -> httpx.Response:

@@ -8,11 +8,11 @@ import httpx
 import pytest
 import respx
 
-from routewiler.budgets.fmv import capture_fmv_snapshot
-from routewiler.budgets.fmv_provider import _COINGECKO_URL, CoinGeckoProvider, FmvProvider
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.errors import FmvUnavailableError
+from routeweiler.budgets.fmv import capture_fmv_snapshot
+from routeweiler.budgets.fmv_provider import _COINGECKO_URL, CoinGeckoProvider, FmvProvider
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.errors import FmvUnavailableError
 
 # ---------------------------------------------------------------------------
 # StubFmvProvider — test double used in other test modules too

@@ -19,10 +19,10 @@ from typing import Any
 
 import pytest
 
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.budgets.schema import DrawReceipt
-from routewiler.errors import BudgetError, BudgetExceededError
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.budgets.schema import DrawReceipt
+from routeweiler.errors import BudgetError, BudgetExceededError
 
 # ---------------------------------------------------------------------------
 # Fixtures

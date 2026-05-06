@@ -19,12 +19,12 @@ from pathlib import Path
 
 import httpx
 
-from routewiler import Routewiler
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.errors import FmvUnavailableError
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Routeweiler
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.errors import FmvUnavailableError
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import MOCK_PREIMAGE, mock_l402_app
 
@@ -81,8 +81,8 @@ async def _make_usd_envelope_client(
     transport: httpx.ASGITransport,
     db_path: Path,
     keystore_root: Path,
-) -> Routewiler:
-    """Build a Routewiler client wired to a USD envelope seeded with sats rates.
+) -> Routeweiler:
+    """Build a Routeweiler client wired to a USD envelope seeded with sats rates.
 
     Creates the ``research-usd`` envelope via a BudgetStore with a stub FMV
     provider so the sats→USD snapshot is persisted before the client reads it.
@@ -108,7 +108,7 @@ async def _make_usd_envelope_client(
     )
     sink = TraceSink.sqlite(db_path, url_mode="raw")
 
-    client = Routewiler(
+    client = Routeweiler(
         funding=[source],
         trace_sink=sink,
         budget_envelope=_ENVELOPE_ID,

@@ -21,10 +21,10 @@ import pytest
 import respx
 from eth_account import Account
 
-from routewiler import Funding, Routewiler
-from routewiler.errors import RailNotSupportedError
-from routewiler.funding.tempo import TempoFundingSource
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Funding, Routeweiler
+from routeweiler.errors import RailNotSupportedError
+from routeweiler.funding.tempo import TempoFundingSource
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_tempo import FakeTempoSigner
 from tests.fixtures.mpp_tempo_mock_server import (
     MOCK_CHAIN_ID,
@@ -48,11 +48,11 @@ def _make_mpp_client(
     *,
     address: str = "0xTestAddress" + "00" * 14,
     chain_id: int = MOCK_CHAIN_ID,
-) -> Routewiler:
+) -> Routeweiler:
     signer = FakeTempoSigner(address=address, chain_id=chain_id)
     source = TempoFundingSource(signer=signer, network="tempo-moderato", asset=MOCK_TOKEN)
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    client = Routewiler(funding=[source], trace_sink=sink)
+    client = Routeweiler(funding=[source], trace_sink=sink)
     client._http = httpx.AsyncClient(
         auth=client._http.auth,
         event_hooks=client._http.event_hooks,
@@ -130,7 +130,7 @@ async def test_mpp_challenge_without_tempo_funding_raises(
     key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
     wallet = Account.from_key(key)
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
-    client = Routewiler(
+    client = Routeweiler(
         funding=[Funding.base_sepolia_usdc(wallet=wallet)],
         trace_sink=sink,
     )

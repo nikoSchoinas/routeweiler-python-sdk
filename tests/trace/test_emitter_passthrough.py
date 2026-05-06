@@ -9,8 +9,8 @@ from pathlib import Path
 
 import httpx
 
-from routewiler.trace.emitter import TraceEmitter
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler.trace.emitter import TraceEmitter
+from routeweiler.trace.sink_sqlite import TraceSink
 
 
 def _rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]

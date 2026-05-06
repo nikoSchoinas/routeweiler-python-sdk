@@ -1,7 +1,7 @@
 """Integration tests: policy enforcement in the auth flow.
 
 Verifies that `deny: true` and `max_per_call_minor_units` are enforced by
-RoutewilerAuth before any budget draw is attempted.
+RouteweilerAuth before any budget draw is attempted.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from routewiler import Routewiler
-from routewiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.policy.dsl import PolicyFile
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Routeweiler
+from routeweiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.policy.dsl import PolicyFile
+from routeweiler.trace.sink_sqlite import TraceSink
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,9 +46,9 @@ def _make_client(
     db_path: Path,
     *,
     policy: PolicyFile | None = None,
-) -> Routewiler:
+) -> Routeweiler:
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    with patch("routewiler.rails.x402.x402Client") as mock_cls:
+    with patch("routeweiler.rails.x402.x402Client") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(
             return_value={
@@ -68,7 +68,7 @@ def _make_client(
         )
         mock_cls.return_value = mock_instance
 
-        client = Routewiler(
+        client = Routeweiler(
             funding=[EvmFundingSource(wallet=test_account, network="base-sepolia", asset="usdc")],
             trace_sink=sink,
             policy=policy,

@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from routewiler.errors import ChallengeExpiredError, ChallengeParseError
-from routewiler.normalized import L402RailRaw
-from routewiler.rails.l402 import L402Adapter
+from routeweiler.errors import ChallengeExpiredError, ChallengeParseError
+from routeweiler.normalized import L402RailRaw
+from routeweiler.rails.l402 import L402Adapter
 from tests.fixtures.l402_mock_server import (
     MOCK_BOLT11,
     MOCK_MACAROON_B64,

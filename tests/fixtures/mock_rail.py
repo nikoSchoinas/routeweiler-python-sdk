@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import httpx
 
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.normalized import (
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.normalized import (
     NormalizedChallenge,
     Payee,
     Price,
@@ -20,7 +20,7 @@ from routewiler.normalized import (
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routewiler.rails.base import PaymentResult, RailAdapter, SettlementInfo
+from routeweiler.rails.base import PaymentResult, RailAdapter, SettlementInfo
 
 # Sentinel object returned by match_funding when the test does not supply a real
 # EvmFundingSource.  The router only checks truthiness (None vs. non-None), so

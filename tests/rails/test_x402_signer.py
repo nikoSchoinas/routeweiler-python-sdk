@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from routewiler.errors import SigningError
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.normalized import NormalizedChallenge, X402PaymentRequirements, X402RailRaw
-from routewiler.rails.x402 import X402Adapter
+from routeweiler.errors import SigningError
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.normalized import NormalizedChallenge, X402PaymentRequirements, X402RailRaw
+from routeweiler.rails.x402 import X402Adapter
 from tests.fixtures.fake_x402_client import FakeX402Client
 
 _PR_CAMEL = {

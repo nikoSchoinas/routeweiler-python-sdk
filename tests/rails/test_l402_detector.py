@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from routewiler.rails.l402 import L402Adapter
+from routeweiler.rails.l402 import L402Adapter
 
 
 def _make_response(status: int, www_auth: str = "") -> httpx.Response:

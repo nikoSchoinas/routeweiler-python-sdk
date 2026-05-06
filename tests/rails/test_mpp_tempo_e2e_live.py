@@ -4,13 +4,13 @@ SKIPPED by default. Run with:
     hatch run test-live tests/rails/test_mpp_tempo_e2e_live.py
 
 Required environment variables:
-    ROUTEWILER_TEST_TEMPO_PRIVATE_KEY   Hex private key for a Moderato-funded wallet.
-    ROUTEWILER_TEST_TEMPO_RECIPIENT     Recipient address on Moderato (receives the test payment).
+    ROUTEWEILER_TEST_TEMPO_PRIVATE_KEY   Hex private key for a Moderato-funded wallet.
+    ROUTEWEILER_TEST_TEMPO_RECIPIENT     Recipient address on Moderato (receives the test payment).
 
 Optional environment variables:
-    ROUTEWILER_TEST_TEMPO_RPC           Tempo Moderato RPC endpoint.
+    ROUTEWEILER_TEST_TEMPO_RPC           Tempo Moderato RPC endpoint.
                                         Defaults to https://rpc.moderato.tempo.xyz
-    ROUTEWILER_TEST_TEMPO_TOKEN         PathUSD contract on Moderato.
+    ROUTEWEILER_TEST_TEMPO_TOKEN         PathUSD contract on Moderato.
                                         Defaults to 0x20c0000000000000000000000000000000000000
 
 Funding a Moderato testnet wallet:
@@ -54,14 +54,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler import Routewiler
-from routewiler.funding import Funding
-from routewiler.rails._mpp_http import (
+from routeweiler import Routeweiler
+from routeweiler.funding import Funding
+from routeweiler.rails._mpp_http import (
     b64url_decode,
     b64url_encode,
     jcs_encode,
 )
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler.trace.sink_sqlite import TraceSink
 
 pytestmark = pytest.mark.live
 
@@ -108,7 +108,7 @@ def _build_merchant_app(
         "amount": _PAYMENT_AMOUNT,
         "currency": token,
         "recipient": recipient,
-        "description": "Routewiler live testnet smoke test",
+        "description": "Routeweiler live testnet smoke test",
         "methodDetails": {
             "chainId": _CHAIN_ID,
             "feePayer": False,
@@ -120,7 +120,7 @@ def _build_merchant_app(
     request_b64 = b64url_encode(jcs_encode(request_json))
     www_auth = (
         f'Payment id="{charge_id}", '
-        f'realm="live.routewiler.test", '
+        f'realm="live.routeweiler.test", '
         f'method="tempo", '
         f'intent="charge", '
         f'request="{request_b64}", '
@@ -219,22 +219,22 @@ def _build_merchant_app(
 @pytest.mark.live
 async def test_mpp_tempo_live_moderato(tmp_path: Path) -> None:
     """Pay 0.001 PathUSD via MPP-Tempo on Tempo Moderato testnet; assert trace."""
-    private_key = os.environ.get("ROUTEWILER_TEST_TEMPO_PRIVATE_KEY")
-    recipient = os.environ.get("ROUTEWILER_TEST_TEMPO_RECIPIENT")
-    rpc_url = os.environ.get("ROUTEWILER_TEST_TEMPO_RPC", _DEFAULT_RPC)
-    token = os.environ.get("ROUTEWILER_TEST_TEMPO_TOKEN", _DEFAULT_TOKEN)
+    private_key = os.environ.get("ROUTEWEILER_TEST_TEMPO_PRIVATE_KEY")
+    recipient = os.environ.get("ROUTEWEILER_TEST_TEMPO_RECIPIENT")
+    rpc_url = os.environ.get("ROUTEWEILER_TEST_TEMPO_RPC", _DEFAULT_RPC)
+    token = os.environ.get("ROUTEWEILER_TEST_TEMPO_TOKEN", _DEFAULT_TOKEN)
 
     if not private_key:
-        pytest.skip("ROUTEWILER_TEST_TEMPO_PRIVATE_KEY not set — cannot run live test.")
+        pytest.skip("ROUTEWEILER_TEST_TEMPO_PRIVATE_KEY not set — cannot run live test.")
     if not recipient:
-        pytest.skip("ROUTEWILER_TEST_TEMPO_RECIPIENT not set — cannot run live test.")
+        pytest.skip("ROUTEWEILER_TEST_TEMPO_RECIPIENT not set — cannot run live test.")
 
     wallet = Account.from_key(private_key)
     funding_source = Funding.tempo_pathusd_moderato(wallet=wallet)
 
     db_path = tmp_path / "tempo-live.db"
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    client = Routewiler(funding=[funding_source], trace_sink=sink)
+    client = Routeweiler(funding=[funding_source], trace_sink=sink)
 
     merchant = _build_merchant_app(recipient=recipient, token=token, rpc_url=rpc_url)
     client._http = httpx.AsyncClient(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from routewiler.rails.mpp_tempo import MppTempoAdapter
+from routeweiler.rails.mpp_tempo import MppTempoAdapter
 from tests.fixtures.mpp_tempo_mock_server import MOCK_WWW_AUTHENTICATE
 
 _adapter = MppTempoAdapter([])

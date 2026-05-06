@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from routewiler.credentials.recovery import (
+from routeweiler.credentials.recovery import (
     CredentialRecoverer,
     NoOpRecoveryStrategy,
     RecoveryOutcome,
     RecoveryStrategy,
 )
-from routewiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
-from routewiler.credentials.store import CredentialStore
+from routeweiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
+from routeweiler.credentials.store import CredentialStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

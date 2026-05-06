@@ -11,16 +11,16 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.receipts import (
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.receipts import (
     canonical_payload,
     issue,
     uuid7,
     verify,
     verify_against_envelope,
 )
-from routewiler.budgets.schema import DrawReceipt
-from routewiler.errors import ReceiptVerificationError
+from routeweiler.budgets.schema import DrawReceipt
+from routeweiler.errors import ReceiptVerificationError
 
 NOW = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)
 EXPIRES = NOW + timedelta(seconds=150)

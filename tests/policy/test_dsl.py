@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from routewiler.policy.dsl import (
+from routeweiler.policy.dsl import (
     PolicyDocument,
     PolicyFile,
     compute_policy_hash,

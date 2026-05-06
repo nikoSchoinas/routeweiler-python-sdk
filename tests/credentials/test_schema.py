@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from routewiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
+from routeweiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
 
 
 def _make_record(**overrides: object) -> CredentialRecord:

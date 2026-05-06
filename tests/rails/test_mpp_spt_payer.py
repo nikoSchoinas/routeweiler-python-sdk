@@ -13,14 +13,14 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from routewiler.errors import MppReceiptVerificationError, NoFundingForRailError, SptCreationError
-from routewiler.funding.stripe import StripeFundingSource
-from routewiler.normalized import MppSptRailRaw, NormalizedChallenge, Payee, Price, Resource
-from routewiler.rails._mpp_http import (
+from routeweiler.errors import MppReceiptVerificationError, NoFundingForRailError, SptCreationError
+from routeweiler.funding.stripe import StripeFundingSource
+from routeweiler.normalized import MppSptRailRaw, NormalizedChallenge, Payee, Price, Resource
+from routeweiler.rails._mpp_http import (
     b64url_decode,
     build_payment_receipt,
 )
-from routewiler.rails.mpp_spt import MppSptAdapter
+from routeweiler.rails.mpp_spt import MppSptAdapter
 from tests.fixtures.fake_stripe import FAKE_SPT_ID, FakeSptCreator
 from tests.fixtures.mpp_spt_mock_server import (
     MOCK_AMOUNT,

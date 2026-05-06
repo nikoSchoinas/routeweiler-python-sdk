@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler.rails._mpp_http import (
+from routeweiler.rails._mpp_http import (
     b64url_decode,
     b64url_encode,
     build_payment_receipt,
@@ -63,7 +63,7 @@ MOCK_EXPIRES = "2099-12-31T23:59:59Z"
 
 MOCK_WWW_AUTHENTICATE = (
     f'Payment id="{MOCK_CHARGE_ID}", '
-    f'realm="mock.routewiler.test", '
+    f'realm="mock.routeweiler.test", '
     f'method="tempo", '
     f'intent="charge", '
     f'request="{MOCK_REQUEST_B64}", '

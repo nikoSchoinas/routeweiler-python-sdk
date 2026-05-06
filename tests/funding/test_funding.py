@@ -3,7 +3,7 @@
 import pytest
 from eth_account.signers.local import LocalAccount
 
-from routewiler.funding import EvmFundingSource, Funding
+from routeweiler.funding import EvmFundingSource, Funding
 
 
 def test_base_usdc_returns_evm_source(test_account: LocalAccount) -> None:

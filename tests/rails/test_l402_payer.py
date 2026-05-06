@@ -8,11 +8,11 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from routewiler.errors import InvoicePaymentError, NoFundingForRailError, PreimageMismatchError
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.normalized import L402RailRaw, NormalizedChallenge, Payee, Price, Resource
-from routewiler.rails.l402 import L402Adapter
+from routeweiler.errors import InvoicePaymentError, NoFundingForRailError, PreimageMismatchError
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.normalized import L402RailRaw, NormalizedChallenge, Payee, Price, Resource
+from routeweiler.rails.l402 import L402Adapter
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import (
     MOCK_BOLT11,

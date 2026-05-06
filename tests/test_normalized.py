@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from routewiler.normalized import (
+from routeweiler.normalized import (
     L402RailRaw,
     MppSptRailRaw,
     MppTempoRailRaw,
@@ -201,8 +201,8 @@ def test_discriminator_mpp_spt() -> None:
 
 def test_discriminator_mpp_spt_with_full_parser_output() -> None:
     """Round-trip a NormalizedChallenge as produced by MppSptAdapter.parse()."""
-    from routewiler.rails._mpp_http import b64url_encode, jcs_encode  # noqa: PLC0415
-    from routewiler.rails.mpp_spt import MppSptAdapter  # noqa: PLC0415
+    from routeweiler.rails._mpp_http import b64url_encode, jcs_encode  # noqa: PLC0415
+    from routeweiler.rails.mpp_spt import MppSptAdapter  # noqa: PLC0415
 
     req_json = {
         "amount": "500",

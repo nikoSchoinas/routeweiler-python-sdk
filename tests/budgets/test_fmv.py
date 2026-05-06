@@ -7,12 +7,12 @@ from decimal import Decimal
 
 import pytest
 
-from routewiler.budgets.fmv import (
+from routeweiler.budgets.fmv import (
     amount_to_envelope_minor_units,
     capture_fmv_snapshot,
     ecb_rate,
 )
-from routewiler.errors import FmvUnavailableError
+from routeweiler.errors import FmvUnavailableError
 
 _USDC_BASE = "eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 _USDC_SEPOLIA = "eip155:84532/erc20:0x036cbd53842c5426634e7929541ec2318f3dcf7e"
@@ -127,7 +127,7 @@ def test_offline_fallback_emits_warning_in_resolve_rate(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """_resolve_rate emits a WARNING when it falls back to the offline ECB dict."""
-    with caplog.at_level(logging.WARNING, logger="routewiler.budgets.fmv"):
+    with caplog.at_level(logging.WARNING, logger="routeweiler.budgets.fmv"):
         # Pass no snapshot_rates so _resolve_rate must use offline fallback.
         result, quality = amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur")
     assert result == 97
@@ -138,7 +138,7 @@ def test_offline_fallback_emits_warning_in_resolve_rate(
 def test_no_warning_when_snapshot_has_rate(caplog: pytest.LogCaptureFixture) -> None:
     """No offline-fallback warning when the snapshot already contains the rate."""
     rates = {"usd->eur": Decimal("0.92")}
-    with caplog.at_level(logging.WARNING, logger="routewiler.budgets.fmv"):
+    with caplog.at_level(logging.WARNING, logger="routeweiler.budgets.fmv"):
         amount_to_envelope_minor_units(_USDC_BASE, 1_000_000, "eur", snapshot_rates=rates)
     assert not any("offline ECB fallback" in r.message for r in caplog.records)
 

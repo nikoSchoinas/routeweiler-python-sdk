@@ -22,7 +22,7 @@ import time
 
 import pytest
 
-from routewiler.funding.stripe import StripeSptCreator
+from routeweiler.funding.stripe import StripeSptCreator
 
 
 @pytest.mark.live

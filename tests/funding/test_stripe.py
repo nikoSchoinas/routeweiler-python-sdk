@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from routewiler.funding import Funding
-from routewiler.funding.stripe import SptCreator, StripeFundingSource, StripeSptCreator
+from routeweiler.funding import Funding
+from routeweiler.funding.stripe import SptCreator, StripeFundingSource, StripeSptCreator
 from tests.fixtures.fake_stripe import FAKE_SPT_ID, FakeSptCreator
 
 # ---------------------------------------------------------------------------

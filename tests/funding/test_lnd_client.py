@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from routewiler.errors import InvoicePaymentError
-from routewiler.funding.lightning import _LND_STATUS_FAILED, _LND_STATUS_SUCCEEDED, LndClient
+from routeweiler.errors import InvoicePaymentError
+from routeweiler.funding.lightning import _LND_STATUS_FAILED, _LND_STATUS_SUCCEEDED, LndClient
 
 # ---------------------------------------------------------------------------
 # Helpers

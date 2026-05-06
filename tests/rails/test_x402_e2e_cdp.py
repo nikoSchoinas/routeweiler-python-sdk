@@ -4,9 +4,9 @@ SKIPPED by default. Run with:
     hatch run test-live tests/test_x402_e2e_cdp.py
 
 Required environment variables:
-    ROUTEWILER_TEST_PRIVATE_KEY          Base-Sepolia wallet with ≥0.001 testnet USDC.
-    ROUTEWILER_TEST_MERCHANT_RECIPIENT   Base-Sepolia address that receives the 0.0001 USDC.
-    ROUTEWILER_TEST_FACILITATOR_URL      (optional) defaults to https://x402.org/facilitator
+    ROUTEWEILER_TEST_PRIVATE_KEY          Base-Sepolia wallet with ≥0.001 testnet USDC.
+    ROUTEWEILER_TEST_MERCHANT_RECIPIENT   Base-Sepolia address that receives the 0.0001 USDC.
+    ROUTEWEILER_TEST_FACILITATOR_URL      (optional) defaults to https://x402.org/facilitator
 
 Funding a Base-Sepolia test wallet:
     1. ETH for gas: https://www.alchemy.com/faucets/ethereum-sepolia (bridge from Sepolia)
@@ -40,8 +40,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler import Funding, Routewiler
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Funding, Routeweiler
+from routeweiler.trace.sink_sqlite import TraceSink
 
 # ---------------------------------------------------------------------------
 # Pytest marker
@@ -84,7 +84,7 @@ def _build_merchant_app(
                     "network": "base-sepolia",
                     "maxAmountRequired": _PAYMENT_AMOUNT,
                     "resource": "http://testmerchant/paid",
-                    "description": "Live Routewiler testnet smoke test",
+                    "description": "Live Routeweiler testnet smoke test",
                     "mimeType": "application/json",
                     "payTo": recipient,
                     "maxTimeoutSeconds": 120,
@@ -160,14 +160,14 @@ def _build_merchant_app(
 @pytest.mark.live
 async def test_x402_live_cdp_base_sepolia(tmp_path: Path) -> None:
     """Pay 0.0001 testnet USDC via x402.org Base-Sepolia facilitator; assert trace."""
-    private_key = os.environ.get("ROUTEWILER_TEST_PRIVATE_KEY")
-    recipient = os.environ.get("ROUTEWILER_TEST_MERCHANT_RECIPIENT")
-    facilitator_url = os.environ.get("ROUTEWILER_TEST_FACILITATOR_URL", _DEFAULT_FACILITATOR)
+    private_key = os.environ.get("ROUTEWEILER_TEST_PRIVATE_KEY")
+    recipient = os.environ.get("ROUTEWEILER_TEST_MERCHANT_RECIPIENT")
+    facilitator_url = os.environ.get("ROUTEWEILER_TEST_FACILITATOR_URL", _DEFAULT_FACILITATOR)
 
     if not private_key:
-        pytest.skip("ROUTEWILER_TEST_PRIVATE_KEY not set — cannot run live test.")
+        pytest.skip("ROUTEWEILER_TEST_PRIVATE_KEY not set — cannot run live test.")
     if not recipient:
-        pytest.skip("ROUTEWILER_TEST_MERCHANT_RECIPIENT not set — cannot run live test.")
+        pytest.skip("ROUTEWEILER_TEST_MERCHANT_RECIPIENT not set — cannot run live test.")
 
     wallet = Account.from_key(private_key)
     merchant_app = _build_merchant_app(facilitator_url, recipient)
@@ -175,7 +175,7 @@ async def test_x402_live_cdp_base_sepolia(tmp_path: Path) -> None:
 
     db_path = tmp_path / "live-traces.db"
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    client = Routewiler(
+    client = Routeweiler(
         funding=[Funding.base_sepolia_usdc(wallet=wallet)],
         trace_sink=sink,
     )

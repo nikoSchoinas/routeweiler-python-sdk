@@ -8,13 +8,13 @@ import httpx
 import pytest
 import respx
 
-from routewiler.budgets.ecb_provider import (
+from routeweiler.budgets.ecb_provider import (
     EcbRateProvider,
     LiveEcbProvider,
     _cross_rate,
     _parse_ecb_xml,
 )
-from routewiler.errors import FmvUnavailableError
+from routeweiler.errors import FmvUnavailableError
 
 # Minimal ECB XML response with three currencies.
 _ECB_NS = "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"

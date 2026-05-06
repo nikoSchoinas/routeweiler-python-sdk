@@ -9,7 +9,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from routewiler.rails.mpp_spt import MppSptAdapter
+from routeweiler.rails.mpp_spt import MppSptAdapter
 from tests.fixtures.mpp_spt_mock_server import MOCK_WWW_AUTHENTICATE
 
 
@@ -90,7 +90,7 @@ def test_ignores_unknown_method() -> None:
 @pytest.mark.parametrize("method", ["stripe", "card"])
 def test_tempo_adapter_rejects_spt_methods(method: str) -> None:
     """Ensure MppTempoAdapter does NOT accept stripe/card (regression guard)."""
-    from routewiler.rails.mpp_tempo import MppTempoAdapter  # noqa: PLC0415
+    from routeweiler.rails.mpp_tempo import MppTempoAdapter  # noqa: PLC0415
 
     adapter = MppTempoAdapter([])
     resp = _make_402(f'Payment id="x", method="{method}", request="eyJ..."')

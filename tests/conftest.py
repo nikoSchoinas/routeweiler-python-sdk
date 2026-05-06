@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the Routewiler test suite."""
+"""Shared pytest fixtures for the Routeweiler test suite."""
 
 from __future__ import annotations
 
@@ -26,13 +26,13 @@ except ModuleNotFoundError:
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 
-from routewiler.budgets.keystore import EnvelopeKeystore
-from routewiler.budgets.local import BudgetStore
-from routewiler.credentials.recovery import CredentialRecoverer, NoOpRecoveryStrategy
-from routewiler.credentials.store import CredentialStore
-from routewiler.funding.evm import EvmFundingSource
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
+from routeweiler.budgets.keystore import EnvelopeKeystore
+from routeweiler.budgets.local import BudgetStore
+from routeweiler.credentials.recovery import CredentialRecoverer, NoOpRecoveryStrategy
+from routeweiler.credentials.store import CredentialStore
+from routeweiler.funding.evm import EvmFundingSource
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import MOCK_PREIMAGE
 from tests.fixtures.l402_mock_server import mock_l402_app as _mock_l402_app

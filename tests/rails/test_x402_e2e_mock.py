@@ -19,10 +19,10 @@ import httpx
 import pytest
 import respx
 
-from routewiler import Funding, Routewiler
-from routewiler.errors import RailNotSupportedError
-from routewiler.policy.dsl import compute_policy_hash, default_policy
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Funding, Routeweiler
+from routeweiler.errors import RailNotSupportedError
+from routeweiler.policy.dsl import compute_policy_hash, default_policy
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_TX_HASH
 
 _DEFAULT_POLICY_HASH = compute_policy_hash(default_policy())
@@ -44,9 +44,9 @@ def _make_client(
     test_account,  # type: ignore[no-untyped-def]
     transport: httpx.ASGITransport,
     db_path: Path,
-) -> Routewiler:
+) -> Routeweiler:
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    with patch("routewiler.rails.x402.x402Client") as mock_cls:
+    with patch("routeweiler.rails.x402.x402Client") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(
             return_value={
@@ -66,7 +66,7 @@ def _make_client(
         )
         mock_cls.return_value = mock_instance
 
-        client = Routewiler(
+        client = Routeweiler(
             funding=[Funding.base_sepolia_usdc(wallet=test_account)],
             trace_sink=sink,
         )
@@ -167,7 +167,7 @@ async def test_unsupported_rail_writes_error_trace(
 ) -> None:
     """A 402 with an unknown rail writes one error trace before raising."""
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
-    client = Routewiler(
+    client = Routeweiler(
         funding=[Funding.base_sepolia_usdc(wallet=test_account)],
         trace_sink=sink,
     )

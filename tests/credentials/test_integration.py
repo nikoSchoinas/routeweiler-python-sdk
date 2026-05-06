@@ -18,9 +18,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from routewiler import Routewiler
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Routeweiler
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import (
     MOCK_MACAROON_B64,
@@ -51,14 +51,14 @@ def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     return [dict(r) for r in rows]
 
 
-def _make_client(transport: httpx.ASGITransport, db_path: Path) -> Routewiler:
+def _make_client(transport: httpx.ASGITransport, db_path: Path) -> Routeweiler:
     source = LightningFundingSource(
         client=FakeLndClient(preimage=MOCK_PREIMAGE),
         network="bitcoin-regtest",
         node_pubkey="03" + "ab" * 32,
     )
     sink = TraceSink.sqlite(db_path, url_mode="raw")
-    client = Routewiler(funding=[source], trace_sink=sink)
+    client = Routeweiler(funding=[source], trace_sink=sink)
     client._http = httpx.AsyncClient(
         auth=client._http.auth,
         event_hooks=client._http.event_hooks,

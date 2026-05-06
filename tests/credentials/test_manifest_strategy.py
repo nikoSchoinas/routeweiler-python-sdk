@@ -9,12 +9,12 @@ from pathlib import Path
 import httpx
 import respx
 
-from routewiler.credentials.manifest_strategy import (
+from routeweiler.credentials.manifest_strategy import (
     ManifestRecoveryStrategy,
     _build_authorization_header,
 )
-from routewiler.credentials.manifests.loader import ManifestRegistry
-from routewiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
+from routeweiler.credentials.manifests.loader import ManifestRegistry
+from routeweiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,4 +1,4 @@
-# routewiler
+# routeweiler
 
 **Status:** Alpha — `0.1.0.dev0` — API may change before 1.0.
 
@@ -6,13 +6,13 @@ The neutral micropayment router for autonomous agents. A single async HTTP clien
 `await client.get(url)` — that transparently handles `402 Payment Required` across
 x402, L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
 
-> **Async-only.** `Routewiler` wraps `httpx.AsyncClient`. All methods (`get`, `post`,
+> **Async-only.** `Routeweiler` wraps `httpx.AsyncClient`. All methods (`get`, `post`,
 > …) are coroutines and must be awaited inside an `async` function.
 
 ## Install
 
 ```bash
-pip install routewiler
+pip install routeweiler
 ```
 
 Python 3.11+ required.
@@ -23,12 +23,12 @@ Python 3.11+ required.
 import asyncio
 import os
 from eth_account import Account
-from routewiler import Routewiler, Funding
+from routeweiler import Routeweiler, Funding
 
 signer = Account.from_key(os.environ["PRIVATE_KEY"])
 
 async def main():
-    async with Routewiler(funding=[Funding.base_usdc(wallet=signer)]) as client:
+    async with Routeweiler(funding=[Funding.base_usdc(wallet=signer)]) as client:
         response = await client.get("https://api.example.com/data")
         print(response.json())
 
@@ -51,16 +51,16 @@ exactly one `TraceEvent` row, including the on-chain tx hash, FMV in your envelo
 currency, and the payment outcome:
 
 ```python
-from routewiler import Routewiler, Funding, TraceSink
+from routeweiler import Routeweiler, Funding, TraceSink
 
-async with Routewiler(
+async with Routeweiler(
     funding=[Funding.base_usdc(wallet=signer)],
-    trace_sink=TraceSink.sqlite("./routewiler.db"),
+    trace_sink=TraceSink.sqlite("./routeweiler.db"),
 ) as client:
     response = await client.get("https://api.example.com/data")
 
 # Inspect with the sqlite3 CLI:
-# sqlite3 ./routewiler.db \
+# sqlite3 ./routeweiler.db \
 #   'SELECT request_id, selected_rail, http_status FROM trace_events;'
 ```
 
@@ -69,9 +69,9 @@ async with Routewiler(
 Enforce per-session or per-agent spend caps with local SQLite budget envelopes:
 
 ```python
-async with Routewiler(
+async with Routeweiler(
     funding=[Funding.base_usdc(wallet=signer)],
-    trace_sink=TraceSink.sqlite("routewiler.db"),
+    trace_sink=TraceSink.sqlite("routeweiler.db"),
     envelope_id="session-abc",
 ) as client:
     response = await client.get("https://api.example.com/data")
@@ -85,9 +85,9 @@ Envelopes track reserved and settled amounts with Ed25519-signed draw receipts.
 Control which rails are used, set per-call spend limits, or deny specific URLs:
 
 ```python
-from routewiler import PolicyFile, Routewiler
+from routeweiler import PolicyFile, Routeweiler
 
-async with Routewiler(
+async with Routeweiler(
     funding=[...],
     policy=PolicyFile("policy.yaml"),
 ) as client:

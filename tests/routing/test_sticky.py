@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from routewiler.routing.sticky import StickyCache, StickyKey
+from routeweiler.routing.sticky import StickyCache, StickyKey
 
 
 def _key(

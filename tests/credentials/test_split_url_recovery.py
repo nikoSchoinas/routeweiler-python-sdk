@@ -5,9 +5,9 @@ If this test ever breaks, the PR does not merge.
 Scenario (from https://refinedelement.com/blog/l402-broke-at-the-worst-possible-moment):
   1. The agent calls /checkout/{order_id} on an L402-gated shop.
   2. The server returns 402 with a BOLT-11 invoice.
-  3. Routewiler pays the invoice via Lightning and retries with Authorization: L402 ...
+  3. Routeweiler pays the invoice via Lightning and retries with Authorization: L402 ...
   4. The server returns 404 — fulfilment is at a DIFFERENT URL (/orders/{id}/fulfil).
-  5. Routewiler consults the lightning-shop manifest, rewrites the URL, retries there.
+  5. Routeweiler consults the lightning-shop manifest, rewrites the URL, retries there.
   6. The fulfilment endpoint returns 200.
   7. The caller receives the 200 response.
   8. The credential ends in REDEEMED state.
@@ -26,11 +26,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from routewiler import Routewiler
-from routewiler.credentials.manifest_strategy import ManifestRecoveryStrategy
-from routewiler.credentials.manifests.loader import ManifestRegistry
-from routewiler.funding.lightning import LightningFundingSource
-from routewiler.trace.sink_sqlite import TraceSink
+from routeweiler import Routeweiler
+from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
+from routeweiler.credentials.manifests.loader import ManifestRegistry
+from routeweiler.funding.lightning import LightningFundingSource
+from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
 from tests.fixtures.l402_mock_server import MOCK_PREIMAGE
 from tests.fixtures.l402_split_url_mock_server import mock_split_url_app
@@ -75,8 +75,8 @@ _TEST_MANIFEST_YAML = textwrap.dedent(
 def _make_split_url_client(
     tmp_path: Path,
     tmp_trace_db_path: Path,
-) -> tuple[Routewiler, httpx.AsyncClient]:
-    """Build a Routewiler client wired to the split-URL mock app.
+) -> tuple[Routeweiler, httpx.AsyncClient]:
+    """Build a Routeweiler client wired to the split-URL mock app.
 
     Returns ``(client, recovery_http)`` — the caller is responsible for closing
     ``recovery_http`` after the client is closed.
@@ -99,7 +99,7 @@ def _make_split_url_client(
     registry = ManifestRegistry.from_paths([manifest_path])
     strategy = ManifestRecoveryStrategy(registry=registry, client=recovery_http)
 
-    client = Routewiler(
+    client = Routeweiler(
         funding=[source],
         trace_sink=sink,
         recovery_strategy=strategy,
@@ -228,7 +228,7 @@ async def test_split_url_recovery_no_manifest_match_gives_manual_hold(
     registry = ManifestRegistry.from_paths([manifest_path])
     strategy = ManifestRecoveryStrategy(registry=registry, client=recovery_http)
 
-    client = Routewiler(funding=[source], trace_sink=sink, recovery_strategy=strategy)
+    client = Routeweiler(funding=[source], trace_sink=sink, recovery_strategy=strategy)
     client._http = httpx.AsyncClient(
         auth=client._http.auth,
         event_hooks=client._http.event_hooks,

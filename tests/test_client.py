@@ -1,4 +1,4 @@
-"""End-to-end tests for the Routewiler async client using respx mocks."""
+"""End-to-end tests for the Routeweiler async client using respx mocks."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import httpx
 import pytest
 import respx
 
-from routewiler import Funding, Routewiler
-from routewiler.errors import RailNotSupportedError
+from routeweiler import Funding, Routeweiler
+from routeweiler.errors import RailNotSupportedError
 
 
 def _encode_challenge(data: dict) -> str:  # type: ignore[type-arg]
@@ -39,17 +39,17 @@ _SIGNED_PAYLOAD = base64.b64encode(b'{"signature":"0xtest"}').decode()
 
 
 @pytest.fixture
-def routewiler_client(test_account) -> Routewiler:  # type: ignore[no-untyped-def]
-    return Routewiler(funding=[Funding.base_usdc(wallet=test_account)])
+def routeweiler_client(test_account) -> Routeweiler:  # type: ignore[no-untyped-def]
+    return Routeweiler(funding=[Funding.base_usdc(wallet=test_account)])
 
 
 @respx.mock
-async def test_happy_path_402_then_200(routewiler_client: Routewiler) -> None:
+async def test_happy_path_402_then_200(routeweiler_client: Routeweiler) -> None:
     """A 402 response triggers a signed retry that returns 200."""
     url = "https://api.example.com/data"
 
     with patch(
-        "routewiler.rails.x402.x402Client",
+        "routeweiler.rails.x402.x402Client",
     ) as mock_cls:
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(return_value={"signature": "0xtest"})
@@ -57,8 +57,8 @@ async def test_happy_path_402_then_200(routewiler_client: Routewiler) -> None:
 
         # Re-create client so it picks up the patched x402Client
 
-        client = Routewiler(
-            funding=[Funding.base_usdc(wallet=routewiler_client._funding[0].wallet)]
+        client = Routeweiler(
+            funding=[Funding.base_usdc(wallet=routeweiler_client._funding[0].wallet)]
         )
 
         # First call → 402; second call → 200
@@ -83,18 +83,18 @@ async def test_happy_path_402_then_200(routewiler_client: Routewiler) -> None:
 
 
 @respx.mock
-async def test_200_passthrough(routewiler_client: Routewiler) -> None:
+async def test_200_passthrough(routeweiler_client: Routeweiler) -> None:
     """Non-402 responses pass through without payment."""
     respx.get("https://api.example.com/free").mock(
         return_value=httpx.Response(200, json={"free": True})
     )
-    resp = await routewiler_client.get("https://api.example.com/free")
+    resp = await routeweiler_client.get("https://api.example.com/free")
     assert resp.status_code == 200
     assert resp.json()["free"] is True
 
 
 @respx.mock
-async def test_unsupported_rail_raises(routewiler_client: Routewiler) -> None:
+async def test_unsupported_rail_raises(routeweiler_client: Routeweiler) -> None:
     """A 402 with no PAYMENT-REQUIRED header raises RailNotSupportedError."""
     respx.get("https://api.example.com/l402").mock(
         return_value=httpx.Response(
@@ -102,9 +102,9 @@ async def test_unsupported_rail_raises(routewiler_client: Routewiler) -> None:
         )
     )
     with pytest.raises(RailNotSupportedError):
-        await routewiler_client.get("https://api.example.com/l402")
+        await routeweiler_client.get("https://api.example.com/l402")
 
 
 async def test_context_manager(test_account) -> None:  # type: ignore[no-untyped-def]
-    async with Routewiler(funding=[Funding.base_usdc(wallet=test_account)]) as client:
+    async with Routeweiler(funding=[Funding.base_usdc(wallet=test_account)]) as client:
         assert client._http is not None

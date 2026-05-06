@@ -7,7 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from routewiler.rails._mpp_http import (
+from routeweiler.rails._mpp_http import (
     b64url_decode,
     b64url_encode,
     build_authorization_header,

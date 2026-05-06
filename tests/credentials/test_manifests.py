@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from routewiler.credentials.manifests.loader import ManifestRegistry, _parse_manifest
-from routewiler.credentials.manifests.schema import ServiceShape, ServiceShapeStep
-from routewiler.errors import ManifestParseError
+from routeweiler.credentials.manifests.loader import ManifestRegistry, _parse_manifest
+from routeweiler.credentials.manifests.schema import ServiceShape, ServiceShapeStep
+from routeweiler.errors import ManifestParseError
 
 # ---------------------------------------------------------------------------
 # Bundled manifests

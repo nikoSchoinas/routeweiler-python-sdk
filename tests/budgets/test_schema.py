@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from routewiler.budgets.schema import BudgetEnvelope, DrawReceipt
+from routeweiler.budgets.schema import BudgetEnvelope, DrawReceipt
 
 NOW = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 EXPIRES = datetime(2026, 4, 27, 23, 59, 59, tzinfo=UTC)

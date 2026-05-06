@@ -7,8 +7,8 @@ import typing
 import pytest
 from eth_account import Account
 
-from routewiler.funding import Funding, FundingSource
-from routewiler.funding.tempo import (
+from routeweiler.funding import Funding, FundingSource
+from routeweiler.funding.tempo import (
     EthAccountTempoSigner,
     TempoFundingSource,
     TempoSigner,
