@@ -79,7 +79,6 @@ async def test_schema_migration_creates_tables(tmp_trace_db_path: Path) -> None:
     assert "trace_events" in tables
     assert "envelopes" in tables
     assert "credentials" in tables
-    assert "schema_versions" in tables
 
 
 async def test_emit_writes_row(tmp_trace_db_path: Path) -> None:

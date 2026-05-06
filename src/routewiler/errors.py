@@ -22,12 +22,7 @@
     │   ├── :class:`PolicyMaxPerCallExceededError`
     │   └── :class:`NoFeasibleRailError`
     ├── :class:`CredentialError`
-    │   ├── :class:`CredentialNotFoundError`
-    │   ├── :class:`InvalidCredentialTransitionError`
-    │   └── :class:`ManifestParseError`
     ├── :class:`KeystoreError`
-    │   ├── :class:`KeystoreNotFoundError`
-    │   └── :class:`KeystoreAlreadyExistsError`
     ├── :class:`FmvUnavailableError`
     ├── :class:`NoFundingForRailError`
     ├── :class:`RailNotSupportedError`

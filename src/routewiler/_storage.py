@@ -12,6 +12,10 @@ inconsistent pragma sets they carried.
 Migration history
 -----------------
 trace_events v1 (W7): added ``fallback_from`` column.
+
+The ``schema_versions`` table exists in existing databases but is not currently
+written to or read.  Version tracking will be reintroduced alongside the v2
+migration system (§17).
 """
 
 from __future__ import annotations
@@ -106,13 +110,6 @@ CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
     ON trace_events (envelope_id, ts_start DESC);
 """
 
-_SCHEMA_VERSIONS_DDL = """
-CREATE TABLE IF NOT EXISTS schema_versions (
-    component   TEXT    PRIMARY KEY,
-    version     INTEGER NOT NULL
-);
-"""
-
 # Migration SQL — add fallback_from column to trace_events rows created before W7.
 _MIGRATION_TRACE_V1_ADD_FALLBACK_FROM = "ALTER TABLE trace_events ADD COLUMN fallback_from TEXT"
 
@@ -150,7 +147,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     Safe to call on every store construction — all DDL uses
     ``CREATE TABLE IF NOT EXISTS`` and migrations are version-gated.
     """
-    conn.executescript(_SCHEMA_VERSIONS_DDL)
     conn.executescript(_BUDGET_DDL)
     conn.executescript(_CREDENTIALS_DDL)
     conn.executescript(_TRACE_DDL)
@@ -158,13 +154,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_trace_schema(conn: sqlite3.Connection) -> None:
-    """Apply pending trace_events schema migrations and record the version."""
+    """Apply pending trace_events schema migrations."""
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(trace_events)")}
     if "fallback_from" not in existing_cols:
-        # Pre-W7 database: add the column and record the migration.
         conn.execute(_MIGRATION_TRACE_V1_ADD_FALLBACK_FROM)
-    # Mark initial versions for all components (idempotent: INSERT OR IGNORE).
-    conn.executemany(
-        "INSERT OR IGNORE INTO schema_versions (component, version) VALUES (?, 1)",
-        [("trace_events",), ("credentials",), ("envelopes",)],
-    )

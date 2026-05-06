@@ -29,6 +29,7 @@ class Resource(RoutewilerModel):
     method: str
     url: str
     url_encoding: UrlEncoding
+    # Reserved — only 402 today; non-402 challenges may exist post-MVP.
     original_status: int = 402
 
 
@@ -97,7 +98,6 @@ class L402RailRaw(RoutewilerModel):
 class MppTempoRailRaw(RoutewilerModel):
     kind: Literal["mpp-tempo"]
     charge_id: str
-    settlement_network: Literal["tempo"]
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

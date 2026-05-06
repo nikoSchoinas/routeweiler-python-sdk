@@ -74,7 +74,7 @@ def _mpp_exact_challenge(url: str = "https://api.inference.com/chat") -> Normali
         scheme="exact",
         nonce="abc123",
         expires_at=_EXPIRES,
-        raw=MppTempoRailRaw(kind="mpp-tempo", charge_id="ch_123", settlement_network="tempo"),
+        raw=MppTempoRailRaw(kind="mpp-tempo", charge_id="ch_123"),
     )
 
 

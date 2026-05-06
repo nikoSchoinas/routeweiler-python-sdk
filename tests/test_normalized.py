@@ -182,9 +182,7 @@ def test_discriminator_l402() -> None:
 
 
 def test_discriminator_mpp_tempo() -> None:
-    data = _base_challenge(
-        {"kind": "mpp-tempo", "chargeId": "ch_123", "settlementNetwork": "tempo"}
-    )
+    data = _base_challenge({"kind": "mpp-tempo", "chargeId": "ch_123"})
     data["rail"] = "mpp-tempo"
     c = NormalizedChallenge.model_validate(data)
     assert isinstance(c.raw, MppTempoRailRaw)

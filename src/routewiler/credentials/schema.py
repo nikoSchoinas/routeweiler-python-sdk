@@ -19,10 +19,6 @@ class L402CredentialPayload(TypedDict):
     payment_hash_hex: str
 
 
-class X402CredentialPayload(TypedDict, total=False):
-    """Typed shape for x402 credential payloads (reserved; x402 does not persist today)."""
-
-
 class CredentialState(StrEnum):
     PERSISTED = "persisted"
     RECOVERING = "recovering"

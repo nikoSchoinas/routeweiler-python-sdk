@@ -33,12 +33,8 @@ class BudgetEnvelope(RoutewilerModel):
     cap_currency: EnvelopeCurrency
     allowed_rails: list[Rail]
     allowed_origins_glob: list[str]
-    ttl_seconds: int
     created_at: datetime
     expires_at: datetime
-    # Runtime counters — managed by budgets/local.py; zero at creation.
-    reserved_minor_units: int = 0
-    settled_minor_units: int = 0
     status: EnvelopeStatus = "active"
     # Ed25519 public key (base64-encoded); populated by budgets/keystore.py in Phase 1 W1.
     counter_public_key: str = ""

@@ -18,7 +18,6 @@ def _envelope_data(**overrides) -> dict:
         "capCurrency": "usd",
         "allowedRails": ["x402", "l402"],
         "allowedOriginsGlob": ["*.vendor.com"],
-        "ttlSeconds": 86400,
         "createdAt": NOW.isoformat(),
         "expiresAt": EXPIRES.isoformat(),
     }
@@ -51,8 +50,6 @@ def _receipt_data(**overrides) -> dict:
 
 def test_envelope_defaults():
     env = BudgetEnvelope.model_validate(_envelope_data())
-    assert env.reserved_minor_units == 0
-    assert env.settled_minor_units == 0
     assert env.status == "active"
     assert env.owner_agent_id is None
 
@@ -64,7 +61,6 @@ def test_envelope_snake_case_construction():
         cap_currency="eur",
         allowed_rails=["l402"],
         allowed_origins_glob=["api.example.org"],
-        ttl_seconds=3600,
         created_at=NOW,
         expires_at=EXPIRES,
     )
@@ -78,7 +74,6 @@ def test_envelope_camel_roundtrip():
     assert dumped["capMinorUnits"] == 500_00
     assert dumped["capCurrency"] == "usd"
     assert dumped["allowedRails"] == ["x402", "l402"]
-    assert dumped["reservedMinorUnits"] == 0
     assert dumped["status"] == "active"
 
 
