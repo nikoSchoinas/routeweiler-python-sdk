@@ -29,7 +29,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from pydantic import field_validator
 
 from routewiler._base import RoutewilerLooseModel
 from routewiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
@@ -44,22 +43,10 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Wire-format header constants
-# ---------------------------------------------------------------------------
-
 WWW_AUTHENTICATE = "www-authenticate"
 AUTHORIZATION = "authorization"
 PAYMENT_RECEIPT = "payment-receipt"  # lowercase for httpx header lookup
 PAYMENT_SCHEME = "Payment"  # the auth-scheme name in both headers
-
-# ---------------------------------------------------------------------------
-# JCS canonicalisation (RFC 8785, §3.2)
-# ---------------------------------------------------------------------------
-
-# Regex to detect whether a float needs special handling
-# (we only ever produce ints/strings/booleans/null/dicts/lists here, but be safe)
-_FLOAT_NEEDS_CARE = re.compile(r"[.eE]")
 
 
 def _jcs_serialize(obj: Any) -> str:
@@ -115,11 +102,6 @@ def jcs_encode(obj: dict[str, Any]) -> bytes:
     return _jcs_serialize(obj).encode("utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Base64url helpers (no padding, RFC 4648 §5)
-# ---------------------------------------------------------------------------
-
-
 def b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -131,10 +113,6 @@ def b64url_decode(s: str) -> bytes:
         s += "=" * pad
     return base64.urlsafe_b64decode(s)
 
-
-# ---------------------------------------------------------------------------
-# Auth-param parser (RFC 7235 / RFC 9110 §11.2)
-# ---------------------------------------------------------------------------
 
 # Quoted-string or token parser for WWW-Authenticate auth-params.
 # Handles: key="value with spaces", key=token, key="val\"escaped"
@@ -176,11 +154,6 @@ def parse_payment_challenge(header_value: str) -> dict[str, str]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Request-param helpers
-# ---------------------------------------------------------------------------
-
-
 def decode_request_param(b64url: str) -> dict[str, Any]:
     """Decode a base64url JCS-JSON ``request`` auth-param."""
     try:
@@ -189,11 +162,6 @@ def decode_request_param(b64url: str) -> dict[str, Any]:
         return result
     except Exception as exc:
         raise ValueError(f"MPP request param decode failed: {exc}") from exc
-
-
-# ---------------------------------------------------------------------------
-# Credential builder
-# ---------------------------------------------------------------------------
 
 
 def encode_credential(credential: dict[str, Any]) -> str:
@@ -214,11 +182,6 @@ def build_authorization_header(credential: dict[str, Any]) -> str:
     return f"{PAYMENT_SCHEME} {encode_credential(credential)}"
 
 
-# ---------------------------------------------------------------------------
-# Receipt model and parser
-# ---------------------------------------------------------------------------
-
-
 class MppReceipt(RoutewilerLooseModel):
     """Decoded ``Payment-Receipt`` header payload."""
 
@@ -228,13 +191,6 @@ class MppReceipt(RoutewilerLooseModel):
     settlement: dict[str, str]
     status: Literal["success", "failure"]
     timestamp: datetime
-
-    @field_validator("timestamp", mode="before")
-    @classmethod
-    def _parse_timestamp(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            return datetime.fromisoformat(v.replace("Z", "+00:00"))
-        return v
 
 
 def parse_payment_receipt(header_value: str) -> MppReceipt:
@@ -282,10 +238,6 @@ def build_payment_receipt(
     }
     return b64url_encode(jcs_encode(receipt))
 
-
-# ---------------------------------------------------------------------------
-# Shared MPP adapter helpers
-# ---------------------------------------------------------------------------
 
 # Fallback when the server omits the `expires` auth-param.  The MPP spec treats
 # `expires` as REQUIRED, but real deployments occasionally omit it.  We apply a
@@ -363,16 +315,19 @@ def build_mpp_challenge_echo(
     default_method: str,
 ) -> dict[str, Any]:
     """Build the challenge echo dict for an MPP credential, stripping empty-string keys."""
-    echo: dict[str, Any] = {
-        "id": challenge_id,
-        "realm": auth_params.get("realm", ""),
-        "method": auth_params.get("method", default_method),
-        "intent": auth_params.get("intent", "charge"),
-        "request": auth_params.get("request", ""),
-        "expires": auth_params.get("expires", ""),
-        "opaque": auth_params.get("opaque", ""),
+    return {
+        k: v
+        for k, v in (
+            ("id", challenge_id),
+            ("realm", auth_params.get("realm", "")),
+            ("method", auth_params.get("method", default_method)),
+            ("intent", auth_params.get("intent", "charge")),
+            ("request", auth_params.get("request", "")),
+            ("expires", auth_params.get("expires", "")),
+            ("opaque", auth_params.get("opaque", "")),
+        )
+        if v != ""
     }
-    return {k: v for k, v in echo.items() if v != ""}
 
 
 def confirm_mpp_receipt(
@@ -434,11 +389,6 @@ def confirm_mpp_receipt(
         amount_paid=amount_paid,
         facilitator=facilitator,
     )
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers for MPP rail adapters (Tempo + SPT)
-# ---------------------------------------------------------------------------
 
 
 def is_mpp_payment_for(response: httpx.Response, methods: set[str]) -> bool:
