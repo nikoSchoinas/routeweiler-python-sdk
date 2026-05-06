@@ -228,9 +228,9 @@ class TestFailoverOnSignError:
         rows = _trace_rows(db_path)
         # The paid trace should have fallback_from = "x402"
         paid_rows = [r for r in rows if r["service_delivered"] == 1]
-        if paid_rows:
-            payload = json.loads(paid_rows[0]["payload"])
-            assert payload.get("fallbackFrom") == "x402"
+        assert paid_rows, "Expected at least one service-delivered trace row after failover"
+        payload = json.loads(paid_rows[0]["payload"])
+        assert payload.get("fallbackFrom") == "x402"
 
     @pytest.mark.anyio
     async def test_all_rails_fail_raises_no_feasible(self, tmp_path: Path) -> None:
@@ -277,7 +277,9 @@ class TestFailoverOnSignError:
         draws = _draw_rows(db_path)
         # One draw should be rolled_back (x402 failed), one settled (l402 succeeded).
         statuses = {d["state"] for d in draws}
-        assert "rolled_back" in statuses or "settled" in statuses
+        assert {"rolled_back", "settled"}.issubset(statuses), (
+            f"Expected both 'rolled_back' and 'settled' draws; got: {statuses}"
+        )
 
 
 # ---------------------------------------------------------------------------
