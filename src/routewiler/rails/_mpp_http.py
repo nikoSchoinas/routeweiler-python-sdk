@@ -79,8 +79,9 @@ def _jcs_serialize(obj: Any) -> str:
     if isinstance(obj, int):
         return str(obj)
     if isinstance(obj, float):
-        # JCS requires IEEE 754 round-trip encoding; use repr for Python floats.
-        return repr(obj)
+        raise TypeError(
+            "JCS: float values are not supported in MPP receipts; use integer minor units"
+        )
     if isinstance(obj, str):
         # Minimal JSON string encoding (escape only what JSON requires).
         escaped = (
