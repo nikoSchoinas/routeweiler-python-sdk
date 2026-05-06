@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
+
+from routewiler.errors import InvoicePaymentError
 
 
 @runtime_checkable
@@ -110,16 +112,13 @@ class LndClient:
     grpc_host: str
     grpc_port: int = 10009
     macaroon_path: str | None = None
-    macaroon_hex: str | None = None
+    macaroon_hex: str | None = field(default=None, repr=False)  # excluded from repr
     tls_cert_path: str | None = None
-    tls_cert_pem: str | None = None
+    tls_cert_pem: str | None = field(default=None, repr=False)  # excluded from repr
     timeout_seconds: int = 60
 
     def _make_client(self) -> object:
-        """Construct an lndgrpc.LNDClient lazily (imported inside to avoid hard dep at module load).
-
-        The lazy import keeps lnd-grpc-client optional at module load time.
-        """
+        """Construct an lndgrpc.LNDClient, importing the library lazily for faster module load."""
         try:
             import lndgrpc  # type: ignore[import-untyped]  # noqa: PLC0415
         except ImportError as exc:
@@ -159,8 +158,6 @@ class LndClient:
         Raises:
             InvoicePaymentError: if LND returns a FAILED terminal status.
         """
-        from routewiler.errors import InvoicePaymentError  # noqa: PLC0415
-
         client = self._make_client()
 
         def _send() -> bytes:

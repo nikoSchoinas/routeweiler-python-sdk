@@ -121,7 +121,7 @@ class StripeFundingSource:
         spt_creator:    Injected SPT creator; defaults to ``StripeSptCreator(api_key)``.
     """
 
-    api_key: str
+    api_key: str = field(repr=False)  # sk_live_... — excluded from repr to avoid secret leakage
     customer: str
     payment_method: str
     currency: str  # ISO-4217 lowercase: "usd", "eur", "gbp", "jpy"

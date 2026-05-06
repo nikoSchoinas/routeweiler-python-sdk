@@ -158,3 +158,23 @@ def test_funding_stripe_factory_no_creator_builds_stripe_spt_creator() -> None:
         payment_method="pm_factory",
     )
     assert isinstance(source.spt_creator, StripeSptCreator)
+
+
+# ---------------------------------------------------------------------------
+# Secret field repr exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_stripe_api_key_excluded_from_repr() -> None:
+    """api_key must not appear in repr() to prevent accidental secret leakage in logs."""
+    source = StripeFundingSource(
+        api_key="sk_live_supersecret",
+        customer="cus_123",
+        payment_method="pm_456",
+        currency="usd",
+        spt_creator=FakeSptCreator(),
+    )
+    r = repr(source)
+    assert "sk_live_supersecret" not in r
+    # Other fields should still be visible.
+    assert "cus_123" in r

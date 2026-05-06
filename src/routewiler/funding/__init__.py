@@ -52,9 +52,9 @@ class Funding:
 
     @staticmethod
     def lightning_lnd(
+        *,
         client: LightningNodeClient,
         network: Literal["bitcoin", "bitcoin-testnet", "bitcoin-regtest", "bitcoin-signet"],
-        *,
         node_pubkey: str,
         max_fee_msat: int = 1000,
     ) -> LightningFundingSource:

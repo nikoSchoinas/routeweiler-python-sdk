@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from routewiler.errors import InvoicePaymentError
-from routewiler.funding.lightning import LightningFundingSource, LightningNodeClient
+from routewiler.funding.lightning import LightningFundingSource, LightningNodeClient, LndClient
 
 FAKE_PUBKEY = "03" + "ab" * 32
 FAKE_PREIMAGE = bytes.fromhex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
@@ -124,3 +124,22 @@ class TestLightningNodeClientProtocol:
     def test_fake_client_satisfies_protocol(self) -> None:
         client = FakeLndClient()
         assert isinstance(client, LightningNodeClient)
+
+
+# ---------------------------------------------------------------------------
+# Secret field repr exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_lnd_client_credentials_excluded_from_repr() -> None:
+    """macaroon_hex and tls_cert_pem must not appear in repr() to prevent secret leakage."""
+    client = LndClient(
+        grpc_host="localhost",
+        macaroon_hex="deadbeef01234567",
+        tls_cert_pem="-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----",
+    )
+    r = repr(client)
+    assert "deadbeef01234567" not in r
+    assert "FAKE" not in r
+    # Non-sensitive field should still be visible.
+    assert "localhost" in r
