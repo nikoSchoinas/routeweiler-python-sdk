@@ -31,10 +31,6 @@ class AssetMetadata:
     addresses: dict[str, str] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# Asset definitions — keyed by canonical name.
-# ---------------------------------------------------------------------------
-
 _USDC = AssetMetadata(
     canonical_name="usdc",
     symbol="USDC",
@@ -58,12 +54,8 @@ _EURC = AssetMetadata(
     },
 )
 
-# ---------------------------------------------------------------------------
-# Tempo TIP-20 tokens
-# TIP-20 uses 6 decimal places (same as ERC-20 USDC).
-# Chain ID 42431 = Tempo Moderato testnet (public, no native gas token).
-# Mainnet addresses are forward-compat entries; not exercised in W13 tests.
-# ---------------------------------------------------------------------------
+# Tempo TIP-20 tokens use 6 decimal places (same as ERC-20 USDC).
+# Chain ID 42431 = Tempo Moderato testnet; 42430 = mainnet.
 
 _PATHUSD = AssetMetadata(
     canonical_name="pathusd",
@@ -83,14 +75,12 @@ _TEMPO_USDC = AssetMetadata(
     peg_currency="usd",
     addresses={
         # Tempo mainnet — from Stripe docs (crypto_display_details example).
-        # NOT exercised in W13 tests; Moderato testnet uses PathUSD.
         "tempo": "0x20c000000000000000000000b9537d11c60e8b50",
     },
 )
 
-# All known assets, keyed by (network, canonical_name) so Tempo USDC and EVM
-# USDC can coexist. The top-level ASSETS dict by canonical_name is kept for
-# backward compatibility with code that doesn't care about the network.
+# Keyed by canonical name so Tempo USDC and EVM USDC can coexist; callers that
+# need per-network lookup should use CANONICAL_ADDRESSES or TEMPO_ASSETS instead.
 ASSETS: dict[str, AssetMetadata] = {
     "usdc": _USDC,
     "eurc": _EURC,
@@ -104,11 +94,7 @@ TEMPO_ASSETS: dict[tuple[str, str], AssetMetadata] = {
     ("tempo", "usdc"): _TEMPO_USDC,
 }
 
-# ---------------------------------------------------------------------------
-# Derived lookup tables — computed once at import time.
-# ---------------------------------------------------------------------------
-
-# (network, canonical_name) → lowercase address.
+# (network, canonical_name) → lowercase address. Computed once at import time.
 CANONICAL_ADDRESSES: dict[tuple[str, str], str] = {}
 for _name, _meta in ASSETS.items():
     for _net, _addr in _meta.addresses.items():

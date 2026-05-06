@@ -1,33 +1,4 @@
-"""Routewiler exception hierarchy.
-
-:class:`RoutewilerError`
-└── :class:`PaymentError`
-    ├── :class:`RailParsingError`
-    │   ├── :class:`ChallengeParseError`
-    │   └── :class:`ChallengeExpiredError`
-    ├── :class:`RailExecutionError`
-    │   ├── :class:`SigningError`
-    │   ├── :class:`InvoicePaymentError`
-    │   ├── :class:`PreimageMismatchError`
-    │   ├── :class:`SptCreationError`
-    │   ├── :class:`MppChargeFailedError`
-    │   └── :class:`MppReceiptVerificationError`
-    ├── :class:`BudgetError`
-    │   ├── :class:`BudgetExceededError`
-    │   ├── :class:`EnvelopeNotFoundError`
-    │   ├── :class:`EnvelopeFrozenError`
-    │   └── :class:`EnvelopeExpiredError`
-    ├── :class:`PolicyError`
-    │   ├── :class:`PolicyDeniedError`
-    │   ├── :class:`PolicyMaxPerCallExceededError`
-    │   └── :class:`NoFeasibleRailError`
-    ├── :class:`CredentialError`
-    ├── :class:`KeystoreError`
-    ├── :class:`FmvUnavailableError`
-    ├── :class:`NoFundingForRailError`
-    ├── :class:`RailNotSupportedError`
-    └── :class:`ReceiptVerificationError`
-"""
+"""Routewiler exception hierarchy. Full tree documented in CLAUDE.md."""
 
 from __future__ import annotations
 
@@ -38,11 +9,6 @@ class RoutewilerError(Exception):
 
 class PaymentError(RoutewilerError):
     """Raised when a 402 payment flow cannot be completed."""
-
-
-# ---------------------------------------------------------------------------
-# Rail-parsing errors
-# ---------------------------------------------------------------------------
 
 
 class RailParsingError(PaymentError):
@@ -59,11 +25,6 @@ class ChallengeExpiredError(RailParsingError):
     Examples: BOLT-11 invoice expiry, L402 macaroon ``valid_until`` caveat,
     MPP challenge ``expires`` auth-param.
     """
-
-
-# ---------------------------------------------------------------------------
-# Rail-execution errors
-# ---------------------------------------------------------------------------
 
 
 class RailExecutionError(PaymentError):
@@ -108,11 +69,6 @@ class MppReceiptVerificationError(RailExecutionError):
     """
 
 
-# ---------------------------------------------------------------------------
-# Budget errors
-# ---------------------------------------------------------------------------
-
-
 class BudgetError(PaymentError):
     """Base for budget envelope failures."""
 
@@ -145,11 +101,6 @@ class EnvelopeFrozenError(BudgetError):
 
 class EnvelopeExpiredError(BudgetError):
     """Envelope expires_at is in the past."""
-
-
-# ---------------------------------------------------------------------------
-# Policy errors
-# ---------------------------------------------------------------------------
 
 
 class PolicyError(PaymentError):
@@ -188,11 +139,6 @@ class NoFeasibleRailError(PolicyError):
     """No rail remains after policy, funding, and failover filters are applied."""
 
 
-# ---------------------------------------------------------------------------
-# Credential errors
-# ---------------------------------------------------------------------------
-
-
 class CredentialError(PaymentError):
     """Base for credential store failures."""
 
@@ -210,11 +156,6 @@ class ManifestParseError(CredentialError):
     invalid id_extractor (unknown prefix, bad regex)."""
 
 
-# ---------------------------------------------------------------------------
-# Keystore errors
-# ---------------------------------------------------------------------------
-
-
 class KeystoreError(PaymentError):
     """Base for keystore failures."""
 
@@ -225,11 +166,6 @@ class KeystoreNotFoundError(KeystoreError):
 
 class KeystoreAlreadyExistsError(KeystoreError):
     """A key file already exists for the given envelope id; will not overwrite."""
-
-
-# ---------------------------------------------------------------------------
-# Remaining payment errors
-# ---------------------------------------------------------------------------
 
 
 class FmvUnavailableError(PaymentError):
