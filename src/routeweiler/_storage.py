@@ -5,17 +5,11 @@ open the same trace.db file.  This module is the single authority for:
   - How connections are opened (pragmas, WAL mode, foreign keys, busy_timeout).
   - Which tables exist (DDL) and how they are migrated over time.
 
-Stores call ``open_connection(path)`` and ``ensure_schema(conn)`` in their
-``__init__``, replacing per-module ``_ensure_*_schema`` helpers and the
-inconsistent pragma sets they carried.
-
 Migration history
 -----------------
 trace_events v1 (W7): added ``fallback_from`` column.
-
-The ``schema_versions`` table exists in existing databases but is not currently
-written to or read.  Version tracking will be reintroduced alongside the v2
-migration system (§17).
+trace_events v2 (W11): made ``http_status`` nullable for MANUAL_HOLD events.
+schema_versions (cleanup): legacy dormant table dropped on schema init.
 """
 
 from __future__ import annotations
@@ -185,6 +179,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_CREDENTIALS_DDL)
     conn.executescript(_TRACE_DDL)
     _migrate_trace_schema(conn)
+    conn.execute("DROP TABLE IF EXISTS schema_versions")
 
 
 def _migrate_trace_schema(conn: sqlite3.Connection) -> None:
