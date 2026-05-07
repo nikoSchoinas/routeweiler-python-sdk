@@ -14,7 +14,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TypedDict, cast
 
-from routeweiler._constants import CLOCK_SKEW_BUFFER_SECONDS, REAPER_INTERVAL_SECONDS
+from routeweiler._constants import (
+    CLOCK_SKEW_BUFFER_SECONDS,
+    FMV_REFRESH_INTERVAL_SECONDS,
+    REAPER_INTERVAL_SECONDS,
+)
 from routeweiler._storage import ensure_schema as _ensure_schema
 from routeweiler._storage import open_connection as _open_connection
 from routeweiler.budgets.ecb_provider import EcbRateProvider
@@ -90,12 +94,14 @@ class BudgetStore:
         keystore: EnvelopeKeystore,
         *,
         reaper_interval_seconds: float = REAPER_INTERVAL_SECONDS,
+        fmv_refresh_interval_seconds: float = FMV_REFRESH_INTERVAL_SECONDS,
         fmv_provider: FmvProvider | None = None,
         ecb_provider: EcbRateProvider | None = None,
     ) -> None:
         self._db_path = db_path
         self._keystore = keystore
         self._reaper_interval_seconds = reaper_interval_seconds
+        self._fmv_refresh_interval_seconds = fmv_refresh_interval_seconds
         self._fmv_provider = fmv_provider
         self._ecb_provider = ecb_provider
         self._conn = _open_connection(db_path)
@@ -103,6 +109,7 @@ class BudgetStore:
         self._seed_default_envelope_sync()
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
+        self._fmv_task: asyncio.Task[None] | None = None
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -110,11 +117,17 @@ class BudgetStore:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the reaper background task. Idempotent."""
+        """Start background tasks. Idempotent."""
         if self._closed:
             raise RuntimeError("BudgetStore is closed; cannot restart.")
         if self._reaper_task is None or self._reaper_task.done():
             self._reaper_task = asyncio.create_task(self._reap_loop(), name="routeweiler-reaper")
+        if (self._fmv_provider is not None or self._ecb_provider is not None) and (
+            self._fmv_task is None or self._fmv_task.done()
+        ):
+            self._fmv_task = asyncio.create_task(
+                self._fmv_refresh_loop(), name="routeweiler-fmv-refresh"
+            )
 
     async def _reap_loop(self) -> None:
         """Roll back stale reserved draws periodically (§8.3)."""
@@ -137,6 +150,100 @@ class BudgetStore:
         )
         return cursor.rowcount
 
+    async def _fmv_refresh_loop(self) -> None:
+        """Re-fetch provider rates and update envelope FMV snapshots once per interval."""
+        while True:
+            await asyncio.sleep(self._fmv_refresh_interval_seconds)
+            try:
+                await self._refresh_all_snapshots()
+            except Exception:
+                _log.exception("FMV refresh pass failed; will retry next interval.")
+
+    async def _refresh_all_snapshots(self) -> None:
+        """Re-fetch live rates for all active envelopes and upsert their FMV snapshots."""
+        now_iso = datetime.now(UTC).isoformat()
+        async with self._lock:
+            rows = await asyncio.to_thread(
+                lambda: self._conn.execute(
+                    "SELECT id, cap_currency, allowed_rails FROM envelopes "
+                    "WHERE status='active' AND expires_at > ?",
+                    (now_iso,),
+                ).fetchall()
+            )
+        for row in rows:
+            envelope_id, cap_currency, allowed_rails_json = row
+            allowed_rails: list[str] = json.loads(str(allowed_rails_json))
+            try:
+                await self._refresh_one_snapshot(str(envelope_id), str(cap_currency), allowed_rails)
+            except Exception:
+                _log.exception(
+                    "FMV snapshot refresh failed for envelope '%s'; skipping.", envelope_id
+                )
+
+    async def _refresh_one_snapshot(
+        self, envelope_id: str, cap_currency: str, allowed_rails: list[str]
+    ) -> None:
+        """Re-fetch provider rates and upsert the FMV snapshot for one envelope."""
+        sats_rates: dict[str, Decimal] | None = None
+        if "l402" in allowed_rails and self._fmv_provider is not None:
+            try:
+                rate = await self._fmv_provider.fetch_btc_to(cap_currency)
+                sats_rates = {f"sats->{cap_currency.lower()}": rate}
+            except Exception:
+                _log.warning(
+                    "Envelope '%s': BTC FMV refresh failed; existing sats rate retained.",
+                    envelope_id,
+                )
+
+        cross_rates: dict[str, Decimal] | None = None
+        if self._ecb_provider is not None:
+            env_cur = cap_currency.lower()
+            cross_rates = {}
+            for src in ("usd", "eur", "gbp", "jpy"):
+                if src != env_cur:
+                    try:
+                        ecb_rate = await self._ecb_provider.fetch_rate(src, env_cur)
+                        cross_rates[f"{src}->{env_cur}"] = ecb_rate
+                    except Exception:
+                        _log.warning(
+                            "Envelope '%s': ECB %s→%s refresh failed; offline fallback retained.",
+                            envelope_id,
+                            src.upper(),
+                            env_cur.upper(),
+                        )
+
+        snapshot_rates, snapshot_quality = _capture_fmv_snapshot(
+            cap_currency, sats_rates=sats_rates, cross_rates=cross_rates
+        )
+        now_iso = datetime.now(UTC).isoformat()
+        async with self._lock:
+            await asyncio.to_thread(
+                self._upsert_snapshot_sync,
+                envelope_id,
+                now_iso,
+                snapshot_rates,
+                snapshot_quality,
+            )
+        _log.debug("Envelope '%s': FMV snapshot refreshed at %s.", envelope_id, now_iso)
+
+    def _upsert_snapshot_sync(
+        self,
+        envelope_id: str,
+        captured_at: str,
+        snapshot_rates: dict[str, Decimal],
+        snapshot_quality: dict[str, str],
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO envelope_fmv_snapshots "
+            "(envelope_id, captured_at, rates_json, quality_json) VALUES (?, ?, ?, ?)",
+            (
+                envelope_id,
+                captured_at,
+                json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
+                json.dumps(snapshot_quality),
+            ),
+        )
+
     async def aclose(self) -> None:
         if self._closed:
             return
@@ -145,6 +252,10 @@ class BudgetStore:
             self._reaper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._reaper_task
+        if self._fmv_task is not None:
+            self._fmv_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._fmv_task
         if self._fmv_provider is not None and hasattr(self._fmv_provider, "aclose"):
             await self._fmv_provider.aclose()
         if self._ecb_provider is not None and hasattr(self._ecb_provider, "aclose"):
@@ -232,6 +343,19 @@ class BudgetStore:
             "SELECT cap_currency FROM envelopes WHERE id = ?", (envelope_id,)
         ).fetchone()
         return str(row[0]) if row else None
+
+    def get_envelope_allowed_rails_sync(self, envelope_id: str) -> list[str]:
+        """Return the allowed_rails list for an envelope (empty list if not found).
+
+        Synchronous — safe to call from the Routeweiler constructor.
+        """
+        row = self._conn.execute(
+            "SELECT allowed_rails FROM envelopes WHERE id = ?", (envelope_id,)
+        ).fetchone()
+        if row is None:
+            return []
+        rails: list[str] = json.loads(str(row[0]))
+        return rails
 
     def load_fmv_snapshot_sync(self, envelope_id: str) -> dict[str, Decimal] | None:
         """Return the stored FMV snapshot rates for an envelope, or None if absent."""

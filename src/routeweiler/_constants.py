@@ -13,3 +13,6 @@ CLOCK_SKEW_BUFFER_SECONDS = 30
 
 # Applied on top of snapshot FMV rate when converting to envelope minor units (§8.4).
 FMV_BUFFER = Decimal("0.05")
+
+# FMV snapshot refresh interval — BudgetStore re-fetches provider rates once per day (§17).
+FMV_REFRESH_INTERVAL_SECONDS = 86_400
