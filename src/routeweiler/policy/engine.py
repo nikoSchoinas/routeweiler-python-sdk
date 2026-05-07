@@ -47,6 +47,11 @@ class PolicyEngine:
     def __init__(self, document: PolicyDocument) -> None:
         self._doc = document
 
+    @property
+    def default_rail(self) -> Rail:
+        """The `default.rail` from the policy document — used as a routing tie-breaker."""
+        return self._doc.default.rail
+
     def evaluate(self, challenge: NormalizedChallenge) -> PolicyDecision:
         for rule in self._doc.rules:
             if _matches(rule.when, challenge):

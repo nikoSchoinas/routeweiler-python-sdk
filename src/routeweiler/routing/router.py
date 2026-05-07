@@ -265,12 +265,16 @@ class Router:
             )
 
         # Step 7 & 8: score and apply sticky shortcut
+        default_rail: Rail | None = (
+            policy_engine.default_rail if policy_engine is not None else None
+        )
         winner = _select_winner(
             candidates=candidates,
             sticky_rail=sticky_rail,
             weights=self._weights,
             latency_p50_ms=self._latency_p50_ms,
             reliability=self._reliability,
+            default_rail=default_rail,
         )
 
         return RoutingChoice(
@@ -300,11 +304,13 @@ def _select_winner(
     weights: ScoringWeights,
     latency_p50_ms: Mapping[str, int],
     reliability: Mapping[str, float],
+    *,
+    default_rail: Rail | None = None,
 ) -> _ScoredCandidate:
     """Score candidates and return the winner.
 
     Sticky rail wins immediately (§7.2) if it is among the survivors.
-    Ties broken by policy prefer order then candidate list order.
+    Ties broken by `default.rail` preference then candidate list order.
     """
     # Check sticky shortcut first.
     if sticky_rail is not None:
@@ -331,8 +337,9 @@ def _select_winner(
                 score_breakdown=breakdown,
             )
         )
-    # Stable sort: highest score first; list order (= adapter + prefer order) breaks ties.
-    scored.sort(key=lambda s: s.score, reverse=True)
+    # Sort: highest score first; `default.rail` preference breaks score ties;
+    # candidate list order (adapter registration + prefer) breaks remaining ties.
+    scored.sort(key=lambda s: (-s.score, 0 if s.candidate.adapter.rail == default_rail else 1))
     return scored[0]
 
 

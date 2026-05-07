@@ -392,3 +392,119 @@ class TestRouterSticky:
             sticky_rail="l402",  # stale sticky; l402 not available
         )
         assert choice.candidate.adapter is x402
+
+
+class TestDefaultRailTieBreak:
+    """The policy's `default.rail` breaks score ties (§7.1 step 8)."""
+
+    def _equal_score_router(self) -> Router:
+        """Router with identical weights so all rails score the same."""
+        return Router(
+            [],  # adapters injected per-test
+            weights=ScoringWeights(cost=0.0, latency=0.0, reliability=0.0, privacy=0.0),
+        )
+
+    def _build_engine(self, default_rail: str) -> PolicyEngine:
+        doc = PolicyDocument(
+            version=1,
+            default=DefaultBlock(rail=default_rail),
+            rules=[],  # type: ignore[arg-type]
+        )
+        return PolicyEngine(doc)
+
+    @pytest.mark.anyio
+    async def test_default_rail_wins_on_score_tie_second_adapter(self) -> None:
+        """When scores are equal, `default.rail` matching the second adapter wins."""
+        first = MockRailAdapter(rail="x402", parse_challenge=make_mock_challenge(rail="x402"))
+        second = MockRailAdapter(rail="l402", parse_challenge=make_mock_challenge(rail="l402"))
+        router = Router(
+            [first, second],
+            weights=ScoringWeights(cost=0.0, latency=0.0, reliability=0.0, privacy=0.0),
+            latency_p50_ms={"x402": 1000, "l402": 1000},
+            reliability={"x402": 1.0, "l402": 1.0},
+        )
+        engine = self._build_engine("l402")
+        choice = await router.decide(
+            request=_request(),
+            response=_402_response(),
+            policy_engine=engine,
+            funding=[],
+            envelope_currency=None,
+            fmv_snapshot=None,
+        )
+        assert choice.candidate.adapter is second
+
+    @pytest.mark.anyio
+    async def test_default_rail_wins_on_score_tie_first_adapter(self) -> None:
+        """When scores are equal, `default.rail` matching the first adapter wins."""
+        first = MockRailAdapter(rail="x402", parse_challenge=make_mock_challenge(rail="x402"))
+        second = MockRailAdapter(rail="l402", parse_challenge=make_mock_challenge(rail="l402"))
+        router = Router(
+            [first, second],
+            weights=ScoringWeights(cost=0.0, latency=0.0, reliability=0.0, privacy=0.0),
+            latency_p50_ms={"x402": 1000, "l402": 1000},
+            reliability={"x402": 1.0, "l402": 1.0},
+        )
+        engine = self._build_engine("x402")
+        choice = await router.decide(
+            request=_request(),
+            response=_402_response(),
+            policy_engine=engine,
+            funding=[],
+            envelope_currency=None,
+            fmv_snapshot=None,
+        )
+        assert choice.candidate.adapter is first
+
+    @pytest.mark.anyio
+    async def test_default_rail_does_not_override_clear_score_winner(self) -> None:
+        """A clearly higher-scored rail wins regardless of `default.rail`."""
+        # Use large amounts so FMV conversion (USDC stablecoin peg) yields distinct
+        # minor-unit quotes: 100_000 base units ≈ 10 cents; 9_000_000 ≈ 900 cents.
+        high_score = MockRailAdapter(
+            rail="x402",
+            parse_challenge=make_mock_challenge(rail="x402", amount=100_000),
+        )
+        low_score = MockRailAdapter(
+            rail="l402",
+            parse_challenge=make_mock_challenge(rail="l402", amount=9_000_000),
+        )
+        # Cost-only weighting: cheaper = higher score.
+        router = Router(
+            [high_score, low_score],
+            weights=ScoringWeights(cost=1.0, latency=0.0, reliability=0.0, privacy=0.0),
+            latency_p50_ms={"x402": 1000, "l402": 1000},
+            reliability={"x402": 1.0, "l402": 1.0},
+        )
+        # default.rail is l402, but x402 should win on score.
+        engine = self._build_engine("l402")
+        choice = await router.decide(
+            request=_request(),
+            response=_402_response(),
+            policy_engine=engine,
+            funding=[],
+            envelope_currency="usd",
+            fmv_snapshot={"usd->usd": __import__("decimal").Decimal("1")},
+        )
+        assert choice.candidate.adapter is high_score
+
+    @pytest.mark.anyio
+    async def test_no_policy_engine_falls_back_to_adapter_order(self) -> None:
+        """Without a policy engine, adapter registration order is the tie-breaker."""
+        first = MockRailAdapter(rail="x402")
+        second = MockRailAdapter(rail="l402")
+        router = Router(
+            [first, second],
+            weights=ScoringWeights(cost=0.0, latency=0.0, reliability=0.0, privacy=0.0),
+            latency_p50_ms={"x402": 1000, "l402": 1000},
+            reliability={"x402": 1.0, "l402": 1.0},
+        )
+        choice = await router.decide(
+            request=_request(),
+            response=_402_response(),
+            policy_engine=None,
+            funding=[],
+            envelope_currency=None,
+            fmv_snapshot=None,
+        )
+        assert choice.candidate.adapter is first
