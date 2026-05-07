@@ -17,6 +17,7 @@ from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.receipts import uuid7 as _uuid7
 from routeweiler.budgets.schema import DrawReceipt
 from routeweiler.errors import (
+    FmvUnavailableError,
     NoFeasibleRailError,
     PolicyDeniedError,
     PolicyMaxPerCallExceededError,
@@ -99,6 +100,7 @@ class RouteweilerAuth(httpx.Auth):
         budget_store: BudgetStore | None = None,
         envelope_id: str | None = None,
         envelope_currency: str | None = None,
+        envelope_allowed_rails: list[str] | None = None,
         policy_engine: PolicyEngine | None = None,
         credential_store: CredentialStore | None = None,
         recoverer: CredentialRecoverer | None = None,
@@ -112,6 +114,7 @@ class RouteweilerAuth(httpx.Auth):
         self._budget_store = budget_store
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
+        self._envelope_allowed_rails: frozenset[str] = frozenset(envelope_allowed_rails or [])
         self._policy_engine = policy_engine
         self._credential_store = credential_store
         self._recoverer = recoverer
@@ -229,32 +232,54 @@ class RouteweilerAuth(httpx.Auth):
                 self._budget_store is not None
                 and self._envelope_id is not None
                 and self._envelope_currency is not None
-                and quote is not None  # None means FMV conversion failed; skip draw
             ):
-                idempotency_key = _make_idempotency_key(request_id, state.attempt)
-                try:
-                    receipt = await self._budget_store.draw(
-                        envelope_id=self._envelope_id,
-                        request_id=request_id,
-                        idempotency_key=idempotency_key,
-                        amount_reserved_minor_units=quote,
-                        rail_quoted=adapter.rail,
-                    )
-                except Exception as exc:
-                    if self._emitter:
-                        try:
-                            await self._emitter.emit_error(
-                                request=request,
-                                response=response,
-                                error=exc,
-                                challenge=challenge,
-                                ts_start=ts_start,
-                                ts_end=datetime.now(UTC),
-                                fallback_from=choice.fallback_from,
-                            )
-                        except Exception:
-                            _log.exception("Trace emit failed.")
-                    raise  # budget errors are not failover-able
+                if quote is None:
+                    if adapter.rail in self._envelope_allowed_rails:
+                        # FMV failed for a rail the envelope explicitly covers — fail closed.
+                        fmv_err = FmvUnavailableError(
+                            f"FMV conversion failed for all candidate rails on {request.url}; "
+                            "refusing to pay uncapped."
+                        )
+                        if self._emitter:
+                            try:
+                                await self._emitter.emit_error(
+                                    request=request,
+                                    response=response,
+                                    error=fmv_err,
+                                    challenge=challenge,
+                                    ts_start=ts_start,
+                                    ts_end=datetime.now(UTC),
+                                    fallback_from=choice.fallback_from,
+                                )
+                            except Exception:
+                                _log.exception("Trace emit failed.")
+                        raise fmv_err
+                    # Rail not in envelope's allowed_rails — skip draw, no enforcement.
+                else:
+                    idempotency_key = _make_idempotency_key(request_id, state.attempt)
+                    try:
+                        receipt = await self._budget_store.draw(
+                            envelope_id=self._envelope_id,
+                            request_id=request_id,
+                            idempotency_key=idempotency_key,
+                            amount_reserved_minor_units=quote,
+                            rail_quoted=adapter.rail,
+                        )
+                    except Exception as exc:
+                        if self._emitter:
+                            try:
+                                await self._emitter.emit_error(
+                                    request=request,
+                                    response=response,
+                                    error=exc,
+                                    challenge=challenge,
+                                    ts_start=ts_start,
+                                    ts_end=datetime.now(UTC),
+                                    fallback_from=choice.fallback_from,
+                                )
+                            except Exception:
+                                _log.exception("Trace emit failed.")
+                        raise  # budget errors are not failover-able
 
             # -----------------------------------------------------------------
             # Pay phase — produce the PaymentResult.

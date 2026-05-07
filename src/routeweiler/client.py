@@ -186,6 +186,7 @@ class Routeweiler:
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
         envelope_currency: str | None = None
+        envelope_allowed_rails: list[str] = []
         credential_store: CredentialStore | None = None
         recoverer: CredentialRecoverer | None = None
 
@@ -202,13 +203,14 @@ class Routeweiler:
                 ecb_provider=ecb_provider,
             )
 
-            # Resolve the envelope's declared currency from the DB.
+            # Resolve the envelope's declared currency and allowed rails from the DB.
             envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
             if envelope_currency is None:
                 raise EnvelopeNotFoundError(
                     f"Envelope '{envelope_id}' not found. "
                     "Create it with BudgetStore.create_envelope() before constructing Routeweiler."
                 )
+            envelope_allowed_rails = budget_store.get_envelope_allowed_rails_sync(envelope_id)
 
             emitter = TraceEmitter(
                 sink=trace_sink,
@@ -269,6 +271,7 @@ class Routeweiler:
             budget_store=budget_store,
             envelope_id=envelope_id if budget_store is not None else None,
             envelope_currency=envelope_currency,
+            envelope_allowed_rails=envelope_allowed_rails,
             policy_engine=policy_engine,
             credential_store=credential_store,
             recoverer=recoverer,

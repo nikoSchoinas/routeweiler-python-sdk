@@ -26,7 +26,15 @@ from starlette.routing import Route
 from routeweiler import BudgetExceededError, Funding, Routeweiler
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
+from routeweiler.errors import FmvUnavailableError
 from routeweiler.trace.sink_sqlite import TraceSink
+from tests.fixtures.fake_lnd import FakeLndClient
+from tests.fixtures.l402_mock_server import (
+    MOCK_PREIMAGE,
+)
+from tests.fixtures.l402_mock_server import (
+    mock_l402_app as _mock_l402_app,
+)
 from tests.fixtures.x402_mock_server import MOCK_CHALLENGE_B64, MOCK_TX_HASH
 
 # ---------------------------------------------------------------------------
@@ -303,3 +311,64 @@ async def test_draw_idempotency_no_double_count(tmp_trace_db_path: Path) -> None
     assert draw_a.receipt_id == draw_b.receipt_id
     draws = _draw_rows(tmp_trace_db_path)
     assert len(draws) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — FMV outage fails closed (Gap 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_fmv_outage_raises_for_covered_rail(
+    tmp_trace_db_path: Path,
+) -> None:
+    """When FMV conversion fails for a rail the envelope explicitly covers,
+    `FmvUnavailableError` is raised rather than letting payment proceed uncapped.
+
+    Scenario: L402 envelope (allowed_rails=["l402"]) with no fmv_provider configured
+    so the FMV snapshot has no sats->usd rate.  When the L402 402 arrives,
+    _fmv_quote returns None for the sats-denominated challenge, and the auth flow
+    raises FmvUnavailableError instead of proceeding uncapped.
+    """
+    transport = httpx.ASGITransport(app=_mock_l402_app)  # type: ignore[arg-type]
+
+    # Build a BudgetStore with an l402 envelope but NO fmv_provider — sats->usd absent.
+    keystore = EnvelopeKeystore(root=tmp_trace_db_path.parent / "keys_fmv")
+    sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
+    await sink.start()
+    store = BudgetStore(tmp_trace_db_path, keystore)  # no fmv_provider
+    await store.create_envelope(
+        "l402-env",
+        cap_minor_units=50_000,
+        cap_currency="usd",
+        allowed_rails=["l402"],
+        ttl_seconds=3600,
+    )
+
+    lnd = FakeLndClient(preimage=MOCK_PREIMAGE)
+    client = Routeweiler(
+        funding=[
+            Funding.lightning_lnd(
+                client=lnd, network="bitcoin-regtest", node_pubkey="03" + "ab" * 32
+            )
+        ],
+        trace_sink=sink,
+        budget_envelope="l402-env",
+        keystore_root=tmp_trace_db_path.parent / "keys_fmv",
+    )
+    client._http = httpx.AsyncClient(
+        auth=client._http.auth,
+        event_hooks=client._http.event_hooks,
+        transport=transport,
+    )
+
+    # The l402-env explicitly covers the l402 rail; no sats rate → must raise.
+    with pytest.raises(FmvUnavailableError):
+        await client.get("http://mock/protected")
+
+    await client.aclose()
+
+    # An error trace must have been emitted.
+    traces = _trace_rows(tmp_trace_db_path)
+    assert len(traces) == 1
+    payload = json.loads(traces[0]["payload"])
+    assert payload["outcome"]["error"]["code"] == "FmvUnavailableError"
