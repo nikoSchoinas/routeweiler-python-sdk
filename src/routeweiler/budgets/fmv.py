@@ -88,6 +88,16 @@ def _erc20_address(caip19: str) -> str | None:
     return None
 
 
+def _tip20_address(currency: str) -> str | None:
+    """Extract the lowercase contract address from a TIP-20 currency string, or None.
+
+    Tempo tokens use the format ``"<address>-tip20"`` (e.g. ``"0x20c0...-tip20"``).
+    """
+    if currency.endswith("-tip20"):
+        return currency[: -len("-tip20")].lower()
+    return None
+
+
 def amount_to_envelope_minor_units(
     rail_currency: str,
     amount_native: int,
@@ -118,7 +128,7 @@ def amount_to_envelope_minor_units(
         result = _apply_rate_with_buffer(Decimal(amount_native), rate, 1)
         return result, "fx_leg"
 
-    address = _erc20_address(rail_currency)
+    address = _erc20_address(rail_currency) or _tip20_address(rail_currency)
 
     if address and address in STABLECOIN_PEG:
         peg = STABLECOIN_PEG[address]
@@ -228,7 +238,7 @@ def fmv_for_trace(
             return float(Decimal(str(amount_native)) * rate), "fx_leg"
         return None, "unavailable"
 
-    address = _erc20_address(caip19_currency)
+    address = _erc20_address(caip19_currency) or _tip20_address(caip19_currency)
 
     if address and address in STABLECOIN_PEG:
         peg = STABLECOIN_PEG[address]

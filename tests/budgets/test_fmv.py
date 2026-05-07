@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from routeweiler.assets import ASSETS_BY_ADDRESS
 from routeweiler.budgets.fmv import (
     amount_to_envelope_minor_units,
     capture_fmv_snapshot,
@@ -185,6 +186,41 @@ def test_capture_fmv_snapshot_live_cross_rates_override_offline() -> None:
     rates, quality = capture_fmv_snapshot("eur", cross_rates=live)
     assert rates["usd->eur"] == Decimal("0.95")
     assert quality["usd->eur"] == "fx_leg"
+
+
+# ---------------------------------------------------------------------------
+# TIP-20 stablecoin peg (Tempo tokens — "<address>-tip20" format)
+# ---------------------------------------------------------------------------
+
+# PathUSD on Tempo uses the TIP-20 format with the USDC-pegged contract address.
+_TEMPO_PATHUSD = "0x0000000000000000000000000000000000000001-tip20"
+
+
+def test_tip20_stablecoin_peg_same_currency() -> None:
+    """TIP-20 token pegged to USD converts 1:1 in a USD envelope."""
+    usdc_base_addr = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    assert usdc_base_addr in ASSETS_BY_ADDRESS
+    tip20_currency = f"{usdc_base_addr}-tip20"
+    # 1 USDC = 1_000_000 base units; expect 100 cents (1 USD).
+    result, quality = amount_to_envelope_minor_units(tip20_currency, 1_000_000, "usd")
+    assert result == 100
+    assert quality == "stablecoin_peg"
+
+
+def test_tip20_stablecoin_peg_case_insensitive() -> None:
+    """TIP-20 address extraction is case-insensitive."""
+    usdc_base_addr = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    tip20_upper = f"{usdc_base_addr.upper()}-tip20"
+    result, quality = amount_to_envelope_minor_units(tip20_upper, 1_000_000, "usd")
+    assert result == 100
+    assert quality == "stablecoin_peg"
+
+
+def test_tip20_unknown_address_raises_fmv_unavailable() -> None:
+    """Unknown TIP-20 address raises FmvUnavailableError (not silently skipped)."""
+    unknown_tip20 = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef-tip20"
+    with pytest.raises(FmvUnavailableError):
+        amount_to_envelope_minor_units(unknown_tip20, 1_000_000, "usd")
 
 
 def test_capture_fmv_snapshot_offline_used_for_missing_live_pair() -> None:
