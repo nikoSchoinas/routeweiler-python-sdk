@@ -13,7 +13,7 @@ from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.receipts import canonical_payload
 from routeweiler.budgets.receipts import verify as verify_receipt
-from routeweiler.budgets.schema import DrawReceipt
+from routeweiler.budgets.schema import BudgetEnvelopeSpec, DrawReceipt
 from routeweiler.errors import (
     BudgetExceededError,
     EnvelopeExpiredError,
@@ -100,6 +100,43 @@ async def test_create_envelope_duplicate_raises(tmp_budget_store: BudgetStore) -
     # fires before the DB insert is even attempted.
     with pytest.raises(KeystoreAlreadyExistsError):
         await _make_envelope(tmp_budget_store)
+
+
+async def test_create_envelope_if_absent_creates_new(
+    tmp_budget_store: BudgetStore, tmp_trace_db_path: Path
+) -> None:
+    spec = BudgetEnvelopeSpec(
+        id="spec-new",
+        cap_minor_units=500,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3_600,
+    )
+    created = await tmp_budget_store.create_envelope_if_absent(spec)
+    assert created is True
+    conn = sqlite3.connect(str(tmp_trace_db_path))
+    row = conn.execute("SELECT cap_minor_units FROM envelopes WHERE id='spec-new'").fetchone()
+    conn.close()
+    assert row is not None
+    assert row[0] == 500
+
+
+async def test_create_envelope_if_absent_is_noop_when_exists(
+    tmp_budget_store: BudgetStore,
+) -> None:
+    spec = BudgetEnvelopeSpec(
+        id="spec-existing",
+        cap_minor_units=500,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3_600,
+    )
+    first = await tmp_budget_store.create_envelope_if_absent(spec)
+    assert first is True
+
+    # Second call must not raise and must return False.
+    second = await tmp_budget_store.create_envelope_if_absent(spec)
+    assert second is False
 
 
 async def test_create_envelope_no_orphan_key_on_db_failure(
