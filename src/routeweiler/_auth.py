@@ -119,6 +119,11 @@ class RouteweilerAuth(httpx.Auth):
         self._credential_store = credential_store
         self._recoverer = recoverer
 
+    def bind_envelope(self, *, currency: EnvelopeCurrency, allowed_rails: list[Rail]) -> None:
+        """Update envelope currency and allowed-rails after deferred spec creation."""
+        self._envelope_currency = currency
+        self._envelope_allowed_rails = frozenset(allowed_rails)
+
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # Sync path not supported — callers must use AsyncClient.
         raise NotImplementedError(

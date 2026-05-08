@@ -35,7 +35,7 @@ class TraceEmitter:
         self,
         sink: SqliteTraceSink,
         envelope_id: str,
-        envelope_currency: EnvelopeCurrency,
+        envelope_currency: EnvelopeCurrency | None,
         funding_label: str | None,
         url_mode: UrlEncoding,
         policy_hash: str,
@@ -48,6 +48,10 @@ class TraceEmitter:
         self._url_mode = url_mode
         self._policy_hash = policy_hash
         self._agent_id = agent_id
+
+    def bind_envelope_currency(self, currency: EnvelopeCurrency) -> None:
+        """Update the envelope currency after deferred spec creation."""
+        self._envelope_currency = currency
 
     # ------------------------------------------------------------------
     # Public emit helpers
@@ -67,6 +71,9 @@ class TraceEmitter:
         fallback_from: Rail | None = None,
         snapshot_rates: dict[str, Decimal] | None = None,
     ) -> None:
+        # envelope_currency is None only before start() resolves a BudgetEnvelopeSpec;
+        # emit_paid is always called after the auth flow completes, so start() has run.
+        assert self._envelope_currency is not None, "envelope_currency must be set before emit"
         settlement_ms = _ms(ts_retry, ts_end)
         challenge = _apply_url_mode(challenge, self._url_mode)
         payment = _build_payment(
