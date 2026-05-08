@@ -40,6 +40,39 @@ class BudgetEnvelope(RouteweilerModel):
     counter_public_key: str = ""
 
 
+class BudgetEnvelopeSpec(RouteweilerModel):
+    """Declarative spec for creating a spending envelope inside ``Routeweiler.__aenter__``.
+
+    Pass an instance as ``budget_envelope`` to ``Routeweiler(...)`` to have the
+    envelope created idempotently when the client enters its context — no separate
+    ``client.envelopes.create(...)`` call or two-step construction required::
+
+        async with Routeweiler(
+            funding=[Funding.base_usdc(wallet=signer)],
+            trace_sink=TraceSink.sqlite("rw.db"),
+            budget_envelope=BudgetEnvelopeSpec(
+                id="session-abc",
+                cap_minor_units=500,
+                cap_currency="usd",
+                allowed_rails=["x402", "l402"],
+                ttl_seconds=3_600,
+            ),
+        ) as client:
+            ...
+
+    If an envelope with the same ``id`` already exists in the database the spec is
+    silently ignored and the existing envelope is used.
+    """
+
+    id: str
+    cap_minor_units: int
+    cap_currency: EnvelopeCurrency
+    allowed_rails: list[Rail]
+    ttl_seconds: int
+    allowed_origins_glob: list[str] | None = None
+    owner_agent_id: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # DrawReceipt
 # ---------------------------------------------------------------------------
