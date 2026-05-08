@@ -64,7 +64,7 @@ class _EnvelopeRow(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# Default draw TTL — §8.4: "default 2x p99 settlement latency".
+# Default draw TTL — 2x p99 settlement latency.
 # The 30-second clock-skew buffer (CLOCK_SKEW_BUFFER_SECONDS) is added on top
 # at insert time so the durable record includes the full intended window.
 # ---------------------------------------------------------------------------
@@ -81,10 +81,10 @@ class BudgetStore:
     """Single-process SQLite budget counter.
 
     Uses BEGIN IMMEDIATE transactions for atomic cap-check + insert.
-    Budget enforcement is always local (§8 — no hosted counter at MVP).
+    Budget enforcement is always local (no hosted counter at MVP).
     Initialises the envelopes and draws tables on construction (idempotent).
 
-    The reaper task (§8.3) is started by calling ``await store.start()`` once
+    The reaper task is started by calling ``await store.start()`` once
     the event loop is running (e.g. from ``Routeweiler.__aenter__``).
     """
 
@@ -130,7 +130,7 @@ class BudgetStore:
             )
 
     async def _reap_loop(self) -> None:
-        """Roll back stale reserved draws periodically (§8.3)."""
+        """Roll back stale reserved draws periodically."""
         while True:
             await asyncio.sleep(self._reaper_interval_seconds)
             try:
@@ -401,7 +401,7 @@ class BudgetStore:
         # Fetch per-satoshi rate for L402 budget enforcement.
         # A provider outage must not block envelope creation — log a warning and proceed
         # without sats rates; draws on l402 will raise FmvUnavailableError at runtime until
-        # a new envelope is created with fresh rates (§10.3 daily refresh is post-MVP).
+        # a new envelope is created with fresh rates (daily refresh is post-MVP).
         sats_rates: dict[str, Decimal] | None = None
         if "l402" in allowed_rails:
             if self._fmv_provider is not None:
@@ -537,7 +537,7 @@ class BudgetStore:
     ) -> DrawReceipt:
         """Atomically reserve capacity from the envelope and return a signed receipt.
 
-        Implements §8.2: BEGIN IMMEDIATE → cap check → idempotency → INSERT → COMMIT.
+        BEGIN IMMEDIATE → cap check → idempotency → INSERT → COMMIT.
         Raises BudgetExceededError, EnvelopeNotFoundError, EnvelopeFrozenError,
         or EnvelopeExpiredError on rejection.
         """
@@ -565,7 +565,7 @@ class BudgetStore:
         conn = self._conn
         now = datetime.now(UTC)
         # Include clock-skew buffer so the reaper doesn't fire before the
-        # active path can confirm/rollback (§8.4).
+        # active path can confirm/rollback.
         expires = now + timedelta(seconds=ttl_seconds + CLOCK_SKEW_BUFFER_SECONDS)
 
         conn.execute("BEGIN IMMEDIATE")
@@ -593,7 +593,7 @@ class BudgetStore:
 
             # Idempotency short-circuit — return a re-signed receipt for the same draw.
             # request_id is re-read from the stored row so the receipt is byte-identical
-            # to the one returned on the original call (§8.2: "return the existing receipt
+            # to the one returned on the original call ("return the existing receipt
             # unchanged").
             existing = conn.execute(
                 "SELECT id, request_id, amount_reserved_minor_units, rail_quoted, "

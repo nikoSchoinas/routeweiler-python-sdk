@@ -1,4 +1,4 @@
-"""Tests for StickyCache — §7.2 sticky routing."""
+"""Tests for StickyCache — sticky routing."""
 
 from __future__ import annotations
 

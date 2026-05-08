@@ -305,7 +305,7 @@ class RouteweilerAuth(httpx.Auth):
 
             # -----------------------------------------------------------------
             # Persist credential before the retry so a crash mid-retry leaves a
-            # recoverable PERSISTED row (§9.2 — "before the retry is attempted").
+            # recoverable PERSISTED row — persisted before the retry is attempted.
             # -----------------------------------------------------------------
             credential_record = await self._persist_credential_safe(
                 request_id, adapter.rail, str(request.url), payment_result, challenge
@@ -518,6 +518,6 @@ def _make_idempotency_key(request_id: str, attempt: int) -> str:
     """Deterministic idempotency key derived from (request_id, attempt).
 
     Using SHA-256 means a retried failover with the same (request_id, attempt)
-    naturally collapses to the same draw (§7.3: "naturally idempotent").
+    naturally collapses to the same draw (naturally idempotent).
     """
     return hashlib.sha256(f"{request_id}:{attempt}".encode()).hexdigest()

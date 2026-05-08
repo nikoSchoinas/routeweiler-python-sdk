@@ -1,4 +1,4 @@
-"""Routeweiler routing engine - §7.1-§7.3 of the technical plan."""
+"""Routeweiler routing engine."""
 
 from routeweiler.routing.router import (
     DEFAULT_LATENCY_P50_MS,

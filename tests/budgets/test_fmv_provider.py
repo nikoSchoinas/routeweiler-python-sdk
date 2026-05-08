@@ -208,7 +208,7 @@ async def test_budget_store_create_envelope_degrades_gracefully_on_fmv_outage(
 
     The envelope is created without sats rates; L402 draws will raise
     FmvUnavailableError at draw time rather than blocking envelope creation.
-    This matches §10.3: only call-time cap enforcement fails closed.
+    This matches the rule that only call-time cap enforcement fails closed.
     """
 
     class FailingProvider:

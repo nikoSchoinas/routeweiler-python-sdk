@@ -143,7 +143,7 @@ class X402Adapter:
             offered = sorted({pr.scheme for pr in accepts})
             raise ChallengeParseError(
                 f"x402 accepts list has no 'exact' scheme entry (offered: {offered}); "
-                "only 'exact' is production-ready (see §17 for upto/stream roadmap)"
+                "only 'exact' is production-ready"
             )
 
         # Pick the first exact entry to populate challenge fields.  Funding availability

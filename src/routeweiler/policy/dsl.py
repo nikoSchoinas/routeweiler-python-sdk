@@ -73,7 +73,7 @@ class PolicyDocument(RouteweilerModel):
 
 
 # ---------------------------------------------------------------------------
-# Built-in default policy (§11.1 quickstart contract)
+# Built-in default policy
 # ---------------------------------------------------------------------------
 
 

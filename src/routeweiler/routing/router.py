@@ -1,12 +1,11 @@
 """Routing engine - routeDecision(challenge, policy, funding) -> Rail.
 
-Implements §7.1 (static scoring), §7.2 (sticky routing), and §7.3 (failover)
-of the Routeweiler technical plan.
+Implements static scoring, sticky routing, and failover.
 
-Static scoring weights (§7.1):
+Static scoring weights:
     cost 0.3 / latency 0.1 / reliability 0.4 / privacy 0.2
 
-Live signals (§7.4) stay on hardcoded tables until sufficient trace data
+Live signals stay on hardcoded tables until sufficient trace data
 accumulates (post-MVP).
 """
 
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Static hardcoded tables (§7.4 — replaced by rolling computation post-MVP)
+# Static hardcoded tables (replaced by rolling computation post-MVP)
 # ---------------------------------------------------------------------------
 
 # Median observed p50 latencies in milliseconds per rail type.
@@ -53,7 +52,7 @@ DEFAULT_RELIABILITY: dict[str, float] = {
     "mpp-spt": 0.90,
 }
 
-# Fallback for unknown rails; replaced by rolling 24h trace data post-MVP per §7.4.
+# Fallback for unknown rails; replaced by rolling 24h trace data post-MVP.
 _FALLBACK_LATENCY_MS = 5000
 _FALLBACK_RELIABILITY = 0.5
 
@@ -74,7 +73,7 @@ _INHERENT_PRIVACY: dict[str, float] = {
 
 @dataclass(frozen=True)
 class ScoringWeights:
-    """Weights for the §7.1 scoring formula (must sum to 1.0)."""
+    """Weights for the scoring formula (must sum to 1.0)."""
 
     cost: float = 0.3
     latency: float = 0.1
@@ -132,7 +131,8 @@ class RoutingChoice:
 
 
 class Router:
-    """Implements §7.1-§7.3 of the technical plan.
+    """Selects the best feasible rail for each 402 response using static scoring, sticky
+    routing, and failover.
 
     The router is constructed once per ``Routeweiler`` instance and called on
     every 402 response.  It is stateless w.r.t. routing decisions — the sticky
@@ -168,7 +168,7 @@ class Router:
     ) -> RoutingChoice:
         """Select the best feasible rail for this 402 response.
 
-        Steps (§7.1):
+        Steps:
         1. Enumerate adapters whose ``can_handle`` returns True and rail is not
            in ``excluded_rails``.
         2. Parse each adapter into a NormalizedChallenge (swallows per-adapter
@@ -208,7 +208,7 @@ class Router:
             )
 
         # Steps 3-4: policy filter
-        # ``deny`` is a hard exclusion; ``prefer`` is a scoring boost (§7.1) — non-prefer
+        # ``deny`` is a hard exclusion; ``prefer`` is a scoring boost — non-prefer
         # rails are NOT dropped here, they just score lower on the privacy dimension.
         policy_filtered: list[tuple[RailAdapter, NormalizedChallenge, PolicyDecision]] = []
         last_deny: PolicyDecision | None = None
@@ -310,7 +310,7 @@ def _select_winner(
 ) -> _ScoredCandidate:
     """Score candidates and return the winner.
 
-    Sticky rail wins immediately (§7.2) if it is among the survivors.
+    Sticky rail wins immediately if it is among the survivors.
     Ties broken by `default.rail` preference then candidate list order.
     """
     # Check sticky shortcut first.
@@ -351,7 +351,7 @@ def _score_breakdown(
     latency_p50_ms: Mapping[str, int],
     reliability: Mapping[str, float],
 ) -> dict[str, float]:
-    """Compute the §7.1 score breakdown for a single candidate.
+    """Compute the score breakdown for a single candidate.
 
     FMV-failed candidates (quote_envelope_minor_units is None) receive
     cost_score=0.0 — they rank worst on cost versus any candidate with a known

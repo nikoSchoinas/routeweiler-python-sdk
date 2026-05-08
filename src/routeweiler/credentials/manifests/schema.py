@@ -1,4 +1,4 @@
-"""Service-shape manifest schema — Pydantic models for §9.3 split-URL recovery manifests."""
+"""Service-shape manifest schema — Pydantic models for split-URL recovery manifests."""
 
 from __future__ import annotations
 

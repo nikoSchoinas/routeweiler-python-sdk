@@ -1,6 +1,6 @@
 """Credential recovery — state machine orchestration and recovery strategy protocol.
 
-The CredentialRecoverer drives the §9.1 state machine on the failed-retry path:
+The CredentialRecoverer drives the credential state machine on the failed-retry path:
     PERSISTED → RECOVERING → strategy.recover() → REDEEMED | MANUAL_HOLD
 
 Week 10 ships NoOpRecoveryStrategy (straight to MANUAL_HOLD(exhausted)).
@@ -65,7 +65,7 @@ class NoOpRecoveryStrategy:
     """Default: no recovery attempt — go straight to MANUAL_HOLD(exhausted).
 
     Replaced in Week 11 by a manifest-driven strategy that retries alternate
-    fulfilment URLs (split-URL recovery, §9.3).
+    fulfilment URLs (split-URL recovery).
     """
 
     async def recover(

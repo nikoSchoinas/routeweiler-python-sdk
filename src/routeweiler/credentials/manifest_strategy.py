@@ -1,4 +1,4 @@
-"""ManifestRecoveryStrategy — split-URL recovery driven by service-shape manifests (§9.3)."""
+"""ManifestRecoveryStrategy — split-URL recovery driven by service-shape manifests."""
 
 from __future__ import annotations
 

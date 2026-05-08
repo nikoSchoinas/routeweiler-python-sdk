@@ -94,7 +94,7 @@ class CredentialStore:
     Persists payment credentials (macaroon+preimage for L402, etc.) before
     the retry is attempted, enabling post-failure recovery.
 
-    State machine (§9.1):
+    State machine:
         PERSISTED → RECOVERING → REDEEMED | MANUAL_HOLD(exhausted|expired)
 
     Shares the same DB file as BudgetStore and SqliteTraceSink (multi-table,
@@ -156,7 +156,7 @@ class CredentialStore:
     ) -> CredentialRecord:
         """Atomically transition a credential to a new state.
 
-        Validates the transition against the §9.1 state machine graph.
+        Validates the transition against the state machine graph.
         Raises InvalidCredentialTransitionError for illegal edges.
         Raises CredentialNotFoundError if the credential does not exist.
         Transitioning to MANUAL_HOLD requires manual_hold_reason.

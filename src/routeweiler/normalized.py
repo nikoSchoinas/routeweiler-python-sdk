@@ -10,7 +10,7 @@ from pydantic import Field
 from routeweiler._base import RouteweilerLooseModel, RouteweilerModel
 
 Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
-# Only "exact" is production-ready; "upto"/"stream" are deferred to §17.
+# Only "exact" is production-ready; "upto"/"stream" are deferred.
 Scheme = Literal["exact"]
 # "hash" requires the hosted uploader (Phase 2); narrowed away until then.
 UrlEncoding = Literal["raw", "drop"]

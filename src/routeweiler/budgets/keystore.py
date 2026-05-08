@@ -4,7 +4,7 @@ Private keys are stored at ``~/.routeweiler/keys/env_<id>.ed25519`` (raw 32-byte
 format, permissions 0600).  Public keys are written into the envelopes SQLite
 row so rail adapters can verify DrawReceipts without accessing the key file.
 
-Key rotation is not supported (§8.5).  If a key is compromised, revoke the
+Key rotation is not supported.  If a key is compromised, revoke the
 envelope and create a new one.
 """
 

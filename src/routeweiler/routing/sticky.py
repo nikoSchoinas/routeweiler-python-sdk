@@ -36,7 +36,7 @@ class StickyCache:
 
     Once a rail is selected for a (origin, agent, session) tuple, the cache
     returns the same rail for subsequent calls until the entry expires.  This
-    avoids double-payment and inconsistent receipts as specified in §7.2.
+    avoids double-payment and inconsistent receipts.
 
     The effective TTL is the minimum of `ttl` (default 10 minutes) and the
     challenge's `expires_at` timestamp — both are passed to `remember`.

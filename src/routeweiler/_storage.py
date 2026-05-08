@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS draws (
     rail_quoted                 TEXT    NOT NULL,
     state                       TEXT    NOT NULL,   -- 'reserved' | 'settled' | 'rolled_back'
     issued_at                   TEXT    NOT NULL,   -- ISO-8601 UTC
-    expires_at                  TEXT    NOT NULL,   -- ISO-8601 UTC (+30s clock-skew buffer, §8.4)
+    expires_at                  TEXT    NOT NULL,   -- ISO-8601 UTC (+30s clock-skew buffer)
     settled_at                  TEXT,               -- ISO-8601 UTC; set on confirm
     UNIQUE (envelope_id, idempotency_key)
 );

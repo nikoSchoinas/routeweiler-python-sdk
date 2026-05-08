@@ -1,4 +1,4 @@
-"""Tests for Router — §7.1 static scoring and §7.3 filtering."""
+"""Tests for Router — static scoring and filtering."""
 
 from __future__ import annotations
 
@@ -262,7 +262,7 @@ class TestRouterPolicyFiltering:
 
     @pytest.mark.anyio
     async def test_prefer_falls_back_to_available_rail(self) -> None:
-        # prefer is a scoring boost (§7.1), not a hard filter.
+        # prefer is a scoring boost, not a hard filter.
         # When policy prefers l402 but only x402 is available, x402 is still selected.
         x402 = MockRailAdapter(rail="x402")
         router = Router([x402])
@@ -395,7 +395,7 @@ class TestRouterSticky:
 
 
 class TestDefaultRailTieBreak:
-    """The policy's `default.rail` breaks score ties (§7.1 step 8)."""
+    """The policy's `default.rail` breaks score ties."""
 
     def _equal_score_router(self) -> Router:
         """Router with identical weights so all rails score the same."""

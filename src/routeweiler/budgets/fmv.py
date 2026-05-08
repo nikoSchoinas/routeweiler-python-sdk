@@ -4,14 +4,14 @@ Cap enforcement converts rail-native amounts to the envelope's declared currency
 using rates cached at envelope creation and refreshed lazily if the snapshot is
 older than 24 hours.
 
-Conversion rules (§10.3):
+Conversion rules:
   1. Stablecoin peg matching (USDC→USD, EURC→EUR): 1:1, ``fmv_quality="stablecoin_peg"``.
   2. Stablecoin non-matching (USDC→EUR): peg to USD then ECB rate, ``fmv_quality="fx_leg"``.
   3. Sats/BTC → envelope currency: CoinGecko simple-price, ``fmv_quality="coingecko_simple"``.
   4. No cached rate: raises ``FmvUnavailableError`` (never silently bypasses the cap).
 
 A 5% buffer (``FMV_BUFFER``) is applied on cross-currency conversions so intra-day
-price moves don't silently breach the cap (§8.4).
+price moves don't silently breach the cap.
 
 Cross-fiat rates (EUR↔USD etc.) are pre-fetched at envelope creation via
 ``LiveEcbProvider`` (``budgets/ecb_provider.py``) and stored in the FMV snapshot.
@@ -115,7 +115,7 @@ def amount_to_envelope_minor_units(
     ``"<from>-><to>"``) is consulted; if no rate is available,
     ``FmvUnavailableError`` is raised.
 
-    The 5% ``FMV_BUFFER`` (§8.4) is applied to all non-peg conversions.
+    The 5% ``FMV_BUFFER`` is applied to all non-peg conversions.
     """
     env_cur = envelope_currency.lower()
 

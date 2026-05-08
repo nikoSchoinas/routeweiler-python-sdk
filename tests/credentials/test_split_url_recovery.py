@@ -1,4 +1,4 @@
-"""Non-negotiable §14.2 test — "The Refined Element bug is a passing test."
+"""Non-negotiable test — "The Refined Element bug is a passing test."
 
 If this test ever breaks, the PR does not merge.
 
@@ -121,7 +121,7 @@ async def test_split_url_recovery_returns_200_to_caller(
     tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
-    """§14.2 — The caller receives the recovered 200 from the fulfilment URL."""
+    """The caller receives the recovered 200 from the fulfilment URL."""
     client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
 
     resp = await client.get("http://mock/checkout/order_123")
@@ -138,7 +138,7 @@ async def test_split_url_recovery_credential_ends_in_redeemed(
     tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
-    """§14.2 — The credential transitions to REDEEMED after split-URL recovery."""
+    """The credential transitions to REDEEMED after split-URL recovery."""
     client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
 
     await client.get("http://mock/checkout/order_123")
@@ -159,7 +159,7 @@ async def test_split_url_recovery_trace_records_200(
     tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
-    """§14.2 — The trace event records the final 200 (not the intermediate 404)."""
+    """The trace event records the final 200 (not the intermediate 404)."""
     client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
 
     await client.get("http://mock/checkout/order_123")
@@ -185,7 +185,7 @@ async def test_split_url_recovery_no_manual_hold_trace_event(
     tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
-    """§14.2 — No MANUAL_HOLD trace event is emitted when recovery succeeds."""
+    """No MANUAL_HOLD trace event is emitted when recovery succeeds."""
     client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
 
     await client.get("http://mock/checkout/order_123")

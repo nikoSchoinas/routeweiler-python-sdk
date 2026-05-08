@@ -13,7 +13,7 @@ from routeweiler.policy.dsl import PolicyDocument, RuleMatch
 class PolicyDecision:
     """Result of evaluating a challenge against the policy.
 
-    `prefer` gives preferred rails a score boost in the routing engine (§7.1).
+    `prefer` gives preferred rails a score boost in the routing engine.
     `deny` and `max_per_call_minor_units` are enforced in `_auth.py` between
     the parse and draw phases.
     """
@@ -29,7 +29,7 @@ def _default_decision() -> PolicyDecision:
     """Return the allow-all decision used when no rule matches.
 
     `prefer` is empty so all capable adapters are considered; the router gives
-    preferred rails a score boost (§7.1), not a hard filter. Only `deny`
+    preferred rails a score boost, not a hard filter. Only `deny`
     performs hard exclusion.
     """
     return PolicyDecision(

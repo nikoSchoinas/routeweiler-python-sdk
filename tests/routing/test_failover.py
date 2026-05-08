@@ -1,4 +1,4 @@
-"""Integration tests for failover — §7.3.
+"""Integration tests for failover.
 
 Uses MockRailAdapter to simulate sign failures and verifies that:
 - The original draw is rolled back before the failover draw is issued.

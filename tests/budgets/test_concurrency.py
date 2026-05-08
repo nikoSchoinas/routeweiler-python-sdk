@@ -1,12 +1,11 @@
 """Concurrency + idempotency + rollback-corner-case integration tests.
 
-Week 8 deliverables §16 #3:
-    Single-envelope budget primitive passes deterministic concurrent-draw
-    integration tests covering reserved/settled invariants under partial-failure
-    scenarios (10k concurrent draws, idempotency, rollback).
+Single-envelope budget primitive passes deterministic concurrent-draw
+integration tests covering reserved/settled invariants under partial-failure
+scenarios (10k concurrent draws, idempotency, rollback).
 
 All tests are single-process asyncio — hosted multi-process budget counter is
-post-MVP (§17).
+post-MVP.
 """
 
 from __future__ import annotations
@@ -307,7 +306,7 @@ async def test_concurrent_same_idempotency_key_yields_one_row(
     idempotency short-circuit in _draw_sync guarantee:
     - Exactly ONE row is inserted.
     - Every task gets a DrawReceipt with the same receipt_id and the same
-      Ed25519 signature bytes (byte-identical re-issue, §8.2).
+      Ed25519 signature bytes (byte-identical re-issue).
     - Cap (1 unit) is reserved exactly once, never double-charged.
     """
     db = tmp_path / "idem_collision.db"
@@ -387,11 +386,11 @@ async def test_idempotency_scoped_to_envelope(
 async def test_idempotency_after_rollback_still_returns_existing_row(
     tmp_path: Path, tmp_keystore: EnvelopeKeystore
 ) -> None:
-    """Contract: a rolled-back draw's idempotency_key is permanent (§8.2).
+    """Contract: a rolled-back draw's idempotency_key is permanent.
 
     A re-draw with the same key returns the existing rolled-back receipt;
     no new row is created and the rolled-back amount is NOT re-reserved.
-    This is the intended behavior; relaxation is a post-MVP §17 item.
+    This is the intended behavior; relaxation is a post-MVP item.
     """
     db = tmp_path / "idem_rollback.db"
     s = BudgetStore(db, tmp_keystore)

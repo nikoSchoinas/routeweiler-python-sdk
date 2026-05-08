@@ -216,7 +216,7 @@ async def test_draw_idempotent_returns_existing_draw(tmp_budget_store: BudgetSto
 
 async def test_draw_idempotent_receipt_is_byte_identical(tmp_budget_store: BudgetStore) -> None:
     """Two draws with the same idempotency_key but different request_ids must return
-    byte-identical receipts (§8.2: "return the existing receipt unchanged").
+    byte-identical receipts ("return the existing receipt unchanged").
     The original request_id is preserved so canonical_payload and signature match.
     """
     await _make_envelope(tmp_budget_store)
@@ -314,7 +314,7 @@ async def test_confirm_marks_settled(
 async def test_confirm_uses_settled_amount_against_cap(
     tmp_budget_store: BudgetStore,
 ) -> None:
-    # Reserved + settled both count against the cap (§8.3).
+    # Reserved + settled both count against the cap.
     await _make_envelope(tmp_budget_store, cap=200)
     receipt_a = await _draw(tmp_budget_store, amount=100, ikey="a")
     await tmp_budget_store.confirm(receipt_a.receipt_id, 100)

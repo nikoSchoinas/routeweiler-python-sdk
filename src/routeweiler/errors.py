@@ -148,7 +148,7 @@ class CredentialNotFoundError(CredentialError):
 
 
 class InvalidCredentialTransitionError(CredentialError):
-    """Attempted state transition is not allowed by the §9.1 state machine."""
+    """Attempted state transition is not allowed by the credential state machine."""
 
 
 class ManifestParseError(CredentialError):
