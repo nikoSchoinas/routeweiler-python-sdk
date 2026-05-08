@@ -123,6 +123,9 @@ ignore = [
     "PLR0912",  # auth flow inherently has many branches (protocol phases + error paths)
     "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
 ]
+"src/routeweiler/client.py" = [
+    "PLR0915",  # Routeweiler.__init__ wires many subsystems (policy, budget, trace, auth, http)
+]
 "src/routeweiler/rails/_bolt11.py" = [
     "PLR0912",  # BOLT-11 decoder parses many tagged field types; branches are spec-faithful
     "PLR0915",  # BOLT-11 decode() has many sequential spec steps; not reducible without obscuring

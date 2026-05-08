@@ -13,7 +13,7 @@ from routeweiler.budgets.ecb_provider import EcbRateProvider
 from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore
-from routeweiler.budgets.schema import EnvelopeCurrency
+from routeweiler.budgets.schema import BudgetEnvelopeSpec, EnvelopeCurrency
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
 from routeweiler.credentials.recovery import CredentialRecoverer, RecoveryStrategy
@@ -139,11 +139,22 @@ class Routeweiler:
         funding:         One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
         policy:          Optional policy file (``PolicyFile("policy.yaml")``). When omitted,
                          the built-in default policy is used (prefer x402, no rules).
-        budget_envelope: ID of the envelope to draw from. Defaults to ``"default"``.
-                         The envelope must exist in the database (use BudgetStore.create_envelope
-                         to create custom envelopes before constructing the client).
-                         Budget enforcement requires a trace_sink; if trace_sink is None,
-                         no enforcement runs.
+        budget_envelope: Controls which spending envelope the client draws from.
+                         Three forms are accepted:
+
+                         * ``None`` (default) — use the built-in ``"default"`` envelope
+                           (seeded automatically at $100 USD / 30-day TTL).
+                         * ``str`` — ID of a pre-existing envelope.  The envelope must
+                           already be present in the database; ``EnvelopeNotFoundError``
+                           is raised at construction time if it is missing.
+                         * ``BudgetEnvelopeSpec`` — declarative spec.  The envelope is
+                           created idempotently inside ``__aenter__`` (i.e. the first
+                           ``async with Routeweiler(...) as client:`` call).  If an
+                           envelope with the same ``id`` already exists it is reused
+                           unchanged.
+
+                         Budget enforcement requires a ``trace_sink``; if ``trace_sink``
+                         is ``None`` no enforcement runs regardless of this argument.
         trace_sink:      SQLite trace sink. Pass ``TraceSink.sqlite(path)`` to
                          enable local tracing. Defaults to ``None`` (no tracing).
         agent_id:        Optional identifier for the calling agent. Written into
@@ -158,7 +169,7 @@ class Routeweiler:
         *,
         funding: list[FundingSource],
         policy: PolicyFile | PolicyDocument | None = None,
-        budget_envelope: str | None = None,
+        budget_envelope: str | BudgetEnvelopeSpec | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
         agent_id: str | None = None,
@@ -171,7 +182,13 @@ class Routeweiler:
         self._funding = funding
         self._trace_sink = trace_sink
         self._recovery_http: httpx.AsyncClient | None = None
-        envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
+        self._pending_envelope_spec: BudgetEnvelopeSpec | None = None
+
+        if isinstance(budget_envelope, BudgetEnvelopeSpec):
+            envelope_id = budget_envelope.id
+            self._pending_envelope_spec = budget_envelope
+        else:
+            envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
 
         # Build the policy engine and compute the hash regardless of trace_sink.
         if isinstance(policy, PolicyFile):
@@ -206,13 +223,21 @@ class Routeweiler:
             )
 
             # Resolve the envelope's declared currency and allowed rails from the DB.
-            envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
-            if envelope_currency is None:
-                raise EnvelopeNotFoundError(
-                    f"Envelope '{envelope_id}' not found. "
-                    "Create it with BudgetStore.create_envelope() before constructing Routeweiler."
-                )
-            envelope_allowed_rails = budget_store.get_envelope_allowed_rails_sync(envelope_id)
+            # When a BudgetEnvelopeSpec was supplied we skip this — the envelope may not
+            # exist yet; it is created idempotently in start() instead.
+            if self._pending_envelope_spec is None:
+                envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
+                if envelope_currency is None:
+                    raise EnvelopeNotFoundError(
+                        f"Envelope '{envelope_id}' not found. "
+                        "Create it with BudgetStore.create_envelope() before constructing "
+                        "Routeweiler, or pass a BudgetEnvelopeSpec as budget_envelope."
+                    )
+                envelope_allowed_rails = budget_store.get_envelope_allowed_rails_sync(envelope_id)
+            else:
+                # Spec path: currency/allowed_rails are populated in start() after creation.
+                envelope_currency = None
+                envelope_allowed_rails = []
 
             emitter = TraceEmitter(
                 sink=trace_sink,
@@ -278,6 +303,7 @@ class Routeweiler:
             credential_store=credential_store,
             recoverer=recoverer,
         )
+        self._auth = auth
         self._http = httpx.AsyncClient(auth=auth)
 
     # ------------------------------------------------------------------
@@ -373,6 +399,15 @@ class Routeweiler:
         """Start background tasks (reaper). Called automatically by __aenter__."""
         if self._budget_store is not None:
             await self._budget_store.start()
+            if self._pending_envelope_spec is not None:
+                spec = self._pending_envelope_spec
+                await self._budget_store.create_envelope_if_absent(spec)
+                currency = self._budget_store.get_envelope_currency_sync(spec.id)
+                allowed_rails = self._budget_store.get_envelope_allowed_rails_sync(spec.id)
+                assert currency is not None  # just created or pre-existing
+                self._auth.bind_envelope(currency=currency, allowed_rails=allowed_rails)
+                if self._emitter is not None:
+                    self._emitter.bind_envelope_currency(currency)
         if self._credential_store is not None:
             await self._credential_store.start()
         if self._trace_sink is not None:
