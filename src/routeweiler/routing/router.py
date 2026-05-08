@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from routeweiler.budgets.fmv import amount_to_envelope_minor_units
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.errors import NoFeasibleRailError, PolicyDeniedError, RailNotSupportedError
 from routeweiler.normalized import NormalizedChallenge, Rail
 from routeweiler.policy.engine import PolicyDecision, _default_decision
@@ -158,7 +159,7 @@ class Router:
         response: httpx.Response,
         policy_engine: PolicyEngine | None,
         funding: Sequence[FundingSource],
-        envelope_currency: str | None,
+        envelope_currency: EnvelopeCurrency | None,
         fmv_snapshot: dict[str, Decimal] | None,
         excluded_rails: frozenset[Rail] = frozenset(),
         sticky_rail: Rail | None = None,
@@ -413,7 +414,7 @@ def _parse_candidates(
 
 def _fmv_quote(
     challenge: NormalizedChallenge,
-    envelope_currency: str | None,
+    envelope_currency: EnvelopeCurrency | None,
     fmv_snapshot: dict[str, Decimal] | None,
 ) -> int | None:
     """Convert the challenge price to envelope minor units.

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from routeweiler._constants import FMV_BUFFER
 from routeweiler.assets import ASSETS_BY_ADDRESS
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.errors import FmvUnavailableError
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ def _tip20_address(currency: str) -> str | None:
 def amount_to_envelope_minor_units(
     rail_currency: str,
     amount_native: int,
-    envelope_currency: str,
+    envelope_currency: EnvelopeCurrency,
     *,
     snapshot_rates: dict[str, Decimal] | None = None,
 ) -> tuple[int, FmvQuality]:
@@ -211,7 +212,7 @@ def _apply_rate_with_buffer(amount_major: Decimal, rate: Decimal, minor_per_majo
 def fmv_for_trace(
     caip19_currency: str,
     amount_native: int,
-    envelope_currency: str,
+    envelope_currency: EnvelopeCurrency,
     snapshot_rates: dict[str, Decimal] | None = None,
 ) -> tuple[float | None, FmvQuality]:
     """Compute FMV for trace emission — never blocks a payment.

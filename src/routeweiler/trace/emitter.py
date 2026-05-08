@@ -12,6 +12,7 @@ import httpx
 from routeweiler._constants import HTTP_CLIENT_ERROR_THRESHOLD as _HTTP_CLIENT_ERROR_THRESHOLD
 from routeweiler.budgets.fmv import fmv_for_trace as _fmv_for_trace
 from routeweiler.budgets.receipts import uuid7 as _uuid7
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.trace.schema import (
     Outcome,
     OutcomeError,
@@ -34,7 +35,7 @@ class TraceEmitter:
         self,
         sink: SqliteTraceSink,
         envelope_id: str,
-        envelope_currency: str,
+        envelope_currency: EnvelopeCurrency,
         funding_label: str | None,
         url_mode: UrlEncoding,
         policy_hash: str,
@@ -237,7 +238,7 @@ def _build_payment(
     payment_result: PaymentResult,
     settlement: SettlementInfo,
     settlement_latency_ms: int,
-    envelope_currency: str,
+    envelope_currency: EnvelopeCurrency,
     snapshot_rates: dict[str, Decimal] | None = None,
 ) -> PaymentDetails:
     currency = challenge.price.currency
