@@ -28,7 +28,7 @@ from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.receipts import issue as _issue_receipt
 from routeweiler.budgets.receipts import uuid7
 from routeweiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
-from routeweiler.budgets.schema import DrawReceipt
+from routeweiler.budgets.schema import DrawReceipt, EnvelopeCurrency
 from routeweiler.errors import (
     BudgetError,
     BudgetExceededError,
@@ -332,7 +332,7 @@ class BudgetStore:
         row = self._conn.execute("SELECT 1 FROM envelopes WHERE id = ?", (envelope_id,)).fetchone()
         return row is not None
 
-    def get_envelope_currency_sync(self, envelope_id: str) -> str | None:
+    def get_envelope_currency_sync(self, envelope_id: str) -> EnvelopeCurrency | None:
         """Return the cap_currency for an envelope, or None if not found.
 
         Synchronous — runs on the already-open connection so it is safe to call
@@ -342,9 +342,9 @@ class BudgetStore:
         row = self._conn.execute(
             "SELECT cap_currency FROM envelopes WHERE id = ?", (envelope_id,)
         ).fetchone()
-        return str(row[0]) if row else None
+        return cast(EnvelopeCurrency, str(row[0])) if row else None
 
-    def get_envelope_allowed_rails_sync(self, envelope_id: str) -> list[str]:
+    def get_envelope_allowed_rails_sync(self, envelope_id: str) -> list[Rail]:
         """Return the allowed_rails list for an envelope (empty list if not found).
 
         Synchronous — safe to call from the Routeweiler constructor.
@@ -354,8 +354,7 @@ class BudgetStore:
         ).fetchone()
         if row is None:
             return []
-        rails: list[str] = json.loads(str(row[0]))
-        return rails
+        return cast(list[Rail], json.loads(str(row[0])))
 
     def load_fmv_snapshot_sync(self, envelope_id: str) -> dict[str, Decimal] | None:
         """Return the stored FMV snapshot rates for an envelope, or None if absent."""
