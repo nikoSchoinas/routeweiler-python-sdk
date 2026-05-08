@@ -15,7 +15,7 @@ import httpx
 from routeweiler._constants import HTTP_CLIENT_ERROR_THRESHOLD, HTTP_STATUS_PAYMENT_REQUIRED
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.receipts import uuid7 as _uuid7
-from routeweiler.budgets.schema import DrawReceipt
+from routeweiler.budgets.schema import DrawReceipt, EnvelopeCurrency
 from routeweiler.errors import (
     FmvUnavailableError,
     NoFeasibleRailError,
@@ -99,8 +99,8 @@ class RouteweilerAuth(httpx.Auth):
         emitter: TraceEmitter | None = None,
         budget_store: BudgetStore | None = None,
         envelope_id: str | None = None,
-        envelope_currency: str | None = None,
-        envelope_allowed_rails: list[str] | None = None,
+        envelope_currency: EnvelopeCurrency | None = None,
+        envelope_allowed_rails: list[Rail] | None = None,
         policy_engine: PolicyEngine | None = None,
         credential_store: CredentialStore | None = None,
         recoverer: CredentialRecoverer | None = None,
@@ -114,7 +114,7 @@ class RouteweilerAuth(httpx.Auth):
         self._budget_store = budget_store
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
-        self._envelope_allowed_rails: frozenset[str] = frozenset(envelope_allowed_rails or [])
+        self._envelope_allowed_rails: frozenset[Rail] = frozenset(envelope_allowed_rails or [])
         self._policy_engine = policy_engine
         self._credential_store = credential_store
         self._recoverer = recoverer

@@ -13,6 +13,7 @@ from routeweiler.budgets.ecb_provider import EcbRateProvider
 from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
 from routeweiler.credentials.recovery import CredentialRecoverer, RecoveryStrategy
@@ -23,6 +24,7 @@ from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.funding.lightning import LightningFundingSource
 from routeweiler.funding.stripe import StripeFundingSource
 from routeweiler.funding.tempo import TempoFundingSource
+from routeweiler.normalized import Rail
 from routeweiler.policy.dsl import PolicyDocument, PolicyFile, compute_policy_hash, default_policy
 from routeweiler.policy.engine import PolicyEngine
 from routeweiler.rails import ADAPTER_REGISTRY, RailAdapter
@@ -185,8 +187,8 @@ class Routeweiler:
 
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
-        envelope_currency: str | None = None
-        envelope_allowed_rails: list[str] = []
+        envelope_currency: EnvelopeCurrency | None = None
+        envelope_allowed_rails: list[Rail] = []
         credential_store: CredentialStore | None = None
         recoverer: CredentialRecoverer | None = None
 
