@@ -28,7 +28,7 @@ from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.receipts import issue as _issue_receipt
 from routeweiler.budgets.receipts import uuid7
 from routeweiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
-from routeweiler.budgets.schema import DrawReceipt, EnvelopeCurrency
+from routeweiler.budgets.schema import BudgetEnvelopeSpec, DrawReceipt, EnvelopeCurrency
 from routeweiler.errors import (
     BudgetError,
     BudgetExceededError,
@@ -467,6 +467,28 @@ class BudgetStore:
             # Roll back the key file so the envelope can be retried or diagnosed clearly.
             self._keystore.delete(envelope_id)
             raise
+
+    async def create_envelope_if_absent(self, spec: BudgetEnvelopeSpec) -> bool:
+        """Create an envelope from *spec* only when no row with that id exists.
+
+        Returns ``True`` when a new envelope was inserted, ``False`` when an
+        existing row was found (which is left untouched).  Delegates to
+        :meth:`create_envelope` so keystore creation, FMV snapshot fetch, and
+        the DB insert all follow the same code path.
+        """
+        async with self._lock:
+            if self.envelope_exists_sync(spec.id):
+                return False
+        await self.create_envelope(
+            spec.id,
+            cap_minor_units=spec.cap_minor_units,
+            cap_currency=spec.cap_currency,
+            allowed_rails=list(spec.allowed_rails),
+            allowed_origins_glob=spec.allowed_origins_glob,
+            ttl_seconds=spec.ttl_seconds,
+            owner_agent_id=spec.owner_agent_id,
+        )
+        return True
 
     def _create_envelope_sync(
         self,
