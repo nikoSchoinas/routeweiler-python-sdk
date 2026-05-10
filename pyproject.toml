@@ -124,6 +124,7 @@ ignore = [
     "PLR0915",  # auth flow inherently has many statements (protocol phases + error paths)
 ]
 "src/routeweiler/client.py" = [
+    "PLR0912",  # Routeweiler.__init__ has many branches (three envelope forms + two trace paths)
     "PLR0915",  # Routeweiler.__init__ wires many subsystems (policy, budget, trace, auth, http)
 ]
 "src/routeweiler/rails/_bolt11.py" = [

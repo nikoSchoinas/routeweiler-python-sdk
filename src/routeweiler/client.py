@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from routeweiler._auth import RouteweilerAuth
 from routeweiler.budgets.ecb_provider import EcbRateProvider
 from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
-from routeweiler.budgets.local import DEFAULT_ENVELOPE_ID, BudgetStore
+from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.schema import BudgetEnvelopeSpec, EnvelopeCurrency
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
@@ -32,6 +33,8 @@ from routeweiler.routing.router import Router
 from routeweiler.routing.sticky import StickyCache
 from routeweiler.trace.emitter import TraceEmitter
 from routeweiler.trace.sink_sqlite import SqliteTraceSink
+
+_log = logging.getLogger(__name__)
 
 
 class _EnvelopesNamespace:
@@ -142,8 +145,9 @@ class Routeweiler:
         budget_envelope: Controls which spending envelope the client draws from.
                          Three forms are accepted:
 
-                         * ``None`` (default) — use the built-in ``"default"`` envelope
-                           (seeded automatically at $100 USD / 30-day TTL).
+                         * ``None`` (default) — no budget enforcement.  Payments are
+                           made without any cap; trace events are still written when
+                           ``trace_sink`` is set, but ``envelope_id`` will be ``None``.
                          * ``str`` — ID of a pre-existing envelope.  The envelope must
                            already be present in the database; ``EnvelopeNotFoundError``
                            is raised at construction time if it is missing.
@@ -184,11 +188,14 @@ class Routeweiler:
         self._recovery_http: httpx.AsyncClient | None = None
         self._pending_envelope_spec: BudgetEnvelopeSpec | None = None
 
+        envelope_id: str | None
         if isinstance(budget_envelope, BudgetEnvelopeSpec):
             envelope_id = budget_envelope.id
             self._pending_envelope_spec = budget_envelope
+        elif isinstance(budget_envelope, str):
+            envelope_id = budget_envelope
         else:
-            envelope_id = budget_envelope or DEFAULT_ENVELOPE_ID
+            envelope_id = None
 
         # Build the policy engine and compute the hash regardless of trace_sink.
         if isinstance(policy, PolicyFile):
@@ -201,6 +208,14 @@ class Routeweiler:
             _policy_doc = default_policy()
             _policy_hash = compute_policy_hash(_policy_doc)
         policy_engine = PolicyEngine(_policy_doc)
+
+        if envelope_id is None and any(
+            r.max_per_call_minor_units is not None for r in _policy_doc.rules
+        ):
+            _log.warning(
+                "Policy contains max_per_call_minor_units rules but no budget_envelope was set. "
+                "Per-call monetary caps are inactive without an envelope."
+            )
 
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
@@ -223,9 +238,10 @@ class Routeweiler:
             )
 
             # Resolve the envelope's declared currency and allowed rails from the DB.
-            # When a BudgetEnvelopeSpec was supplied we skip this — the envelope may not
-            # exist yet; it is created idempotently in start() instead.
-            if self._pending_envelope_spec is None:
+            # Skip when no envelope was supplied (no enforcement) or when a
+            # BudgetEnvelopeSpec was supplied (the envelope may not exist yet; it is
+            # created idempotently in start() instead).
+            if envelope_id is not None and self._pending_envelope_spec is None:
                 envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
                 if envelope_currency is None:
                     raise EnvelopeNotFoundError(
@@ -235,7 +251,8 @@ class Routeweiler:
                     )
                 envelope_allowed_rails = budget_store.get_envelope_allowed_rails_sync(envelope_id)
             else:
-                # Spec path: currency/allowed_rails are populated in start() after creation.
+                # No envelope or spec path: currency/allowed_rails are None/empty.
+                # For specs, they are populated in start() after creation.
                 envelope_currency = None
                 envelope_allowed_rails = []
 
@@ -296,7 +313,7 @@ class Routeweiler:
             session_id=session_id,
             emitter=emitter,
             budget_store=budget_store,
-            envelope_id=envelope_id if budget_store is not None else None,
+            envelope_id=envelope_id,
             envelope_currency=envelope_currency,
             envelope_allowed_rails=envelope_allowed_rails,
             policy_engine=policy_engine,
