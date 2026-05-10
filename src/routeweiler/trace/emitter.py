@@ -13,6 +13,7 @@ from routeweiler._constants import HTTP_CLIENT_ERROR_THRESHOLD as _HTTP_CLIENT_E
 from routeweiler.budgets.fmv import fmv_for_trace as _fmv_for_trace
 from routeweiler.budgets.receipts import uuid7 as _uuid7
 from routeweiler.budgets.schema import EnvelopeCurrency
+from routeweiler.credentials.schema import CredentialState
 from routeweiler.trace.schema import (
     Outcome,
     OutcomeError,
@@ -149,7 +150,7 @@ class TraceEmitter:
             timestamp_start=ts,
             timestamp_end=ts,
             credential_id=credential.credential_id,
-            credential_state="manual_hold",
+            credential_state=CredentialState.MANUAL_HOLD,
         )
         await self._sink.emit(event)
 

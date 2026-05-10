@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 
 from routeweiler._base import RouteweilerModel
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.credentials.schema import CredentialState
 from routeweiler.normalized import NormalizedChallenge, ProofType, Rail
 
@@ -32,7 +33,7 @@ class PaymentDetails(RouteweilerModel):
     amount_native: int  # rail-native base units (wei, sats, cents)
     amount_native_currency: str  # CAIP-19 / "btc-lightning" / "<iso4217>-fiat"
     amount_envelope: float | None  # None when FMV is unavailable or no envelope
-    amount_envelope_currency: str | None  # None when no envelope is configured
+    amount_envelope_currency: EnvelopeCurrency | None  # None when no envelope is configured
     fmv_quality: FmvQuality
     settlement_latency_ms: int
 
