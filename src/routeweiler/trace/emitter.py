@@ -34,7 +34,7 @@ class TraceEmitter:
     def __init__(
         self,
         sink: SqliteTraceSink,
-        envelope_id: str,
+        envelope_id: str | None,
         envelope_currency: EnvelopeCurrency | None,
         funding_label: str | None,
         url_mode: UrlEncoding,
@@ -71,9 +71,6 @@ class TraceEmitter:
         fallback_from: Rail | None = None,
         snapshot_rates: dict[str, Decimal] | None = None,
     ) -> None:
-        # envelope_currency is None only before start() resolves a BudgetEnvelopeSpec;
-        # emit_paid is always called after the auth flow completes, so start() has run.
-        assert self._envelope_currency is not None, "envelope_currency must be set before emit"
         settlement_ms = _ms(ts_retry, ts_end)
         challenge = _apply_url_mode(challenge, self._url_mode)
         payment = _build_payment(
@@ -245,19 +242,31 @@ def _build_payment(
     payment_result: PaymentResult,
     settlement: SettlementInfo,
     settlement_latency_ms: int,
-    envelope_currency: EnvelopeCurrency,
+    envelope_currency: EnvelopeCurrency | None,
     snapshot_rates: dict[str, Decimal] | None = None,
 ) -> PaymentDetails:
     currency = challenge.price.currency
     amount_native = challenge.price.amount
 
-    amount_envelope, fmv_quality = _fmv_for_trace(
-        currency, amount_native, envelope_currency, snapshot_rates
-    )
-
     # proof_value: prefer the value set by the rail adapter in pay() (e.g. L402 preimage);
     # fall back to the tx_hash from the server's settlement response (x402).
     proof_value = payment_result.proof_value or settlement.tx_hash
+
+    if envelope_currency is None:
+        return PaymentDetails(
+            proof_type=payment_result.proof_type,
+            proof_value=proof_value,
+            amount_native=amount_native,
+            amount_native_currency=currency,
+            amount_envelope=None,
+            amount_envelope_currency=None,
+            fmv_quality="unavailable",
+            settlement_latency_ms=settlement_latency_ms,
+        )
+
+    amount_envelope, fmv_quality = _fmv_for_trace(
+        currency, amount_native, envelope_currency, snapshot_rates
+    )
 
     return PaymentDetails(
         proof_type=payment_result.proof_type,

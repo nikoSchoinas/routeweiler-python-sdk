@@ -31,8 +31,8 @@ class PaymentDetails(RouteweilerModel):
     proof_value: str | None  # None when facilitator omits the on-chain proof (mock/testnet)
     amount_native: int  # rail-native base units (wei, sats, cents)
     amount_native_currency: str  # CAIP-19 / "btc-lightning" / "<iso4217>-fiat"
-    amount_envelope: float | None  # None when FMV is unavailable
-    amount_envelope_currency: str  # mirrors the envelope's cap_currency
+    amount_envelope: float | None  # None when FMV is unavailable or no envelope
+    amount_envelope_currency: str | None  # None when no envelope is configured
     fmv_quality: FmvQuality
     settlement_latency_ms: int
 
@@ -71,7 +71,7 @@ class TraceEvent(RouteweilerModel):
     request_id: str
     parent_request_id: str | None = None  # sub-agent tree linkage
     agent_id: str | None = None
-    envelope_id: str
+    envelope_id: str | None  # None when no budget envelope is configured
     policy_hash: str
     challenge: NormalizedChallenge | None  # None for passthrough and pre-parse error traces
     selected_rail: Rail | None  # None for passthrough and pre-rail-selection error traces
