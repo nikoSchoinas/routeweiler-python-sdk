@@ -1,7 +1,7 @@
 # routeweiler
 
 <p align="center">
-  <img src="assets/routeweiler.png" alt="Routeweiler" width="480">
+  <img src="assets/routeweiler.png" alt="Routeweiler" width="720">
 </p>
 
 <p align="center">
