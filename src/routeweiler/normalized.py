@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from routeweiler._base import RouteweilerLooseModel, RouteweilerModel
+from routeweiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
 
 Rail = Literal["x402", "l402", "mpp-tempo", "mpp-spt"]
 # Only "exact" is production-ready; "upto"/"stream" are deferred.
@@ -22,7 +23,7 @@ class Resource(RouteweilerModel):
     url: str
     url_encoding: UrlEncoding
     # Reserved — only 402 today; non-402 challenges may exist post-MVP.
-    original_status: int = 402
+    original_status: int = HTTP_STATUS_PAYMENT_REQUIRED
 
 
 class Price(RouteweilerModel):
