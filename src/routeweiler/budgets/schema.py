@@ -14,6 +14,7 @@ from routeweiler.normalized import Rail
 
 EnvelopeCurrency = Literal["usd", "eur", "jpy", "gbp"]
 EnvelopeStatus = Literal["active", "frozen", "expired", "revoked"]
+DrawState = Literal["reserved", "settled", "rolled_back"]
 
 # ---------------------------------------------------------------------------
 # BudgetEnvelope
