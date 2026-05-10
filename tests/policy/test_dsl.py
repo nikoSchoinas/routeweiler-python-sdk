@@ -36,16 +36,16 @@ def test_load_three_rules_policy():
     assert doc.default.rail == "x402"
     assert len(doc.rules) == 3
     names = [r.name for r in doc.rules]
-    assert names == ["privacy-sensitive", "llm-inference-streaming", "deny-testnet"]
+    assert names == ["privacy-sensitive", "llm-inference-exact", "deny-testnet"]
 
     privacy_rule = doc.rules[0]
     assert privacy_rule.prefer == ["l402", "mpp-spt"]
     assert privacy_rule.reason == "on-chain payment leak unacceptable"
     assert privacy_rule.when.any is not None
 
-    stream_rule = doc.rules[1]
-    assert stream_rule.when.scheme == "stream"
-    assert stream_rule.max_per_call_minor_units == 500
+    exact_rule = doc.rules[1]
+    assert exact_rule.when.scheme == "exact"
+    assert exact_rule.max_per_call_minor_units == 500
 
     deny_rule = doc.rules[2]
     assert deny_rule.when.network == "base-sepolia"

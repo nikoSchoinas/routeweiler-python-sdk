@@ -11,7 +11,7 @@ import yaml
 from pydantic import Field, model_validator
 
 from routeweiler._base import RouteweilerModel
-from routeweiler.normalized import Rail
+from routeweiler.normalized import Rail, Scheme
 
 # ---------------------------------------------------------------------------
 # DSL models
@@ -30,7 +30,7 @@ class RuleMatch(RouteweilerModel):
     """
 
     url_matches: str | None = None  # fnmatch glob against challenge.resource.url
-    scheme: str | None = None  # exact match on NormalizedChallenge.scheme
+    scheme: Scheme | None = None  # exact match on NormalizedChallenge.scheme
     network: str | None = None  # x402-only: match any of accepts[i].network
     any: Annotated[list[RuleMatch] | None, Field(default=None)]  # short-circuit OR
 

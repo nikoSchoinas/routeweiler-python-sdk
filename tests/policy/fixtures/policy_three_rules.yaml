@@ -14,9 +14,9 @@ rules:
     prefer: [l402, mpp-spt]
     reason: "on-chain payment leak unacceptable"
 
-  - name: llm-inference-streaming
+  - name: llm-inference-exact
     when:
-      scheme: stream
+      scheme: exact
     prefer: [mpp-tempo, mpp-spt]
     max_per_call_minor_units: 500
 
