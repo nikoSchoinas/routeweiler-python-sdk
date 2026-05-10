@@ -60,8 +60,7 @@ asyncio.run(main())
 ## SQLite trace recorder
 
 Enable local tracing with `TraceSink.sqlite`. Every call (paid or free) produces
-exactly one `TraceEvent` row, including the on-chain tx hash, FMV in your envelope
-currency, and the payment outcome:
+exactly one `TraceEvent` row, including the on-chain tx hash and the payment outcome:
 
 ```python
 from routeweiler import Routeweiler, Funding, TraceSink
@@ -80,13 +79,11 @@ async with Routeweiler(
 ## Budget envelopes
 
 Enforce per-session or per-agent spend caps with local SQLite budget envelopes.
+Without a `budget_envelope`, tracing still works but **no cap is enforced** —
+payments proceed freely and `trace_events.envelope_id` is recorded as `NULL`.
 
-**Default envelope.** When you enable `trace_sink`, a `"default"` envelope is
-created automatically on first run: $100 USD cap, x402 rail only, 30-day TTL.
-
-**Custom envelopes.** Pass a `BudgetEnvelopeSpec` as `budget_envelope`. The
-client creates the envelope idempotently inside `async with` — no separate
-construction step needed.
+Pass a `BudgetEnvelopeSpec` as `budget_envelope` to opt in to enforcement. The
+client creates the envelope idempotently inside `async with`
 
 ```python
 from routeweiler import BudgetEnvelopeSpec, Funding, Routeweiler, TraceSink
@@ -107,7 +104,7 @@ async with Routeweiler(
 
 `budget_envelope` accepts three forms:
 
-- **`None`** (default) — use the built-in `"default"` envelope.
+- **`None`** (default) — no cap enforcement; traces are written with `envelope_id=NULL`.
 - **`str`** — ID of a pre-existing envelope; raises `EnvelopeNotFoundError` at
   construction time if the row is missing.
 - **`BudgetEnvelopeSpec`** — declarative spec; the envelope is created inside
@@ -142,6 +139,9 @@ rules:
   - name: "cap per call"
     max_per_call_minor_units: 500  # 5 USD cents
 ```
+
+> **Note:** `max_per_call_minor_units` is inactive unless a `budget_envelope` is also
+> configured. Routeweiler logs a warning at construction time if this combination is detected.
 
 ## License
 
