@@ -27,7 +27,13 @@ from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.receipts import issue as _issue_receipt
 from routeweiler.budgets.receipts import uuid7
 from routeweiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
-from routeweiler.budgets.schema import BudgetEnvelopeSpec, DrawReceipt, EnvelopeCurrency
+from routeweiler.budgets.schema import (
+    BudgetEnvelopeSpec,
+    DrawReceipt,
+    DrawState,
+    EnvelopeCurrency,
+    EnvelopeStatus,
+)
 from routeweiler.errors import (
     BudgetError,
     BudgetExceededError,
@@ -42,6 +48,15 @@ from routeweiler.normalized import Rail
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Closed-set state constants — type-checked at assignment, safe to embed in SQL.
+# ---------------------------------------------------------------------------
+
+_STATUS_ACTIVE: EnvelopeStatus = "active"
+_DRAW_STATE_RESERVED: DrawState = "reserved"
+_DRAW_STATE_SETTLED: DrawState = "settled"
+_DRAW_STATE_ROLLED_BACK: DrawState = "rolled_back"
+
+# ---------------------------------------------------------------------------
 # _EnvelopeRow — typed dict for SQLite envelope INSERT parameters.
 # ---------------------------------------------------------------------------
 
@@ -49,10 +64,10 @@ _log = logging.getLogger(__name__)
 class _EnvelopeRow(TypedDict):
     id: str
     cap_minor_units: int
-    cap_currency: str
+    cap_currency: EnvelopeCurrency
     allowed_rails: str  # json.dumps(list[Rail])
     allowed_origins_glob: str  # json.dumps(list[str])
-    status: str
+    status: EnvelopeStatus
     created_at: str  # ISO-8601 UTC
     expires_at: str  # ISO-8601 UTC
     counter_public_key: str
@@ -139,8 +154,8 @@ class BudgetStore:
         """Transition all expired reserved draws to rolled_back. Returns rowcount."""
         now = datetime.now(UTC).isoformat()
         cursor = self._conn.execute(
-            "UPDATE draws SET state='rolled_back' WHERE state='reserved' AND expires_at < ?",
-            (now,),
+            "UPDATE draws SET state=? WHERE state=? AND expires_at < ?",
+            (_DRAW_STATE_ROLLED_BACK, _DRAW_STATE_RESERVED, now),
         )
         return cursor.rowcount
 
@@ -160,22 +175,26 @@ class BudgetStore:
             rows = await asyncio.to_thread(
                 lambda: self._conn.execute(
                     "SELECT id, cap_currency, allowed_rails FROM envelopes "
-                    "WHERE status='active' AND expires_at > ?",
-                    (now_iso,),
+                    "WHERE status=? AND expires_at > ?",
+                    (_STATUS_ACTIVE, now_iso),
                 ).fetchall()
             )
         for row in rows:
             envelope_id, cap_currency, allowed_rails_json = row
-            allowed_rails: list[str] = json.loads(str(allowed_rails_json))
+            allowed_rails = cast(list[Rail], json.loads(str(allowed_rails_json)))
             try:
-                await self._refresh_one_snapshot(str(envelope_id), str(cap_currency), allowed_rails)
+                await self._refresh_one_snapshot(
+                    str(envelope_id),
+                    cast(EnvelopeCurrency, str(cap_currency)),
+                    allowed_rails,
+                )
             except Exception:
                 _log.exception(
                     "FMV snapshot refresh failed for envelope '%s'; skipping.", envelope_id
                 )
 
     async def _refresh_one_snapshot(
-        self, envelope_id: str, cap_currency: str, allowed_rails: list[str]
+        self, envelope_id: str, cap_currency: EnvelopeCurrency, allowed_rails: list[Rail]
     ) -> None:
         """Re-fetch provider rates and upsert the FMV snapshot for one envelope."""
         sats_rates: dict[str, Decimal] | None = None
@@ -314,8 +333,8 @@ class BudgetStore:
         envelope_id: str,
         *,
         cap_minor_units: int,
-        cap_currency: str,
-        allowed_rails: list[str],
+        cap_currency: EnvelopeCurrency,
+        allowed_rails: list[Rail],
         allowed_origins_glob: list[str] | None = None,
         ttl_seconds: int,
         owner_agent_id: str | None = None,
@@ -382,7 +401,7 @@ class BudgetStore:
             "cap_currency": cap_currency,
             "allowed_rails": json.dumps(allowed_rails),
             "allowed_origins_glob": json.dumps(allowed_origins_glob or ["*"]),
-            "status": "active",
+            "status": _STATUS_ACTIVE,
             "created_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
             "counter_public_key": pub_key_b64,
@@ -513,7 +532,7 @@ class BudgetStore:
                 raise EnvelopeNotFoundError(f"Envelope '{envelope_id}' not found.")
             cap, status, env_expires_raw, cap_currency, pub_key_b64 = env_row
 
-            if status != "active":
+            if status != _STATUS_ACTIVE:
                 raise EnvelopeFrozenError(
                     f"Envelope '{envelope_id}' has status '{status}' (expected 'active')."
                 )
@@ -555,13 +574,13 @@ class BudgetStore:
             # Cap check: reserved + settled must not exceed cap after this draw.
             reserved: int = conn.execute(
                 "SELECT COALESCE(SUM(amount_reserved_minor_units), 0) FROM draws "
-                "WHERE envelope_id = ? AND state = 'reserved'",
-                (envelope_id,),
+                "WHERE envelope_id = ? AND state = ?",
+                (envelope_id, _DRAW_STATE_RESERVED),
             ).fetchone()[0]
             settled: int = conn.execute(
                 "SELECT COALESCE(SUM(amount_settled_minor_units), 0) FROM draws "
-                "WHERE envelope_id = ? AND state = 'settled'",
-                (envelope_id,),
+                "WHERE envelope_id = ? AND state = ?",
+                (envelope_id, _DRAW_STATE_SETTLED),
             ).fetchone()[0]
 
             available = int(cap) - int(reserved) - int(settled)
@@ -579,7 +598,7 @@ class BudgetStore:
                     id, envelope_id, request_id, idempotency_key,
                     amount_reserved_minor_units, rail_quoted, state,
                     issued_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draw_id,
@@ -588,6 +607,7 @@ class BudgetStore:
                     idempotency_key,
                     amount_reserved_minor_units,
                     rail_quoted,
+                    _DRAW_STATE_RESERVED,
                     now.isoformat(),
                     expires.isoformat(),
                 ),
@@ -635,9 +655,15 @@ class BudgetStore:
     def _confirm_sync(self, draw_id: str, amount_settled_minor_units: int) -> None:
         now = datetime.now(UTC)
         cursor = self._conn.execute(
-            "UPDATE draws SET state='settled', amount_settled_minor_units=?, "
-            "settled_at=? WHERE id=? AND state='reserved'",
-            (amount_settled_minor_units, now.isoformat(), draw_id),
+            "UPDATE draws SET state=?, amount_settled_minor_units=?, "
+            "settled_at=? WHERE id=? AND state=?",
+            (
+                _DRAW_STATE_SETTLED,
+                amount_settled_minor_units,
+                now.isoformat(),
+                draw_id,
+                _DRAW_STATE_RESERVED,
+            ),
         )
         if cursor.rowcount == 0:
             row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
@@ -653,8 +679,8 @@ class BudgetStore:
 
     def _rollback_sync(self, draw_id: str) -> None:
         cursor = self._conn.execute(
-            "UPDATE draws SET state='rolled_back' WHERE id=? AND state='reserved'",
-            (draw_id,),
+            "UPDATE draws SET state=? WHERE id=? AND state=?",
+            (_DRAW_STATE_ROLLED_BACK, draw_id, _DRAW_STATE_RESERVED),
         )
         if cursor.rowcount == 0:
             row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
