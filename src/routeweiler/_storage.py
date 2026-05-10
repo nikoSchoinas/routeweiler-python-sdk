@@ -3,13 +3,7 @@
 All three SQLite-backed stores (BudgetStore, CredentialStore, SqliteTraceSink)
 open the same trace.db file.  This module is the single authority for:
   - How connections are opened (pragmas, WAL mode, foreign keys, busy_timeout).
-  - Which tables exist (DDL) and how they are migrated over time.
-
-Migration history
------------------
-trace_events v1 (W7): added ``fallback_from`` column.
-trace_events v2 (W11): made ``http_status`` nullable for MANUAL_HOLD events.
-schema_versions (cleanup): legacy dormant table dropped on schema init.
+  - Which tables exist (DDL).
 """
 
 from __future__ import annotations
@@ -83,7 +77,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS credentials_request_rail
 _TRACE_DDL = """
 CREATE TABLE IF NOT EXISTS trace_events (
     request_id              TEXT    PRIMARY KEY,
-    envelope_id             TEXT    NOT NULL,
+    envelope_id             TEXT,               -- NULL when no budget envelope is configured
     selected_rail           TEXT,               -- NULL for passthrough / pre-rail-selection errors
     fallback_from           TEXT,               -- NULL when no failover occurred
     facilitator             TEXT,
@@ -103,44 +97,6 @@ CREATE TABLE IF NOT EXISTS trace_events (
 CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
     ON trace_events (envelope_id, ts_start DESC);
 """
-
-# Migration SQL — add fallback_from column to trace_events rows created before W7.
-_MIGRATION_TRACE_V1_ADD_FALLBACK_FROM = "ALTER TABLE trace_events ADD COLUMN fallback_from TEXT"
-
-# Migration: rebuild trace_events to allow NULL in http_status (MANUAL_HOLD events have no
-# HTTP response). SQLite doesn't support ALTER COLUMN, so we rename + recreate + copy + drop.
-_MIGRATION_TRACE_V2_HTTP_STATUS_NULLABLE = """
-    ALTER TABLE trace_events RENAME TO trace_events_v2_migrate;
-    CREATE TABLE trace_events (
-        request_id              TEXT    PRIMARY KEY,
-        envelope_id             TEXT    NOT NULL,
-        selected_rail           TEXT,
-        fallback_from           TEXT,
-        facilitator             TEXT,
-        http_status             INTEGER,
-        service_delivered       INTEGER NOT NULL,
-        amount_native           TEXT,
-        amount_native_currency  TEXT,
-        amount_envelope         REAL,
-        amount_envelope_currency TEXT,
-        fmv_quality             TEXT,
-        ts_start                TEXT    NOT NULL,
-        ts_end                  TEXT    NOT NULL,
-        shipped_at              TEXT,
-        payload                 TEXT    NOT NULL
-    );
-    INSERT INTO trace_events SELECT
-        request_id, envelope_id, selected_rail, fallback_from, facilitator,
-        http_status, service_delivered,
-        amount_native, amount_native_currency,
-        amount_envelope, amount_envelope_currency, fmv_quality,
-        ts_start, ts_end, shipped_at, payload
-    FROM trace_events_v2_migrate;
-    DROP TABLE trace_events_v2_migrate;
-    CREATE INDEX IF NOT EXISTS trace_events_envelope_ts
-        ON trace_events (envelope_id, ts_start DESC);
-"""
-
 
 # ---------------------------------------------------------------------------
 # Connection factory
@@ -170,24 +126,11 @@ def open_connection(path: Path) -> sqlite3.Connection:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Idempotently create all tables and apply pending migrations.
+    """Idempotently create all tables.
 
     Safe to call on every store construction — all DDL uses
-    ``CREATE TABLE IF NOT EXISTS`` and migrations are version-gated.
+    ``CREATE TABLE IF NOT EXISTS``.
     """
     conn.executescript(_BUDGET_DDL)
     conn.executescript(_CREDENTIALS_DDL)
     conn.executescript(_TRACE_DDL)
-    _migrate_trace_schema(conn)
-    conn.execute("DROP TABLE IF EXISTS schema_versions")
-
-
-def _migrate_trace_schema(conn: sqlite3.Connection) -> None:
-    """Apply pending trace_events schema migrations."""
-    col_info = {
-        row[1]: {"notnull": row[3]} for row in conn.execute("PRAGMA table_info(trace_events)")
-    }
-    if "fallback_from" not in col_info:
-        conn.execute(_MIGRATION_TRACE_V1_ADD_FALLBACK_FROM)
-    if col_info.get("http_status", {}).get("notnull", 0) == 1:
-        conn.executescript(_MIGRATION_TRACE_V2_HTTP_STATUS_NULLABLE)
