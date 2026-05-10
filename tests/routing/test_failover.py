@@ -23,6 +23,7 @@ from eth_account import Account
 from routeweiler._auth import RouteweilerAuth, _make_idempotency_key
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
+from routeweiler.budgets.schema import BudgetEnvelopeSpec
 from routeweiler.errors import NoFeasibleRailError
 from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
@@ -107,7 +108,16 @@ def _draw_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     return [dict(r) for r in rows]
 
 
-def _build_auth(
+_FAILOVER_ENVELOPE = BudgetEnvelopeSpec(
+    id="failover_env",
+    cap_minor_units=100_000,
+    cap_currency="usd",
+    allowed_rails=["x402", "l402"],
+    ttl_seconds=86_400,
+)
+
+
+async def _build_auth(
     adapters: list,
     db_path: Path,
     *,
@@ -115,12 +125,13 @@ def _build_auth(
 ) -> tuple[RouteweilerAuth, StickyCache]:
     key = EnvelopeKeystore(root=db_path.parent / "keys")
     store = BudgetStore(db_path, key)
-    currency = store.get_envelope_currency_sync("default")
+    await store.create_envelope_if_absent(_FAILOVER_ENVELOPE)
+    currency = store.get_envelope_currency_sync(_FAILOVER_ENVELOPE.id)
 
     sink = TraceSink.sqlite(db_path, url_mode="raw")
     emitter = TraceEmitter(
         sink=sink,
-        envelope_id="default",
+        envelope_id=_FAILOVER_ENVELOPE.id,
         envelope_currency=currency or "usd",
         funding_label="evm:base-sepolia:usdc",
         url_mode="raw",
@@ -137,7 +148,7 @@ def _build_auth(
         funding=funding,
         emitter=emitter,
         budget_store=store,
-        envelope_id="default",
+        envelope_id=_FAILOVER_ENVELOPE.id,
         envelope_currency=currency or "usd",
         policy_engine=policy_engine,
     )
@@ -180,7 +191,7 @@ class TestFailoverOnSignError:
         failing = MockRailAdapter(rail="x402", sign_result=None)
         healthy = MockRailAdapter(rail="l402", sign_result="mock-l402-header")
 
-        auth, _ = _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
+        auth, _ = await _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
 
         # Build a fake async auth flow by driving it manually.
         # We simulate: first yield returns 402; second yield (retry) returns 200.
@@ -212,7 +223,7 @@ class TestFailoverOnSignError:
         failing = MockRailAdapter(rail="x402", sign_result=None)
         healthy = MockRailAdapter(rail="l402", sign_result="mock-l402-header")
 
-        auth, _ = _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
+        auth, _ = await _build_auth([failing, healthy], db_path, policy_engine=_x402_first_policy())
 
         gen = auth.async_auth_flow(_request())
         await gen.__anext__()
@@ -240,7 +251,7 @@ class TestFailoverOnSignError:
         x402 = MockRailAdapter(rail="x402", sign_result=None)
         l402 = MockRailAdapter(rail="l402", sign_result=None)
 
-        auth, _ = _build_auth([x402, l402], db_path)
+        auth, _ = await _build_auth([x402, l402], db_path)
 
         gen = auth.async_auth_flow(_request())
         await gen.__anext__()
@@ -261,7 +272,7 @@ class TestFailoverOnSignError:
         x402 = MockRailAdapter(rail="x402", sign_result=None)
         l402 = MockRailAdapter(rail="l402", sign_result="mock-header")
 
-        auth, _ = _build_auth([x402, l402], db_path, policy_engine=_x402_first_policy())
+        auth, _ = await _build_auth([x402, l402], db_path, policy_engine=_x402_first_policy())
 
         gen = auth.async_auth_flow(_request())
         await gen.__anext__()
@@ -296,7 +307,7 @@ class TestStickyAfterFailover:
         failing = MockRailAdapter(rail="x402", sign_result=None)
         healthy = MockRailAdapter(rail="l402", sign_result="mock-header")
 
-        auth, sticky = _build_auth([failing, healthy], db_path)
+        auth, sticky = await _build_auth([failing, healthy], db_path)
         key = StickyKey(origin="http://mock:80", agent_id=None, session_id=None)
 
         gen = auth.async_auth_flow(_request())

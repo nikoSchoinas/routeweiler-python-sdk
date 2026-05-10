@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from routeweiler import Routeweiler
+from routeweiler.budgets.schema import BudgetEnvelopeSpec
 from routeweiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
 from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.policy.dsl import PolicyFile
@@ -40,12 +41,23 @@ def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     return [dict(r) for r in rows]
 
 
+_POLICY_TEST_ENVELOPE = BudgetEnvelopeSpec(
+    id="policy_test_env",
+    cap_minor_units=100_000,
+    cap_currency="usd",
+    allowed_rails=["x402"],
+    ttl_seconds=86_400,
+)
+
+
 def _make_client(
     test_account,  # type: ignore[no-untyped-def]
     transport: httpx.ASGITransport,
     db_path: Path,
     *,
     policy: PolicyFile | None = None,
+    budget_envelope: BudgetEnvelopeSpec | str | None = None,
+    keystore_root: Path | None = None,
 ) -> Routeweiler:
     sink = TraceSink.sqlite(db_path, url_mode="raw")
     with patch("routeweiler.rails.x402.x402Client") as mock_cls:
@@ -68,10 +80,17 @@ def _make_client(
         )
         mock_cls.return_value = mock_instance
 
+        kwargs: dict = {}
+        if budget_envelope is not None:
+            kwargs["budget_envelope"] = budget_envelope
+        if keystore_root is not None:
+            kwargs["keystore_root"] = keystore_root
+
         client = Routeweiler(
             funding=[EvmFundingSource(wallet=test_account, network="base-sepolia", asset="usdc")],
             trace_sink=sink,
             policy=policy,
+            **kwargs,
         )
         client._http = httpx.AsyncClient(
             auth=client._http.auth,
@@ -148,11 +167,18 @@ rules:
     max_per_call_minor_units: 0
 """)
     policy = PolicyFile(policy_path)
-    client = _make_client(test_account, mock_x402_app, tmp_trace_db_path, policy=policy)
+    client = _make_client(
+        test_account,
+        mock_x402_app,
+        tmp_trace_db_path,
+        policy=policy,
+        budget_envelope=_POLICY_TEST_ENVELOPE,
+        keystore_root=tmp_trace_db_path.parent / "keys",
+    )
 
-    with pytest.raises(PolicyMaxPerCallExceededError) as exc_info:
-        await client.get("http://mock/protected")
-    await client.aclose()
+    async with client:
+        with pytest.raises(PolicyMaxPerCallExceededError) as exc_info:
+            await client.get("http://mock/protected")
 
     # The mock challenge is 1000 USDC base units = 0.001 USDC = 1 USD cent (ceiling).
     assert exc_info.value.limit == 0

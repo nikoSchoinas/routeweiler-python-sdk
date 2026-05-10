@@ -26,6 +26,7 @@ from starlette.routing import Route
 from routeweiler import BudgetExceededError, Funding, Routeweiler
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
+from routeweiler.budgets.schema import BudgetEnvelopeSpec
 from routeweiler.errors import FmvUnavailableError
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -62,7 +63,7 @@ def _make_client(
     test_account: LocalAccount,
     transport: httpx.ASGITransport,
     db_path: Path,
-    budget_envelope: str | None = None,
+    budget_envelope: str | BudgetEnvelopeSpec | None = None,
     keystore_root: Path | None = None,
 ) -> Routeweiler:
     """Build a Routeweiler client backed by the given ASGI transport and DB.
@@ -90,7 +91,7 @@ def _make_client(
         )
         mock_cls.return_value = mock_instance
 
-        kwargs = {}
+        kwargs: dict = {}
         if budget_envelope is not None:
             kwargs["budget_envelope"] = budget_envelope
         if keystore_root is not None:
@@ -99,7 +100,7 @@ def _make_client(
         client = Routeweiler(
             funding=[Funding.base_sepolia_usdc(wallet=test_account)],
             trace_sink=sink,
-            **kwargs,  # type: ignore[arg-type]
+            **kwargs,
         )
         client._http = httpx.AsyncClient(
             auth=client._http.auth,
@@ -107,6 +108,15 @@ def _make_client(
             transport=transport,
         )
     return client
+
+
+_TEST_ENVELOPE = BudgetEnvelopeSpec(
+    id="test_env",
+    cap_minor_units=10_000,
+    cap_currency="usd",
+    allowed_rails=["x402"],
+    ttl_seconds=86_400,
+)
 
 
 def _make_failing_server() -> httpx.ASGITransport:
@@ -145,9 +155,15 @@ async def test_routeweiler_get_pays_x402_settles_under_cap(
     - Exactly one draws row in state='settled'.
     - Cap arithmetic: reserved == settled == 1 (cent).
     """
-    client = _make_client(test_account, mock_x402_app, tmp_trace_db_path)
-    resp = await client.get("http://mock/protected")
-    await client.aclose()
+    client = _make_client(
+        test_account,
+        mock_x402_app,
+        tmp_trace_db_path,
+        _TEST_ENVELOPE,
+        keystore_root=tmp_trace_db_path.parent / "keys",
+    )
+    async with client:
+        resp = await client.get("http://mock/protected")
 
     assert resp.status_code == 200
     assert resp.json() == {"result": "ok"}
@@ -157,7 +173,7 @@ async def test_routeweiler_get_pays_x402_settles_under_cap(
     assert traces[0]["selected_rail"] == "x402"
     assert traces[0]["http_status"] == 200
     assert traces[0]["service_delivered"] == 1
-    assert traces[0]["envelope_id"] == "default"
+    assert traces[0]["envelope_id"] == "test_env"
 
     # Settlement proof in trace payload
     payload = json.loads(traces[0]["payload"])
@@ -168,7 +184,7 @@ async def test_routeweiler_get_pays_x402_settles_under_cap(
     assert draws[0]["state"] == "settled"
     assert draws[0]["amount_reserved_minor_units"] == 1  # 1 cent (1000 USDC base units)
     assert draws[0]["amount_settled_minor_units"] == 1
-    assert draws[0]["envelope_id"] == "default"
+    assert draws[0]["envelope_id"] == "test_env"
     assert draws[0]["rail_quoted"] == "x402"
 
 
@@ -243,30 +259,35 @@ async def test_failed_retry_rolls_back_reservation(
     rolled back so the capacity is available for subsequent calls.
     """
     failing_transport = _make_failing_server()
-    client = _make_client(test_account, failing_transport, tmp_trace_db_path)
+    client = _make_client(
+        test_account,
+        failing_transport,
+        tmp_trace_db_path,
+        _TEST_ENVELOPE,
+        keystore_root=tmp_trace_db_path.parent / "keys",
+    )
 
-    # The call settles the payment signature but the server rejects with 500.
-    resp = await client.get("http://mock/protected")
-    # Routeweiler still returns the final response to the caller (it's not an exception).
-    assert resp.status_code == 500
+    async with client:
+        # The call settles the payment signature but the server rejects with 500.
+        resp = await client.get("http://mock/protected")
+        # Routeweiler still returns the final response to the caller (it's not an exception).
+        assert resp.status_code == 500
 
-    draws = _draw_rows(tmp_trace_db_path)
-    assert len(draws) == 1
-    assert draws[0]["state"] == "rolled_back"
+        draws = _draw_rows(tmp_trace_db_path)
+        assert len(draws) == 1
+        assert draws[0]["state"] == "rolled_back"
 
-    traces = _trace_rows(tmp_trace_db_path)
-    assert len(traces) == 1
-    assert traces[0]["http_status"] == 500
-    assert traces[0]["service_delivered"] == 0
+        traces = _trace_rows(tmp_trace_db_path)
+        assert len(traces) == 1
+        assert traces[0]["http_status"] == 500
+        assert traces[0]["service_delivered"] == 0
 
-    # Capacity has been freed — a second call can draw again.
-    resp2 = await client.get("http://mock/protected")
-    assert resp2.status_code == 500  # server still always fails, but no budget block
-    draws2 = _draw_rows(tmp_trace_db_path)
-    assert len(draws2) == 2
-    assert draws2[1]["state"] == "rolled_back"
-
-    await client.aclose()
+        # Capacity has been freed — a second call can draw again.
+        resp2 = await client.get("http://mock/protected")
+        assert resp2.status_code == 500  # server still always fails, but no budget block
+        draws2 = _draw_rows(tmp_trace_db_path)
+        assert len(draws2) == 2
+        assert draws2[1]["state"] == "rolled_back"
 
 
 # ---------------------------------------------------------------------------

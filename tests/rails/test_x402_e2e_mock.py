@@ -107,17 +107,18 @@ async def test_happy_path_returns_200_and_writes_trace(
     assert row["selected_rail"] == "x402"
     assert row["http_status"] == 200
     assert row["service_delivered"] == 1
-    assert row["envelope_id"] == "default"
+    assert row["envelope_id"] is None
     assert row["shipped_at"] is None
 
-    # FMV: base-sepolia USDC (1000 base units) → 0.001 USD stablecoin peg
+    # Rail-native amount is always recorded regardless of envelope presence.
     assert row["amount_native"] == "1000"
     assert (
         "usdc" in row["amount_native_currency"].lower() or "erc20" in row["amount_native_currency"]
     )
-    assert abs(float(row["amount_envelope"]) - 0.001) < 1e-9
-    assert row["amount_envelope_currency"] == "usd"
-    assert row["fmv_quality"] == "stablecoin_peg"
+    # No budget envelope → envelope-denominated fields are NULL and FMV quality is "unavailable".
+    assert row["amount_envelope"] is None
+    assert row["amount_envelope_currency"] is None
+    assert row["fmv_quality"] == "unavailable"
 
     # Settlement proof
     payload = json.loads(row["payload"])

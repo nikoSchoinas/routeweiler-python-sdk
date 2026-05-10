@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import sqlite3
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -12,6 +15,8 @@ import respx
 
 from routeweiler import Funding, Routeweiler
 from routeweiler.errors import RailNotSupportedError
+from routeweiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
+from routeweiler.trace.sink_sqlite import TraceSink
 
 
 def _encode_challenge(data: dict) -> str:  # type: ignore[type-arg]
@@ -108,3 +113,129 @@ async def test_unsupported_rail_raises(routeweiler_client: Routeweiler) -> None:
 async def test_context_manager(test_account) -> None:  # type: ignore[no-untyped-def]
     async with Routeweiler(funding=[Funding.base_usdc(wallet=test_account)]) as client:
         assert client._http is not None
+
+
+# ---------------------------------------------------------------------------
+# No-budget-envelope mode
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_no_budget_envelope_succeeds_and_writes_trace(
+    test_account,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    """Routeweiler with trace_sink but no budget_envelope pays without enforcement.
+
+    Asserts:
+    - 402 → 200 succeeds.
+    - Exactly one trace row written with envelope_id IS NULL.
+    - No draw row created.
+    - amount_envelope is NULL; fmv_quality is "unavailable".
+    """
+    db_path = tmp_path / "traces.db"
+    sink = TraceSink.sqlite(db_path, url_mode="raw")
+
+    with patch("routeweiler.rails.x402.x402Client") as mock_cls:
+        mock_instance = MagicMock()
+        mock_instance.create_payment_payload = AsyncMock(
+            return_value={
+                "x402Version": 1,
+                "payload": {
+                    "authorization": {
+                        "from": test_account.address,
+                        "to": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                        "value": "1000",
+                        "validAfter": "0",
+                        "validBefore": "9999999999",
+                        "nonce": "0xdeadbeef",
+                    },
+                    "signature": "0x" + "ab" * 65,
+                },
+            }
+        )
+        mock_cls.return_value = mock_instance
+
+        client = Routeweiler(
+            funding=[Funding.base_usdc(wallet=test_account)],
+            trace_sink=sink,
+            # budget_envelope deliberately omitted → no enforcement
+        )
+
+        url = "https://api.example.com/data"
+        respx.get(url).side_effect = [
+            httpx.Response(
+                status_code=402,
+                headers={"PAYMENT-REQUIRED": _PAYMENT_REQUIRED_HEADER},
+                content=b"payment required",
+            ),
+            httpx.Response(status_code=200, json={"result": "ok"}),
+        ]
+
+        async with client:
+            resp = await client.get(url)
+
+    assert resp.status_code == 200
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    trace_rows = conn.execute("SELECT * FROM trace_events").fetchall()
+    assert len(trace_rows) == 1
+    row = dict(trace_rows[0])
+    assert row["envelope_id"] is None
+    assert row["amount_envelope"] is None
+    assert row["amount_envelope_currency"] is None
+    assert row["fmv_quality"] == "unavailable"
+
+    draw_rows = conn.execute("SELECT * FROM draws").fetchall()
+    assert len(draw_rows) == 0
+
+    env_rows = conn.execute("SELECT * FROM envelopes").fetchall()
+    assert len(env_rows) == 0
+
+    conn.close()
+
+
+async def test_no_budget_envelope_no_envelopes_table_row(
+    test_account,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    """Constructing Routeweiler without budget_envelope creates no envelope row."""
+    db_path = tmp_path / "traces.db"
+    sink = TraceSink.sqlite(db_path, url_mode="raw")
+    async with Routeweiler(
+        funding=[Funding.base_usdc(wallet=test_account)],
+        trace_sink=sink,
+    ):
+        pass
+
+    conn = sqlite3.connect(str(db_path))
+    env_count = conn.execute("SELECT COUNT(*) FROM envelopes").fetchone()[0]
+    conn.close()
+    assert env_count == 0
+
+
+def test_policy_max_per_call_without_envelope_warns(
+    test_account,  # type: ignore[no-untyped-def]
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A policy with max_per_call_minor_units but no envelope logs a warning."""
+    policy = PolicyDocument(
+        version=1,
+        default=DefaultBlock(rail="x402"),
+        rules=[
+            PolicyRule(
+                name="cap-calls",
+                when=RuleMatch(url_matches="*"),
+                max_per_call_minor_units=100,
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING, logger="routeweiler.client"):
+        Routeweiler(
+            funding=[Funding.base_usdc(wallet=test_account)],
+            policy=policy,
+            # budget_envelope deliberately omitted
+        )
+    assert any("max_per_call_minor_units" in m for m in caplog.messages)
