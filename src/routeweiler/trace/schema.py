@@ -84,7 +84,6 @@ class TraceEvent(RouteweilerModel):
     reconciliation: Reconciliation
     timestamp_start: datetime
     timestamp_end: datetime
-    schema_version: Literal["1.0"] = "1.0"
     # Credential lifecycle fields — populated only by emit_credential_manual_hold.
     credential_id: str | None = None
     credential_state: CredentialState | None = None

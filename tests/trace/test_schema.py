@@ -80,16 +80,6 @@ def _event(**overrides) -> TraceEvent:
     return TraceEvent(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# Construction and schema_version default
-# ---------------------------------------------------------------------------
-
-
-def test_schema_version_default():
-    ev = _event()
-    assert ev.schema_version == "1.0"
-
-
 def test_optional_fields_default_none():
     ev = _event()
     assert ev.parent_request_id is None
@@ -125,7 +115,6 @@ def test_camel_roundtrip():
     assert dumped["requestId"] == "req_abc"
     assert dumped["envelopeId"] == "env_01HW"
     assert dumped["selectedRail"] == "x402"
-    assert dumped["schemaVersion"] == "1.0"
     assert dumped["payment"]["proofType"] == "txid"
     assert dumped["outcome"]["httpStatus"] == 200
     assert dumped["reconciliation"]["vatApplicable"] is False
