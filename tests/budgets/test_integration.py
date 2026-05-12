@@ -247,16 +247,17 @@ async def test_second_call_blocked_when_cap_exhausted(
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — failed retry rolls back the reservation
+# Test 3 — failed retry settles the draw (funds left the wire)
 # ---------------------------------------------------------------------------
 
 
-async def test_failed_retry_rolls_back_reservation(
+async def test_failed_retry_settles_draw(
     test_account: LocalAccount,
     tmp_trace_db_path: Path,
 ) -> None:
-    """When the merchant returns 500 on the signed retry, the reserved draw is
-    rolled back so the capacity is available for subsequent calls.
+    """When the merchant returns 500 on the signed retry, the draw is settled
+    (not rolled back) because the payment was sent on the wire.  Subsequent
+    calls continue to draw against the remaining cap.
     """
     failing_transport = _make_failing_server()
     client = _make_client(
@@ -268,26 +269,26 @@ async def test_failed_retry_rolls_back_reservation(
     )
 
     async with client:
-        # The call settles the payment signature but the server rejects with 500.
+        # Payment is sent on the wire; server rejects with 500.
         resp = await client.get("http://mock/protected")
         # Routeweiler still returns the final response to the caller (it's not an exception).
         assert resp.status_code == 500
 
         draws = _draw_rows(tmp_trace_db_path)
         assert len(draws) == 1
-        assert draws[0]["state"] == "rolled_back"
+        assert draws[0]["state"] == "settled"  # funds left the wallet — cap consumed
 
         traces = _trace_rows(tmp_trace_db_path)
         assert len(traces) == 1
         assert traces[0]["http_status"] == 500
         assert traces[0]["service_delivered"] == 0
 
-        # Capacity has been freed — a second call can draw again.
+        # Remaining cap (9999 cents) is still available — a second call can draw.
         resp2 = await client.get("http://mock/protected")
-        assert resp2.status_code == 500  # server still always fails, but no budget block
+        assert resp2.status_code == 500  # server still always fails
         draws2 = _draw_rows(tmp_trace_db_path)
         assert len(draws2) == 2
-        assert draws2[1]["state"] == "rolled_back"
+        assert draws2[1]["state"] == "settled"
 
 
 # ---------------------------------------------------------------------------
