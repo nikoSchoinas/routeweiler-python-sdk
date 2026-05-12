@@ -14,5 +14,8 @@ CLOCK_SKEW_BUFFER_SECONDS = 30
 # Applied on top of snapshot FMV rate when converting to envelope minor units.
 FMV_BUFFER = Decimal("0.05")
 
-# FMV snapshot refresh interval — BudgetStore re-fetches provider rates once per day.
-FMV_REFRESH_INTERVAL_SECONDS = 86_400
+# BTC (CoinGecko) snapshot refresh — 5 minutes keeps drift inside the 5 % FMV_BUFFER.
+FMV_REFRESH_INTERVAL_BTC_SECONDS = 300
+
+# ECB cross-rate snapshot refresh — ECB publishes once per day, so daily is sufficient.
+FMV_REFRESH_INTERVAL_ECB_SECONDS = 86_400
