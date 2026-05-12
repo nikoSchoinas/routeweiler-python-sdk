@@ -15,7 +15,8 @@ from typing import TypedDict, cast
 
 from routeweiler._constants import (
     CLOCK_SKEW_BUFFER_SECONDS,
-    FMV_REFRESH_INTERVAL_SECONDS,
+    FMV_REFRESH_INTERVAL_BTC_SECONDS,
+    FMV_REFRESH_INTERVAL_ECB_SECONDS,
     REAPER_INTERVAL_SECONDS,
 )
 from routeweiler._storage import ensure_schema as _ensure_schema
@@ -104,21 +105,24 @@ class BudgetStore:
         keystore: EnvelopeKeystore,
         *,
         reaper_interval_seconds: float = REAPER_INTERVAL_SECONDS,
-        fmv_refresh_interval_seconds: float = FMV_REFRESH_INTERVAL_SECONDS,
+        btc_refresh_interval_seconds: float = FMV_REFRESH_INTERVAL_BTC_SECONDS,
+        ecb_refresh_interval_seconds: float = FMV_REFRESH_INTERVAL_ECB_SECONDS,
         fmv_provider: FmvProvider | None = None,
         ecb_provider: EcbRateProvider | None = None,
     ) -> None:
         self._db_path = db_path
         self._keystore = keystore
         self._reaper_interval_seconds = reaper_interval_seconds
-        self._fmv_refresh_interval_seconds = fmv_refresh_interval_seconds
+        self._btc_refresh_interval_seconds = btc_refresh_interval_seconds
+        self._ecb_refresh_interval_seconds = ecb_refresh_interval_seconds
         self._fmv_provider = fmv_provider
         self._ecb_provider = ecb_provider
         self._conn = _open_connection(db_path)
         _ensure_schema(self._conn)
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
-        self._fmv_task: asyncio.Task[None] | None = None
+        self._btc_refresh_task: asyncio.Task[None] | None = None
+        self._ecb_refresh_task: asyncio.Task[None] | None = None
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -131,11 +135,17 @@ class BudgetStore:
             raise RuntimeError("BudgetStore is closed; cannot restart.")
         if self._reaper_task is None or self._reaper_task.done():
             self._reaper_task = asyncio.create_task(self._reap_loop(), name="routeweiler-reaper")
-        if (self._fmv_provider is not None or self._ecb_provider is not None) and (
-            self._fmv_task is None or self._fmv_task.done()
+        if self._fmv_provider is not None and (
+            self._btc_refresh_task is None or self._btc_refresh_task.done()
         ):
-            self._fmv_task = asyncio.create_task(
-                self._fmv_refresh_loop(), name="routeweiler-fmv-refresh"
+            self._btc_refresh_task = asyncio.create_task(
+                self._btc_refresh_loop(), name="routeweiler-btc-fmv-refresh"
+            )
+        if self._ecb_provider is not None and (
+            self._ecb_refresh_task is None or self._ecb_refresh_task.done()
+        ):
+            self._ecb_refresh_task = asyncio.create_task(
+                self._ecb_refresh_loop(), name="routeweiler-ecb-fmv-refresh"
             )
 
     async def _reap_loop(self) -> None:
@@ -159,74 +169,93 @@ class BudgetStore:
         )
         return cursor.rowcount
 
-    async def _fmv_refresh_loop(self) -> None:
-        """Re-fetch provider rates and update envelope FMV snapshots once per interval."""
+    async def _btc_refresh_loop(self) -> None:
+        """Re-fetch BTC/sats rates every btc_refresh_interval_seconds for L402 envelopes."""
         while True:
-            await asyncio.sleep(self._fmv_refresh_interval_seconds)
+            await asyncio.sleep(self._btc_refresh_interval_seconds)
             try:
-                await self._refresh_all_snapshots()
+                await self._refresh_all_btc_snapshots()
             except Exception:
-                _log.exception("FMV refresh pass failed; will retry next interval.")
+                _log.exception("BTC FMV refresh pass failed; will retry next interval.")
 
-    async def _refresh_all_snapshots(self) -> None:
-        """Re-fetch live rates for all active envelopes and upsert their FMV snapshots."""
+    async def _ecb_refresh_loop(self) -> None:
+        """Re-fetch ECB cross-fiat rates every ecb_refresh_interval_seconds."""
+        while True:
+            await asyncio.sleep(self._ecb_refresh_interval_seconds)
+            try:
+                await self._refresh_all_ecb_snapshots()
+            except Exception:
+                _log.exception("ECB FMV refresh pass failed; will retry next interval.")
+
+    async def _refresh_all_btc_snapshots(self) -> None:
+        """Re-fetch BTC rates for all active L402 envelopes."""
         now_iso = datetime.now(UTC).isoformat()
         async with self._lock:
             rows = await asyncio.to_thread(
                 lambda: self._conn.execute(
-                    "SELECT id, cap_currency, allowed_rails FROM envelopes "
-                    "WHERE status=? AND expires_at > ?",
+                    "SELECT id, cap_currency FROM envelopes "
+                    "WHERE status=? AND expires_at > ? AND allowed_rails LIKE '%l402%'",
                     (_STATUS_ACTIVE, now_iso),
                 ).fetchall()
             )
         for row in rows:
-            envelope_id, cap_currency, allowed_rails_json = row
-            allowed_rails = cast(list[Rail], json.loads(str(allowed_rails_json)))
+            envelope_id, cap_currency = str(row[0]), cast(EnvelopeCurrency, str(row[1]))
             try:
-                await self._refresh_one_snapshot(
-                    str(envelope_id),
-                    cast(EnvelopeCurrency, str(cap_currency)),
-                    allowed_rails,
-                )
+                await self._refresh_sats_leg(envelope_id, cap_currency)
             except Exception:
                 _log.exception(
-                    "FMV snapshot refresh failed for envelope '%s'; skipping.", envelope_id
+                    "BTC FMV snapshot refresh failed for envelope '%s'; skipping.", envelope_id
                 )
 
-    async def _refresh_one_snapshot(
-        self, envelope_id: str, cap_currency: EnvelopeCurrency, allowed_rails: list[Rail]
-    ) -> None:
-        """Re-fetch provider rates and upsert the FMV snapshot for one envelope."""
-        sats_rates: dict[str, Decimal] | None = None
-        if "l402" in allowed_rails and self._fmv_provider is not None:
+    async def _refresh_all_ecb_snapshots(self) -> None:
+        """Re-fetch ECB cross-fiat rates for all active envelopes."""
+        now_iso = datetime.now(UTC).isoformat()
+        async with self._lock:
+            rows = await asyncio.to_thread(
+                lambda: self._conn.execute(
+                    "SELECT id, cap_currency FROM envelopes WHERE status=? AND expires_at > ?",
+                    (_STATUS_ACTIVE, now_iso),
+                ).fetchall()
+            )
+        for row in rows:
+            envelope_id, cap_currency = str(row[0]), cast(EnvelopeCurrency, str(row[1]))
             try:
-                rate = await self._fmv_provider.fetch_btc_to(cap_currency)
-                sats_rates = {f"sats->{cap_currency.lower()}": rate}
+                await self._refresh_ecb_legs(envelope_id, cap_currency)
             except Exception:
+                _log.exception(
+                    "ECB FMV snapshot refresh failed for envelope '%s'; skipping.", envelope_id
+                )
+
+    async def _refresh_sats_leg(self, envelope_id: str, cap_currency: EnvelopeCurrency) -> None:
+        """Re-fetch BTC rate and upsert only the sats leg of the snapshot.
+
+        On provider failure the previously-persisted sats rate is carried forward
+        so L402 draws are not disrupted by a transient CoinGecko outage.
+        """
+        assert self._fmv_provider is not None
+        prior = self.load_fmv_snapshot_sync(envelope_id) or {}
+        sats_key = f"sats->{cap_currency.lower()}"
+        try:
+            rate = await self._fmv_provider.fetch_btc_to(cap_currency)
+            sats_rates = {sats_key: rate}
+        except Exception:
+            if sats_key in prior:
                 _log.warning(
-                    "Envelope '%s': BTC FMV refresh failed; existing sats rate retained.",
+                    "Envelope '%s': BTC FMV refresh failed; carrying forward previous %s rate.",
+                    envelope_id,
+                    sats_key,
+                )
+                sats_rates = {sats_key: prior[sats_key]}
+            else:
+                _log.warning(
+                    "Envelope '%s': BTC FMV refresh failed and no prior rate exists; "
+                    "L402 draws will raise FmvUnavailableError until rates are available.",
                     envelope_id,
                 )
-
-        cross_rates: dict[str, Decimal] | None = None
-        if self._ecb_provider is not None:
-            env_cur = cap_currency.lower()
-            cross_rates = {}
-            for src in ("usd", "eur", "gbp", "jpy"):
-                if src != env_cur:
-                    try:
-                        ecb_rate = await self._ecb_provider.fetch_rate(src, env_cur)
-                        cross_rates[f"{src}->{env_cur}"] = ecb_rate
-                    except Exception:
-                        _log.warning(
-                            "Envelope '%s': ECB %s→%s refresh failed; offline fallback retained.",
-                            envelope_id,
-                            src.upper(),
-                            env_cur.upper(),
-                        )
+                return
 
         snapshot_rates, snapshot_quality = _capture_fmv_snapshot(
-            cap_currency, sats_rates=sats_rates, cross_rates=cross_rates
+            cap_currency, sats_rates=sats_rates, cross_rates=None
         )
         now_iso = datetime.now(UTC).isoformat()
         async with self._lock:
@@ -237,7 +266,55 @@ class BudgetStore:
                 snapshot_rates,
                 snapshot_quality,
             )
-        _log.debug("Envelope '%s': FMV snapshot refreshed at %s.", envelope_id, now_iso)
+        _log.debug("Envelope '%s': BTC FMV snapshot refreshed at %s.", envelope_id, now_iso)
+
+    async def _refresh_ecb_legs(self, envelope_id: str, cap_currency: EnvelopeCurrency) -> None:
+        """Re-fetch ECB cross-fiat rates and upsert only those legs of the snapshot.
+
+        On per-pair failure the previously-persisted rate for that pair is carried forward
+        (rather than falling back to the offline hardcoded constant).
+        """
+        assert self._ecb_provider is not None
+        prior = self.load_fmv_snapshot_sync(envelope_id) or {}
+        env_cur = cap_currency.lower()
+        cross_rates: dict[str, Decimal] = {}
+        for src in ("usd", "eur", "gbp", "jpy"):
+            if src == env_cur:
+                continue
+            key = f"{src}->{env_cur}"
+            try:
+                cross_rates[key] = await self._ecb_provider.fetch_rate(src, env_cur)
+            except Exception:
+                if key in prior:
+                    _log.warning(
+                        "Envelope '%s': ECB %s→%s refresh failed; carrying forward previous rate.",
+                        envelope_id,
+                        src.upper(),
+                        env_cur.upper(),
+                    )
+                    cross_rates[key] = prior[key]
+                else:
+                    _log.warning(
+                        "Envelope '%s': ECB %s→%s refresh failed and no prior rate exists; "
+                        "offline fallback will apply.",
+                        envelope_id,
+                        src.upper(),
+                        env_cur.upper(),
+                    )
+
+        snapshot_rates, snapshot_quality = _capture_fmv_snapshot(
+            cap_currency, sats_rates=None, cross_rates=cross_rates
+        )
+        now_iso = datetime.now(UTC).isoformat()
+        async with self._lock:
+            await asyncio.to_thread(
+                self._upsert_snapshot_sync,
+                envelope_id,
+                now_iso,
+                snapshot_rates,
+                snapshot_quality,
+            )
+        _log.debug("Envelope '%s': ECB FMV snapshot refreshed at %s.", envelope_id, now_iso)
 
     def _upsert_snapshot_sync(
         self,
@@ -265,10 +342,14 @@ class BudgetStore:
             self._reaper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._reaper_task
-        if self._fmv_task is not None:
-            self._fmv_task.cancel()
+        if self._btc_refresh_task is not None:
+            self._btc_refresh_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._fmv_task
+                await self._btc_refresh_task
+        if self._ecb_refresh_task is not None:
+            self._ecb_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._ecb_refresh_task
         if self._fmv_provider is not None and hasattr(self._fmv_provider, "aclose"):
             await self._fmv_provider.aclose()
         if self._ecb_provider is not None and hasattr(self._ecb_provider, "aclose"):
