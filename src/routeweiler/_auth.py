@@ -317,12 +317,13 @@ class RouteweilerAuth(httpx.Auth):
 
             # -----------------------------------------------------------------
             # Yield retry — may raise on transport error.
-            # On transport error: rollback, emit error trace, attempt failover.
+            # On transport error: confirm (funds left the wire), emit error
+            # trace, attempt recovery/failover.
             # -----------------------------------------------------------------
             try:
                 final_response = yield retry
             except Exception as exc:
-                await self._rollback_safe(receipt)
+                await self._confirm_draw_safe(receipt)
                 await self._attempt_recovery_safe(credential_record, last_response=None)
                 if self._emitter:
                     try:
@@ -355,9 +356,10 @@ class RouteweilerAuth(httpx.Auth):
             )
 
             # -----------------------------------------------------------------
-            # Confirm or rollback the draw based on post-recovery status.
+            # Confirm the draw — adapter.pay() returned, so funds left the
+            # wire regardless of the HTTP outcome or credential recovery state.
             # -----------------------------------------------------------------
-            await self._settle_budget_safe(receipt, budget_response)
+            await self._confirm_draw_safe(receipt)
 
             # Update sticky cache on successful payment.
             self._sticky_cache.remember(sticky_key, adapter.rail, challenge.expires_at)
@@ -481,25 +483,21 @@ class RouteweilerAuth(httpx.Auth):
 
         return budget_response
 
-    async def _settle_budget_safe(
-        self,
-        receipt: DrawReceipt | None,
-        budget_response: httpx.Response,
-    ) -> None:
+    async def _confirm_draw_safe(self, receipt: DrawReceipt | None) -> None:
+        """Confirm the budget draw unconditionally.
+
+        Only called after adapter.pay() returns successfully, meaning funds have
+        left the wallet on the wire.  Rollback is reserved for pay-phase failures
+        (see _rollback_safe) where pay() raised before the wire commit.
+        """
         if receipt is None or self._budget_store is None:
             return
-        if budget_response.status_code < HTTP_CLIENT_ERROR_THRESHOLD:
-            try:
-                await self._budget_store.confirm(
-                    receipt.receipt_id, receipt.amount_reserved_minor_units
-                )
-            except Exception:
-                _log.exception("Confirm failed; draw will stay reserved until reaper.")
-        else:
-            try:
-                await self._budget_store.rollback(receipt.receipt_id)
-            except Exception:
-                _log.exception("Rollback failed after error response; draw will expire via reaper.")
+        try:
+            await self._budget_store.confirm(
+                receipt.receipt_id, receipt.amount_reserved_minor_units
+            )
+        except Exception:
+            _log.exception("Confirm failed; draw will stay reserved until reaper.")
 
 
 # ---------------------------------------------------------------------------
