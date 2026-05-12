@@ -1,18 +1,24 @@
 """Routing engine - routeDecision(challenge, policy, funding) -> Rail.
 
-Implements static scoring, sticky routing, and failover.
+Implements cost-based selection, sticky routing, and failover.
 
-Static scoring weights:
-    cost 0.3 / latency 0.1 / reliability 0.4 / privacy 0.2
+Selection order (after policy/funding filters):
+1. Sticky: if the cached rail is among survivors, pick it directly.
+2. Lowest FMV-converted cost wins.
+   - FMV-failed candidates (quote=None) rank worst.
+   - When all quotes are equal (budget off, quote=0), cost is a no-op.
+3. Tie: prefer rails (policy.prefer) beat non-prefer.
+4. Tie: policy.default_rail wins.
+5. Tie: adapter registration order.
 
-Live signals stay on hardcoded tables until sufficient trace data
-accumulates (post-MVP).
+Latency and reliability signals are not used until rolling trace data
+accumulates post-MVP (TECHNICAL_PLAN.md §7.4).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -32,56 +38,10 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Static hardcoded tables (replaced by rolling computation post-MVP)
-# ---------------------------------------------------------------------------
-
-# Median observed p50 latencies in milliseconds per rail type.
-DEFAULT_LATENCY_P50_MS: dict[str, int] = {
-    "x402": 1500,
-    "l402": 4000,
-    "mpp-tempo": 2500,
-    "mpp-spt": 6000,
-}
-
-# Historical success rates per rail (replaced by rolling 24h trace data post-MVP).
-DEFAULT_RELIABILITY: dict[str, float] = {
-    "x402": 0.97,
-    "l402": 0.92,
-    "mpp-tempo": 0.95,
-    "mpp-spt": 0.90,
-}
-
-# Fallback for unknown rails; replaced by rolling 24h trace data post-MVP.
-_FALLBACK_LATENCY_MS = 5000
-_FALLBACK_RELIABILITY = 0.5
-
-# Inherent privacy scores per rail — used when no policy prefer is set.
-# Higher = more private (lightning > on-chain EVM for obvious reasons).
-_INHERENT_PRIVACY: dict[str, float] = {
-    "x402": 0.3,
-    "l402": 0.8,
-    "mpp-tempo": 0.4,
-    "mpp-spt": 0.7,
-}
-
 
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ScoringWeights:
-    """Weights for the scoring formula (must sum to 1.0)."""
-
-    cost: float = 0.3
-    latency: float = 0.1
-    reliability: float = 0.4
-    privacy: float = 0.2
-
-
-DEFAULT_WEIGHTS = ScoringWeights()
 
 
 @dataclass(frozen=True)
@@ -114,15 +74,11 @@ class RoutingChoice:
         fallback_from:  The rail that failed in the previous attempt (None on
                         the primary attempt).  Written into TraceEvent.fallback_from.
         attempt:        Attempt counter (0 = primary, 1+ = failover).
-        score:          Total weighted score for the winner.
-        score_breakdown: Per-component scores keyed by name.
     """
 
     candidate: Candidate
     fallback_from: Rail | None
     attempt: int
-    score: float
-    score_breakdown: dict[str, float]
 
 
 # ---------------------------------------------------------------------------
@@ -131,26 +87,16 @@ class RoutingChoice:
 
 
 class Router:
-    """Selects the best feasible rail for each 402 response using static scoring, sticky
-    routing, and failover.
+    """Selects the best feasible rail for each 402 response using cost-based
+    selection, sticky routing, and failover.
 
     The router is constructed once per ``Routeweiler`` instance and called on
     every 402 response.  It is stateless w.r.t. routing decisions — the sticky
     cache lives in ``StickyCache`` and is managed by the caller (``RouteweilerAuth``).
     """
 
-    def __init__(
-        self,
-        adapters: Sequence[RailAdapter],
-        *,
-        weights: ScoringWeights = DEFAULT_WEIGHTS,
-        latency_p50_ms: Mapping[str, int] = DEFAULT_LATENCY_P50_MS,
-        reliability: Mapping[str, float] = DEFAULT_RELIABILITY,
-    ) -> None:
+    def __init__(self, adapters: Sequence[RailAdapter]) -> None:
         self._adapters = list(adapters)
-        self._weights = weights
-        self._latency_p50_ms = latency_p50_ms
-        self._reliability = reliability
 
     async def decide(
         self,
@@ -174,13 +120,12 @@ class Router:
         2. Parse each adapter into a NormalizedChallenge (swallows per-adapter
            parse failures so a malformed header for one rail doesn't block others).
         3. Evaluate policy per challenge; drop candidates where ``deny`` is True.
-           ``prefer`` is a scoring boost (step 7), not a filter — non-prefer rails
-           remain eligible.
+           ``prefer`` is a tiebreaker boost — non-prefer rails remain eligible.
         4. Filter by funding availability via ``match_funding``.
         5. FMV-convert quote to envelope minor units (0 when budget not active).
-        6. Score remaining candidates; preferred rails receive a privacy-score boost.
-        7. Apply sticky: if the cached rail is among survivors, pick it directly.
-        8. Return winner; tie-break by prefer order then adapter order.
+        6. Apply sticky: if the cached rail is among survivors, pick it directly.
+        7. Otherwise rank by cost (lower wins), then prefer, then default_rail,
+           then adapter registration order.
 
         Raises:
             RailNotSupportedError:  No adapter's ``can_handle`` matched (before any filtering).
@@ -208,8 +153,8 @@ class Router:
             )
 
         # Steps 3-4: policy filter
-        # ``deny`` is a hard exclusion; ``prefer`` is a scoring boost — non-prefer
-        # rails are NOT dropped here, they just score lower on the privacy dimension.
+        # ``deny`` is a hard exclusion; ``prefer`` is a tiebreaker boost — non-prefer
+        # rails are NOT dropped here, they just rank lower.
         policy_filtered: list[tuple[RailAdapter, NormalizedChallenge, PolicyDecision]] = []
         last_deny: PolicyDecision | None = None
         for adapter, challenge in parsed:
@@ -265,25 +210,20 @@ class Router:
                 )
             )
 
-        # Step 7 & 8: score and apply sticky shortcut
+        # Steps 7-8: sticky shortcut then cost-based selection
         default_rail: Rail | None = (
             policy_engine.default_rail if policy_engine is not None else None
         )
         winner = _select_winner(
             candidates=candidates,
             sticky_rail=sticky_rail,
-            weights=self._weights,
-            latency_p50_ms=self._latency_p50_ms,
-            reliability=self._reliability,
             default_rail=default_rail,
         )
 
         return RoutingChoice(
-            candidate=winner.candidate,
+            candidate=winner,
             fallback_from=prior_rail,
             attempt=attempt,
-            score=winner.score,
-            score_breakdown=winner.score_breakdown,
         )
 
 
@@ -291,108 +231,36 @@ class Router:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True)
-class _ScoredCandidate:
-    candidate: Candidate
-    score: float
-    score_breakdown: dict[str, float]
+_INF = float("inf")
 
 
 def _select_winner(
     candidates: list[tuple[Candidate, PolicyDecision]],
     sticky_rail: Rail | None,
-    weights: ScoringWeights,
-    latency_p50_ms: Mapping[str, int],
-    reliability: Mapping[str, float],
     *,
     default_rail: Rail | None = None,
-) -> _ScoredCandidate:
-    """Score candidates and return the winner.
+) -> Candidate:
+    """Return the winning candidate.
 
     Sticky rail wins immediately if it is among the survivors.
-    Ties broken by `default.rail` preference then candidate list order.
+    Otherwise sort by: cost (asc) → prefer (yes first) → default_rail (yes first) → list order.
     """
-    # Check sticky shortcut first.
     if sticky_rail is not None:
         for candidate, _decision in candidates:
             if candidate.adapter.rail == sticky_rail:
-                # Compute score for diagnostics even though we don't use it for selection.
-                breakdown = _score_breakdown(
-                    candidate, candidates, weights, latency_p50_ms, reliability
-                )
-                return _ScoredCandidate(
-                    candidate=candidate,
-                    score=sum(breakdown.values()),
-                    score_breakdown=breakdown,
-                )
+                return candidate
 
-    # Full scoring pass.
-    scored = []
-    for c, _ in candidates:
-        breakdown = _score_breakdown(c, candidates, weights, latency_p50_ms, reliability)
-        scored.append(
-            _ScoredCandidate(
-                candidate=c,
-                score=sum(breakdown.values()),
-                score_breakdown=breakdown,
-            )
-        )
-    # Sort: highest score first; `default.rail` preference breaks score ties;
-    # candidate list order (adapter registration + prefer) breaks remaining ties.
-    scored.sort(key=lambda s: (-s.score, 0 if s.candidate.adapter.rail == default_rail else 1))
-    return scored[0]
-
-
-def _score_breakdown(
-    candidate: Candidate,
-    all_candidates: list[tuple[Candidate, PolicyDecision]],
-    weights: ScoringWeights,
-    latency_p50_ms: Mapping[str, int],
-    reliability: Mapping[str, float],
-) -> dict[str, float]:
-    """Compute the score breakdown for a single candidate.
-
-    FMV-failed candidates (quote_envelope_minor_units is None) receive
-    cost_score=0.0 — they rank worst on cost versus any candidate with a known
-    quote.  When *all* candidates have None quotes (total outage), everyone gets
-    cost_score=1.0 and cost falls out of the decision.  The "budget off" case
-    (quote=0) gives cost_score=1.0 for all, preserving the existing behaviour.
-    """
-    rail = candidate.adapter.rail
-    decision = candidate.policy_decision
-
-    valid_quotes = [
-        c.quote_envelope_minor_units
-        for c, _ in all_candidates
-        if c.quote_envelope_minor_units is not None
-    ]
-    max_quote = max(valid_quotes) if valid_quotes else 0
-    if candidate.quote_envelope_minor_units is None:
-        cost_score = 0.0  # FMV failed — penalise on cost
-    else:
+    def _key(item: tuple[Candidate, PolicyDecision]) -> tuple[float, int, int, int]:
+        candidate, decision = item
+        rail = candidate.adapter.rail
         q = candidate.quote_envelope_minor_units
-        cost_score = 1.0 - q / max_quote if max_quote > 0 else 1.0
+        cost_rank = float(q) if q is not None else _INF
+        prefer_rank = 0 if rail in decision.prefer else 1
+        default_rank = 0 if rail == default_rail else 1
+        order_rank = candidates.index(item)
+        return (cost_rank, prefer_rank, default_rank, order_rank)
 
-    p50s = [latency_p50_ms.get(c.adapter.rail, _FALLBACK_LATENCY_MS) for c, _ in all_candidates]
-    max_p50 = max(p50s) if p50s else 1
-    my_p50 = latency_p50_ms.get(rail, _FALLBACK_LATENCY_MS)
-    # When all candidates share the same latency (or there is only one), relative
-    # score is 1.0 — mirroring the cost branch's treatment of max_quote == 0.
-    latency_score = 1.0 - my_p50 / max_p50 if max_p50 > 0 and len(set(p50s)) > 1 else 1.0
-
-    reliability_score = reliability.get(rail, _FALLBACK_RELIABILITY)
-
-    # prefer is a scoring boost: preferred rails get privacy_fit_score=1.0; others
-    # keep their inherent score so they remain eligible but rank lower.
-    privacy_fit_score = 1.0 if rail in decision.prefer else _INHERENT_PRIVACY.get(rail, 0.5)
-
-    return {
-        "cost": weights.cost * cost_score,
-        "latency": weights.latency * latency_score,
-        "reliability": weights.reliability * reliability_score,
-        "privacy": weights.privacy * privacy_fit_score,
-    }
+    return min(candidates, key=_key)[0]
 
 
 def _parse_candidates(
@@ -421,9 +289,9 @@ def _fmv_quote(
 
     Returns:
         0       — budget enforcement is not active (no envelope_currency); all
-                  candidates are cost-equal and 0/max_quote=0 gives cost_score=1.0.
+                  candidates are cost-equal and fall through to other tiebreakers.
         int > 0 — successful FMV conversion.
-        None    — FMV conversion failed; caller scores this candidate worst on cost.
+        None    — FMV conversion failed; caller ranks this candidate worst on cost.
     """
     if envelope_currency is None:
         return 0
@@ -437,7 +305,7 @@ def _fmv_quote(
         return quote
     except Exception:
         _log.debug(
-            "FMV conversion failed for %s→%s; candidate will be scored worst on cost.",
+            "FMV conversion failed for %s→%s; candidate will be ranked worst on cost.",
             challenge.price.currency,
             envelope_currency,
         )
