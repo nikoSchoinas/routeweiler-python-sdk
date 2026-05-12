@@ -13,7 +13,11 @@
   <img src="https://img.shields.io/badge/type%20checked-mypy-1f5082?style=for-the-badge" alt="Type-checked with mypy">
 </p>
 
-**Status:** Alpha — `0.1.0.dev0` — API may change before 1.0.
+<p align="center">
+  <img src="assets/diagram.png" alt="Routeweiler flow diagram" width="900">
+</p>
+
+**Status:** Alpha — `0.1.0.dev0`
 
 The neutral micropayment router for autonomous agents. A single async HTTP client —
 `await client.get(url)` — that transparently handles `402 Payment Required` across
@@ -79,11 +83,7 @@ async with Routeweiler(
 ## Budget envelopes
 
 Enforce per-session or per-agent spend caps with local SQLite budget envelopes.
-Without a `budget_envelope`, tracing still works but **no cap is enforced** —
-payments proceed freely and `trace_events.envelope_id` is recorded as `NULL`.
-
-Pass a `BudgetEnvelopeSpec` as `budget_envelope` to opt in to enforcement. The
-client creates the envelope idempotently inside `async with`
+Without a `budget_envelope`, tracing still works but **no cap is enforced**.
 
 ```python
 from routeweiler import BudgetEnvelopeSpec, Funding, Routeweiler, TraceSink
@@ -104,12 +104,10 @@ async with Routeweiler(
 
 `budget_envelope` accepts three forms:
 
-- **`None`** (default) — no cap enforcement; traces are written with `envelope_id=NULL`.
+- **`None`** (default) — no cap enforcement.
 - **`str`** — ID of a pre-existing envelope; raises `EnvelopeNotFoundError` at
   construction time if the row is missing.
-- **`BudgetEnvelopeSpec`** — declarative spec; the envelope is created inside
-  `__aenter__`. If an envelope with the same `id` already exists it is reused
-  unchanged.
+- **`BudgetEnvelopeSpec`** — declarative spec; If an envelope with the same `id` already exists it is reused unchanged.
 
 Envelopes track reserved and settled amounts with Ed25519-signed draw receipts.
 `BudgetExceededError` is raised if a payment would breach the cap.
