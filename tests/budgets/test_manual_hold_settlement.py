@@ -11,6 +11,7 @@ So cap_minor_units=342 exhausts after exactly one L402 payment.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
@@ -26,7 +27,7 @@ from routeweiler import BudgetExceededError, Routeweiler
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.credentials.schema import CredentialState
-from routeweiler.errors import FmvUnavailableError, NoFeasibleRailError
+from routeweiler.errors import FmvUnavailableError, NoFeasibleRailError, PreimageMismatchError
 from routeweiler.funding.lightning import LightningFundingSource
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -80,6 +81,14 @@ def _draw_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM draws ORDER BY issued_at").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM trace_events ORDER BY ts_start").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -203,3 +212,47 @@ async def test_pay_phase_failure_does_not_consume_cap(
     # No credential row: pay() raised before persist.
     creds = _credential_rows(tmp_trace_db_path)
     assert len(creds) == 0
+
+
+async def test_preimage_mismatch_settles_draw_and_consumes_cap(
+    tmp_path: Path, tmp_trace_db_path: Path
+) -> None:
+    """PreimageMismatchError fires AFTER pay_invoice committed sats on the wire.
+
+    The draw must be settled (not rolled back), no credential persists (the
+    mismatch check fires before the credential dict is built), a trace event
+    records the error, and the cap is consumed so a follow-up call is blocked.
+    """
+    transport = httpx.ASGITransport(app=_l402_always_500_app())  # type: ignore[arg-type]
+    # all-zero preimage: sha256 != MOCK_PAYMENT_HASH, triggers PreimageMismatchError
+    wrong_lnd = FakeLndClient(preimage=bytes(32))
+    client = await _make_l402_budget_client(
+        transport, tmp_trace_db_path, cap_minor_units=_CENTS_PER_PAYMENT, lnd_client=wrong_lnd
+    )
+
+    with pytest.raises(PreimageMismatchError):
+        await client.get("http://mock/protected")
+
+    draws = _draw_rows(tmp_trace_db_path)
+    assert len(draws) == 1
+    assert draws[0]["state"] == "settled", (
+        "Sats left the wire — draw must be settled, not rolled_back"
+    )
+
+    # Credential dict is built after the preimage check (l402.py:329) — mismatch
+    # means no usable credential was ever persisted.
+    creds = _credential_rows(tmp_trace_db_path)
+    assert len(creds) == 0
+
+    traces = _trace_rows(tmp_trace_db_path)
+    assert len(traces) == 1
+    payload = json.loads(traces[0]["payload"])
+    assert payload["outcome"]["error"]["code"] == "PreimageMismatchError"
+
+    # Cap is now exhausted — next call on the same client must be blocked.
+    with pytest.raises(BudgetExceededError) as exc_info:
+        await client.get("http://mock/protected")
+    await client.aclose()
+
+    assert exc_info.value.envelope_id == _ENVELOPE_ID
+    assert exc_info.value.available_minor_units == 0

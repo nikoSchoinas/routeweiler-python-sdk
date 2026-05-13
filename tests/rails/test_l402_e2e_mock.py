@@ -23,7 +23,7 @@ import respx
 from eth_account import Account
 
 from routeweiler import Funding, Routeweiler
-from routeweiler.errors import NoFeasibleRailError, RailNotSupportedError
+from routeweiler.errors import PreimageMismatchError, RailNotSupportedError
 from routeweiler.funding.lightning import LightningFundingSource
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -118,13 +118,12 @@ async def test_passthrough_does_not_pay(
 # ---------------------------------------------------------------------------
 
 
-async def test_wrong_preimage_exhausts_rails(
+async def test_wrong_preimage_raises_and_does_not_failover(
     l402_transport: httpx.ASGITransport,
     tmp_trace_db_path: Path,
 ) -> None:
-    # The adapter's defence-in-depth check raises PreimageMismatchError inside pay().
-    # The auth flow catches all pay() exceptions and attempts failover; with only one
-    # rail available, it exhausts options and raises NoFeasibleRailError.
+    # PreimageMismatchError fires AFTER pay_invoice commits sats. The auth flow
+    # must raise to the caller (no failover — re-issuing would double-spend).
     wrong_preimage = bytes(32)  # all-zero preimage; sha256 != MOCK_PAYMENT_HASH
     source = LightningFundingSource(
         client=FakeLndClient(preimage=wrong_preimage),
@@ -139,7 +138,7 @@ async def test_wrong_preimage_exhausts_rails(
         transport=l402_transport,
     )
 
-    with pytest.raises(NoFeasibleRailError):
+    with pytest.raises(PreimageMismatchError):
         await client.get("http://mock/protected")
 
     await client.aclose()
