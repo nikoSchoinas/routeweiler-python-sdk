@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import model_validator
 
 from routeweiler._base import RouteweilerModel
+from routeweiler._macaroon import parse_macaroon_caveats
 from routeweiler.errors import ManifestParseError
 
 HttpMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 
-# Only "path" is supported at MVP; forward-compatible with "header:..." / "json:..."
-_KNOWN_EXTRACTOR_PREFIXES = {"path"}
+# "path" extracts from the URL path via regex.
+# "macaroon" extracts a named first-party caveat from the L402 macaroon.
+# Forward-compatible: "header:..." / "json:..." reserved for future use.
+_KNOWN_EXTRACTOR_PREFIXES = {"path", "macaroon"}
 
 
 class ServiceShapeStep(RouteweilerModel):
@@ -30,27 +33,48 @@ class ServiceShapeStep(RouteweilerModel):
             raise ValueError(
                 f"id_extractor must be in 'prefix:pattern' format, got {self.id_extractor!r}"
             )
-        prefix, pattern = self.id_extractor.split(":", 1)
+        prefix, suffix = self.id_extractor.split(":", 1)
         if prefix not in _KNOWN_EXTRACTOR_PREFIXES:
             raise ManifestParseError(
                 f"Unknown id_extractor prefix {prefix!r}. "
                 f"Supported prefixes: {sorted(_KNOWN_EXTRACTOR_PREFIXES)}"
             )
-        try:
-            re.compile(pattern)
-        except re.error as exc:
-            raise ManifestParseError(
-                f"Invalid regex in id_extractor {self.id_extractor!r}: {exc}"
-            ) from exc
+        if prefix == "path":
+            try:
+                re.compile(suffix)
+            except re.error as exc:
+                raise ManifestParseError(
+                    f"Invalid regex in id_extractor {self.id_extractor!r}: {exc}"
+                ) from exc
         return self
 
-    def extract_id(self, url_path: str) -> str | None:
-        """Apply the id_extractor regex to url_path; return group(1) or None."""
-        _, pattern = self.id_extractor.split(":", 1)
-        stripped = url_path.lstrip("/")
-        match = re.search(pattern, stripped)
-        if match:
-            return match.group(1)
+    def extract_id(
+        self, url_path: str, credential_payload: dict[str, Any] | None = None
+    ) -> str | None:
+        """Extract an ID from the URL path or credential payload depending on the prefix.
+
+        ``path:<regex>`` — applies the regex to url_path; returns group(1) or None.
+        ``macaroon:<caveat_key>`` — decodes the macaroon from credential_payload and
+            returns the value of the named first-party caveat, or None.
+        """
+        prefix, suffix = self.id_extractor.split(":", 1)
+
+        if prefix == "path":
+            stripped = url_path.lstrip("/")
+            match = re.search(suffix, stripped)
+            if match:
+                return match.group(1)
+            return None
+
+        if prefix == "macaroon":
+            if not credential_payload:
+                return None
+            macaroon_b64 = credential_payload.get("macaroon")
+            if not macaroon_b64 or not isinstance(macaroon_b64, str):
+                return None
+            caveats = parse_macaroon_caveats(macaroon_b64)
+            return caveats.get(suffix)
+
         return None
 
 

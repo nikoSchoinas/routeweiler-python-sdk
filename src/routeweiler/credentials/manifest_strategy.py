@@ -80,7 +80,7 @@ class ManifestRecoveryStrategy:
             if attempts >= self._max_attempts:
                 break
 
-            order_id = step.extract_id(url_path)
+            order_id = step.extract_id(url_path, credential.payload)
             if order_id is None:
                 _log.debug(
                     "id_extractor %r did not match path %r; skipping step.",
