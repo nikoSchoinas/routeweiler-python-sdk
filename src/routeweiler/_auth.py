@@ -21,6 +21,7 @@ from routeweiler.errors import (
     NoFeasibleRailError,
     PolicyDeniedError,
     PolicyMaxPerCallExceededError,
+    PostCommitPaymentError,
     RailNotSupportedError,
 )
 from routeweiler.funding import FundingSource
@@ -288,10 +289,30 @@ class RouteweilerAuth(httpx.Auth):
 
             # -----------------------------------------------------------------
             # Pay phase — produce the PaymentResult.
-            # On failure: rollback, exclude this rail, attempt failover.
+            # PostCommitPaymentError: funds already left the wire before the
+            # exception fired — confirm the draw, emit an error trace, and
+            # raise to the caller (no failover; re-issuing would double-spend).
+            # All other exceptions: rollback, exclude this rail, failover.
             # -----------------------------------------------------------------
             try:
                 payment_result = await adapter.pay(challenge)
+            except PostCommitPaymentError as exc:
+                await self._confirm_draw_safe(receipt)
+                if self._emitter:
+                    try:
+                        await self._emitter.emit_error(
+                            request=request,
+                            response=response,
+                            error=exc,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            ts_end=datetime.now(UTC),
+                            fallback_from=choice.fallback_from,
+                        )
+                    except Exception:
+                        _log.exception("Trace emit failed.")
+                self._sticky_cache.forget(sticky_key)
+                raise
             except Exception:
                 _log.warning(
                     "Pay failed for rail %r on attempt %d; rolling back and trying next rail.",
