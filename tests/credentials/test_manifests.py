@@ -16,26 +16,29 @@ from routeweiler.errors import ManifestParseError
 # ---------------------------------------------------------------------------
 
 
-def test_load_bundled_includes_lightning_shop() -> None:
+def test_load_bundled_includes_lightning_enable_store() -> None:
     registry = ManifestRegistry.from_bundled()
     names = {shape.name for shape in registry.shapes}
-    assert "lightning-shop" in names, f"Expected 'lightning-shop' in bundled manifests, got {names}"
+    assert "lightning-enable-store" in names, (
+        f"Expected 'lightning-enable-store' in bundled manifests, got {names}"
+    )
 
 
-def test_bundled_lightning_shop_has_correct_domain() -> None:
+def test_bundled_lightning_enable_store_has_correct_domain() -> None:
     registry = ManifestRegistry.from_bundled()
-    shape = next(s for s in registry.shapes if s.name == "lightning-shop")
-    assert shape.domain_matches == "*.refinedelement.com"
+    shape = next(s for s in registry.shapes if s.name == "lightning-enable-store")
+    assert shape.domain_matches == "*.lightningenable.com"
 
 
-def test_bundled_lightning_shop_has_one_flow_step() -> None:
+def test_bundled_lightning_enable_store_has_one_flow_step() -> None:
     registry = ManifestRegistry.from_bundled()
-    shape = next(s for s in registry.shapes if s.name == "lightning-shop")
+    shape = next(s for s in registry.shapes if s.name == "lightning-enable-store")
     assert len(shape.flow) == 1
     step = shape.flow[0]
-    assert step.challenge_path == "/checkout/*"
-    assert step.fulfil_path_template == "/orders/{order_id}/fulfil"
-    assert step.id_extractor == "path:^/checkout/([^/]+)$"
+    assert step.challenge_path == "/api/store/checkout"
+    assert step.fulfil_path_template == "/api/store/claim"
+    assert step.id_extractor == "macaroon:order_id"
+    assert step.method == "POST"
 
 
 # ---------------------------------------------------------------------------
