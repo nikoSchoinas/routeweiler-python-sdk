@@ -25,6 +25,7 @@ from typing import Any, cast
 import httpx
 
 from routeweiler._constants import HTTP_STATUS_PAYMENT_REQUIRED
+from routeweiler._macaroon import parse_macaroon_caveats
 from routeweiler.errors import (
     ChallengeExpiredError,
     ChallengeParseError,
@@ -129,39 +130,7 @@ def _extract_param(params: str, name: str) -> str | None:
     return None
 
 
-def _parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
-    """Deserialize the macaroon and return its first-party caveat key→value pairs.
-
-    Returns an empty dict if pymacaroons is not installed or if deserialization
-    fails with an expected decode/format error.  Unexpected exceptions propagate
-    so callers can diagnose library issues rather than silently losing caveats.
-    """
-
-    try:
-        from pymacaroons import Macaroon  # type: ignore[import-untyped]  # noqa: PLC0415
-    except ImportError:
-        return {}
-
-    try:
-        m = Macaroon.deserialize(macaroon_b64)
-    except Exception:
-        # pymacaroons raises its own exception hierarchy (MacaroonDeserializationException,
-        # etc.) that doesn't map to stdlib types.  Catch broadly since this is optional
-        # third-party code; callers fall back to invoice expiry on empty caveats.
-        return {}
-
-    caveats: dict[str, str] = {}
-    for caveat in m.caveats:
-        raw_id = caveat.caveat_id
-        try:
-            cid: str = raw_id.decode("utf-8") if isinstance(raw_id, bytes) else str(raw_id)
-        except (UnicodeDecodeError, AttributeError):
-            continue
-        if "=" in cid:
-            k, _, v = cid.partition("=")
-            caveats[k.strip()] = v.strip()
-
-    return caveats
+_parse_macaroon_caveats = parse_macaroon_caveats
 
 
 class L402Adapter:
