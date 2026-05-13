@@ -31,6 +31,15 @@ class RailExecutionError(PaymentError):
     """Base for errors that occur while executing a payment."""
 
 
+class PostCommitPaymentError(RailExecutionError):
+    """A pay() exception raised AFTER funds committed on the wire.
+
+    Signals to the auth flow that the budget draw must be confirmed (not rolled
+    back) and that failover must not proceed — the rail's payment cannot be
+    re-issued without double-spending.
+    """
+
+
 class SigningError(RailExecutionError):
     """The rail adapter failed to produce a signed payment payload."""
 
@@ -39,7 +48,7 @@ class InvoicePaymentError(RailExecutionError):
     """Lightning node returned a terminal payment failure (no_route, channel offline, etc.)."""
 
 
-class PreimageMismatchError(RailExecutionError):
+class PreimageMismatchError(PostCommitPaymentError):
     """sha256(preimage) != invoice payment_hash; the node returned a corrupt preimage."""
 
 
