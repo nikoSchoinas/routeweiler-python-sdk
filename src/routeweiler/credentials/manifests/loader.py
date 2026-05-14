@@ -1,26 +1,19 @@
-"""Service-shape manifest loader — builds a ManifestRegistry from bundled or user YAML files."""
+"""Service-shape manifest loader — builds a ManifestRegistry from ServiceShape objects."""
 
 from __future__ import annotations
 
 import fnmatch
 import urllib.parse
-from pathlib import Path
-from typing import Any
-
-import yaml
-from pydantic import ValidationError
 
 from routeweiler.credentials.manifests._bundled import BUNDLED_SHAPES
 from routeweiler.credentials.manifests.schema import ServiceShape
-from routeweiler.errors import ManifestParseError
 
 
 class ManifestRegistry:
     """Immutable collection of ServiceShape objects.
 
     Build via :meth:`from_bundled` (returns canonical shapes shipped with Routeweiler)
-    or :meth:`from_paths` (user-supplied YAML files).
-    Combine both with ``ManifestRegistry.from_bundled() + ManifestRegistry.from_paths(...)``.
+    or pass shapes directly: ``ManifestRegistry(shapes=(ServiceShape(...),))``.
 
     Lookup is O(n) over shapes — at MVP only one bundled shape exists.
     """
@@ -39,15 +32,6 @@ class ManifestRegistry:
         """Return a registry containing all canonical shapes shipped with Routeweiler."""
         return cls(BUNDLED_SHAPES)
 
-    @classmethod
-    def from_paths(cls, paths: list[Path]) -> ManifestRegistry:
-        """Load manifests from explicit filesystem paths."""
-        shapes: list[ServiceShape] = []
-        for path in paths:
-            raw = path.read_text(encoding="utf-8")
-            shapes.append(_parse_manifest(raw, source=str(path)))
-        return cls(tuple(shapes))
-
     # ------------------------------------------------------------------
     # Lookup
     # ------------------------------------------------------------------
@@ -65,29 +49,3 @@ class ManifestRegistry:
             if fnmatch.fnmatchcase(host, shape.domain_matches):
                 return shape
         return None
-
-
-# ------------------------------------------------------------------
-# Private helpers
-# ------------------------------------------------------------------
-
-
-def _parse_manifest(raw_yaml: str, *, source: str) -> ServiceShape:
-    """Parse a YAML string into a ServiceShape; raise ManifestParseError on any failure."""
-    try:
-        data: Any = yaml.safe_load(raw_yaml)
-    except yaml.YAMLError as exc:
-        raise ManifestParseError(f"Invalid YAML in manifest {source!r}: {exc}") from exc
-
-    if not isinstance(data, dict):
-        raise ManifestParseError(
-            f"Manifest {source!r} must be a YAML mapping at the top level, "
-            f"got {type(data).__name__}"
-        )
-
-    try:
-        return ServiceShape.model_validate(data)
-    except (ValidationError, ManifestParseError) as exc:
-        raise ManifestParseError(
-            f"Schema validation failed for manifest {source!r}: {exc}"
-        ) from exc
