@@ -57,15 +57,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked @pytest.mark.live (requires funded Base-Sepolia wallet).",
     )
+    parser.addoption(
+        "--run-agent-frameworks",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.agent_frameworks tests (included in the dev extra).",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--run-live"):
-        return
-    skip_live = pytest.mark.skip(reason="Pass --run-live to run live rail tests.")
-    for item in items:
-        if item.get_closest_marker("live"):
-            item.add_marker(skip_live)
+    if not config.getoption("--run-live"):
+        skip_live = pytest.mark.skip(reason="Pass --run-live to run live rail tests.")
+        for item in items:
+            if item.get_closest_marker("live"):
+                item.add_marker(skip_live)
+
+    if not config.getoption("--run-agent-frameworks"):
+        skip_af = pytest.mark.skip(
+            reason="Pass --run-agent-frameworks to run agent-framework integration tests."
+        )
+        for item in items:
+            if item.get_closest_marker("agent_frameworks"):
+                item.add_marker(skip_af)
 
 
 # ---------------------------------------------------------------------------
