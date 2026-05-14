@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import textwrap
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import httpx
 import respx
@@ -14,22 +12,12 @@ from routeweiler.credentials.manifest_strategy import (
     _build_authorization_header,
 )
 from routeweiler.credentials.manifests.loader import ManifestRegistry
+from routeweiler.credentials.manifests.schema import ServiceShape, ServiceShapeStep
 from routeweiler.credentials.schema import CredentialRecord, CredentialState, ManualHoldReason
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_TEST_MANIFEST_YAML = textwrap.dedent(
-    """\
-    name: test-shop
-    domain_matches: "mock"
-    flow:
-      - challenge_path: "/checkout/*"
-        fulfil_path_template: "/orders/{order_id}/fulfil"
-        id_extractor: "path:checkout/([^/]+)"
-    """
-)
 
 _MOCK_MACAROON = "bW9ja21hY2Fyb29u"  # base64("mockmacaroon")
 _MOCK_PREIMAGE_HEX = "aabbcc" * 10 + "aabb"  # 32 bytes hex
@@ -53,10 +41,22 @@ def _make_credential(
     )
 
 
-def _make_registry(tmp_path: Path) -> ManifestRegistry:
-    path = tmp_path / "test-shop.yaml"
-    path.write_text(_TEST_MANIFEST_YAML, encoding="utf-8")
-    return ManifestRegistry.from_paths([path])
+def _make_registry() -> ManifestRegistry:
+    return ManifestRegistry(
+        shapes=(
+            ServiceShape(
+                name="test-shop",
+                domain_matches="mock",
+                flow=[
+                    ServiceShapeStep(
+                        challenge_path="/checkout/*",
+                        fulfil_path_template="/orders/{order_id}/fulfil",
+                        id_extractor="path:checkout/([^/]+)",
+                    )
+                ],
+            ),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +64,8 @@ def _make_registry(tmp_path: Path) -> ManifestRegistry:
 # ---------------------------------------------------------------------------
 
 
-async def test_strategy_succeeds_on_alternate_url(tmp_path: Path) -> None:
-    registry = _make_registry(tmp_path)
+async def test_strategy_succeeds_on_alternate_url() -> None:
+    registry = _make_registry()
     credential = _make_credential()
 
     with respx.mock(assert_all_called=False) as respx_mock:
@@ -82,8 +82,8 @@ async def test_strategy_succeeds_on_alternate_url(tmp_path: Path) -> None:
     assert outcome.reason is None
 
 
-async def test_strategy_passes_correct_authorization_header(tmp_path: Path) -> None:
-    registry = _make_registry(tmp_path)
+async def test_strategy_passes_correct_authorization_header() -> None:
+    registry = _make_registry()
     credential = _make_credential()
     expected_auth = f"L402 {_MOCK_MACAROON}:{_MOCK_PREIMAGE_HEX}"
 
@@ -109,8 +109,8 @@ async def test_strategy_passes_correct_authorization_header(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-async def test_strategy_exhausts_when_all_alternates_are_4xx(tmp_path: Path) -> None:
-    registry = _make_registry(tmp_path)
+async def test_strategy_exhausts_when_all_alternates_are_4xx() -> None:
+    registry = _make_registry()
     credential = _make_credential()
 
     with respx.mock(assert_all_called=False) as respx_mock:
@@ -125,11 +125,11 @@ async def test_strategy_exhausts_when_all_alternates_are_4xx(tmp_path: Path) -> 
     assert outcome.reason == ManualHoldReason.EXHAUSTED
 
 
-async def test_strategy_no_matching_shape_returns_exhausted(tmp_path: Path) -> None:
+async def test_strategy_no_matching_shape_returns_exhausted() -> None:
     """No manifest matches the credential's URL domain → EXHAUSTED without HTTP calls."""
-    path = tmp_path / "other.yaml"
-    path.write_text("name: other\ndomain_matches: '*.other.com'\nflow: []\n", encoding="utf-8")
-    registry = ManifestRegistry.from_paths([path])
+    registry = ManifestRegistry(
+        shapes=(ServiceShape(name="other", domain_matches="*.other.com", flow=[]),)
+    )
     credential = _make_credential(challenge_url="http://mock/checkout/order_123")
 
     async with httpx.AsyncClient() as client:
@@ -140,8 +140,8 @@ async def test_strategy_no_matching_shape_returns_exhausted(tmp_path: Path) -> N
     assert outcome.reason == ManualHoldReason.EXHAUSTED
 
 
-async def test_strategy_caps_attempts_at_max_attempts(tmp_path: Path) -> None:
-    registry = _make_registry(tmp_path)
+async def test_strategy_caps_attempts_at_max_attempts() -> None:
+    registry = _make_registry()
     credential = _make_credential()
     call_count = {"n": 0}
 
@@ -162,9 +162,9 @@ async def test_strategy_caps_attempts_at_max_attempts(tmp_path: Path) -> None:
     assert call_count["n"] <= 2
 
 
-async def test_strategy_transport_error_is_non_fatal(tmp_path: Path) -> None:
+async def test_strategy_transport_error_is_non_fatal() -> None:
     """A transport error on the recovery request does not raise; returns EXHAUSTED."""
-    registry = _make_registry(tmp_path)
+    registry = _make_registry()
     credential = _make_credential()
 
     with respx.mock(assert_all_called=False) as respx_mock:
@@ -184,8 +184,8 @@ async def test_strategy_transport_error_is_non_fatal(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_strategy_missing_macaroon_returns_exhausted(tmp_path: Path) -> None:
-    registry = _make_registry(tmp_path)
+async def test_strategy_missing_macaroon_returns_exhausted() -> None:
+    registry = _make_registry()
     now = datetime.now(UTC)
     credential = CredentialRecord(
         credential_id="cred-bad",

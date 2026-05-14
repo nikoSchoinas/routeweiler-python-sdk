@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import textwrap
 from pathlib import Path
 
 import httpx
@@ -31,7 +30,7 @@ from pymacaroons import Macaroon  # type: ignore[import-untyped]
 from routeweiler import Routeweiler
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
-from routeweiler.credentials.manifests.schema import ServiceShapeStep
+from routeweiler.credentials.manifests.schema import ServiceShape, ServiceShapeStep
 from routeweiler.funding.lightning import LightningFundingSource
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -63,21 +62,25 @@ def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
 # Test-local manifest — domain_matches "mock" to match the ASGI transport host
 # ---------------------------------------------------------------------------
 
-_TEST_MANIFEST_YAML = textwrap.dedent(
-    """\
-    name: test-lightning-enable-store
-    domain_matches: "mock"
-    flow:
-      - challenge_path: "/api/store/checkout"
-        fulfil_path_template: "/api/store/claim"
-        id_extractor: "macaroon:order_id"
-        method: "POST"
-    """
+_TEST_MANIFEST_REGISTRY = ManifestRegistry(
+    shapes=(
+        ServiceShape(
+            name="test-lightning-enable-store",
+            domain_matches="mock",
+            flow=[
+                ServiceShapeStep(
+                    challenge_path="/api/store/checkout",
+                    fulfil_path_template="/api/store/claim",
+                    id_extractor="macaroon:order_id",
+                    method="POST",
+                )
+            ],
+        ),
+    )
 )
 
 
 def _make_split_url_client(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> tuple[Routeweiler, httpx.AsyncClient]:
     """Build a Routeweiler client wired to the split-URL mock app."""
@@ -90,12 +93,8 @@ def _make_split_url_client(
     )
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
 
-    manifest_path = tmp_path / "test-lightning-enable-store.yaml"
-    manifest_path.write_text(_TEST_MANIFEST_YAML, encoding="utf-8")
-
     recovery_http = httpx.AsyncClient(transport=transport)
-    registry = ManifestRegistry.from_paths([manifest_path])
-    strategy = ManifestRecoveryStrategy(registry=registry, client=recovery_http)
+    strategy = ManifestRecoveryStrategy(registry=_TEST_MANIFEST_REGISTRY, client=recovery_http)
 
     client = Routeweiler(
         funding=[source],
@@ -116,11 +115,10 @@ def _make_split_url_client(
 
 
 async def test_split_url_recovery_returns_200_to_caller(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
     """The caller receives the recovered 200 from the fulfilment URL."""
-    client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
+    client, recovery_http = _make_split_url_client(tmp_trace_db_path)
 
     resp = await client.post("http://mock/api/store/checkout")
     await client.aclose()
@@ -133,11 +131,10 @@ async def test_split_url_recovery_returns_200_to_caller(
 
 
 async def test_split_url_recovery_credential_ends_in_redeemed(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
     """The credential transitions to REDEEMED after split-URL recovery."""
-    client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
+    client, recovery_http = _make_split_url_client(tmp_trace_db_path)
 
     await client.post("http://mock/api/store/checkout")
     await client.aclose()
@@ -154,11 +151,10 @@ async def test_split_url_recovery_credential_ends_in_redeemed(
 
 
 async def test_split_url_recovery_trace_records_200(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
     """The trace event records the final 200 (not the intermediate 404)."""
-    client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
+    client, recovery_http = _make_split_url_client(tmp_trace_db_path)
 
     await client.post("http://mock/api/store/checkout")
     await client.aclose()
@@ -180,11 +176,10 @@ async def test_split_url_recovery_trace_records_200(
 
 
 async def test_split_url_recovery_no_manual_hold_trace_event(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
     """No MANUAL_HOLD trace event is emitted when recovery succeeds."""
-    client, recovery_http = _make_split_url_client(tmp_path, tmp_trace_db_path)
+    client, recovery_http = _make_split_url_client(tmp_trace_db_path)
 
     await client.post("http://mock/api/store/checkout")
     await client.aclose()
@@ -200,7 +195,6 @@ async def test_split_url_recovery_no_manual_hold_trace_event(
 
 
 async def test_split_url_recovery_no_manifest_match_gives_manual_hold(
-    tmp_path: Path,
     tmp_trace_db_path: Path,
 ) -> None:
     """When no manifest matches, the credential transitions to MANUAL_HOLD(exhausted).
@@ -217,13 +211,11 @@ async def test_split_url_recovery_no_manifest_match_gives_manual_hold(
     )
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
 
-    manifest_path = tmp_path / "no-match.yaml"
-    manifest_path.write_text(
-        "name: other\ndomain_matches: '*.other.com'\nflow: []\n", encoding="utf-8"
+    no_match_registry = ManifestRegistry(
+        shapes=(ServiceShape(name="other", domain_matches="*.other.com", flow=[]),)
     )
     recovery_http = httpx.AsyncClient(transport=transport)
-    registry = ManifestRegistry.from_paths([manifest_path])
-    strategy = ManifestRecoveryStrategy(registry=registry, client=recovery_http)
+    strategy = ManifestRecoveryStrategy(registry=no_match_registry, client=recovery_http)
 
     client = Routeweiler(funding=[source], trace_sink=sink, recovery_strategy=strategy)
     client._http = httpx.AsyncClient(
