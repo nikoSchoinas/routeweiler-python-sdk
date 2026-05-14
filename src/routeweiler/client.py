@@ -14,7 +14,7 @@ from routeweiler.budgets.ecb_provider import EcbRateProvider
 from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
-from routeweiler.budgets.schema import BudgetEnvelopeSpec, EnvelopeCurrency
+from routeweiler.budgets.schema import BudgetEnvelope, EnvelopeCurrency
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
 from routeweiler.credentials.recovery import CredentialRecoverer, RecoveryStrategy
@@ -151,7 +151,7 @@ class Routeweiler:
                          * ``str`` — ID of a pre-existing envelope.  The envelope must
                            already be present in the database; ``EnvelopeNotFoundError``
                            is raised at construction time if it is missing.
-                         * ``BudgetEnvelopeSpec`` — declarative spec.  The envelope is
+                         * ``BudgetEnvelope`` — declarative spec.  The envelope is
                            created idempotently inside ``__aenter__`` (i.e. the first
                            ``async with Routeweiler(...) as client:`` call).  If an
                            envelope with the same ``id`` already exists it is reused
@@ -173,7 +173,7 @@ class Routeweiler:
         *,
         funding: list[FundingSource],
         policy: Policy | None = None,
-        budget_envelope: str | BudgetEnvelopeSpec | None = None,
+        budget_envelope: str | BudgetEnvelope | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
         agent_id: str | None = None,
@@ -185,10 +185,10 @@ class Routeweiler:
         self._funding = funding
         self._trace_sink = trace_sink
         self._recovery_http: httpx.AsyncClient | None = None
-        self._pending_envelope_spec: BudgetEnvelopeSpec | None = None
+        self._pending_envelope_spec: BudgetEnvelope | None = None
 
         envelope_id: str | None
-        if isinstance(budget_envelope, BudgetEnvelopeSpec):
+        if isinstance(budget_envelope, BudgetEnvelope):
             envelope_id = budget_envelope.id
             self._pending_envelope_spec = budget_envelope
         elif isinstance(budget_envelope, str):
@@ -231,15 +231,15 @@ class Routeweiler:
 
             # Resolve the envelope's declared currency and allowed rails from the DB.
             # Skip when no envelope was supplied (no enforcement) or when a
-            # BudgetEnvelopeSpec was supplied (the envelope may not exist yet; it is
-            # created idempotently in start() instead).
+            # declarative BudgetEnvelope was supplied (the envelope may not exist yet;
+            # it is created idempotently in start() instead).
             if envelope_id is not None and self._pending_envelope_spec is None:
                 envelope_currency = budget_store.get_envelope_currency_sync(envelope_id)
                 if envelope_currency is None:
                     raise EnvelopeNotFoundError(
                         f"Envelope '{envelope_id}' not found. "
                         "Create it with BudgetStore.create_envelope() before constructing "
-                        "Routeweiler, or pass a BudgetEnvelopeSpec as budget_envelope."
+                        "Routeweiler, or pass a BudgetEnvelope as budget_envelope."
                     )
                 envelope_allowed_rails = budget_store.get_envelope_allowed_rails_sync(envelope_id)
             else:

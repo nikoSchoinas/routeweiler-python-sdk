@@ -1,7 +1,7 @@
 __version__ = "0.1.0.dev0"
 
 from routeweiler.budgets.local import BudgetStore
-from routeweiler.budgets.schema import BudgetEnvelope, BudgetEnvelopeSpec, DrawReceipt
+from routeweiler.budgets.schema import BudgetEnvelope, BudgetEnvelopeRecord, DrawReceipt
 from routeweiler.client import Routeweiler
 from routeweiler.errors import (
     BudgetError,
@@ -60,7 +60,7 @@ from routeweiler.trace.sink_sqlite import SqliteTraceSink, TraceSink
 
 __all__ = [
     "BudgetEnvelope",
-    "BudgetEnvelopeSpec",
+    "BudgetEnvelopeRecord",
     "BudgetError",
     "BudgetExceededError",
     "BudgetStore",

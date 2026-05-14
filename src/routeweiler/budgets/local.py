@@ -29,7 +29,7 @@ from routeweiler.budgets.receipts import issue as _issue_receipt
 from routeweiler.budgets.receipts import uuid7
 from routeweiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
 from routeweiler.budgets.schema import (
-    BudgetEnvelopeSpec,
+    BudgetEnvelope,
     DrawReceipt,
     DrawState,
     EnvelopeCurrency,
@@ -501,7 +501,7 @@ class BudgetStore:
             self._keystore.delete(envelope_id)
             raise
 
-    async def create_envelope_if_absent(self, spec: BudgetEnvelopeSpec) -> bool:
+    async def create_envelope_if_absent(self, spec: BudgetEnvelope) -> bool:
         """Create an envelope from *spec* only when no row with that id exists.
 
         Returns ``True`` when a new envelope was inserted, ``False`` when an

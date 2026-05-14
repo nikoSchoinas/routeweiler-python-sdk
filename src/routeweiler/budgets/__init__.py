@@ -10,6 +10,7 @@ from routeweiler.budgets.receipts import verify as verify_receipt
 from routeweiler.budgets.receipts import verify_against_envelope
 from routeweiler.budgets.schema import (
     BudgetEnvelope,
+    BudgetEnvelopeRecord,
     DrawReceipt,
     EnvelopeCurrency,
     EnvelopeStatus,
@@ -17,6 +18,7 @@ from routeweiler.budgets.schema import (
 
 __all__ = [
     "BudgetEnvelope",
+    "BudgetEnvelopeRecord",
     "BudgetStore",
     "CoinGeckoProvider",
     "DrawReceipt",
