@@ -13,18 +13,13 @@
   <img src="https://img.shields.io/badge/type%20checked-mypy-1f5082?style=for-the-badge" alt="Type-checked with mypy">
 </p>
 
+The neutral micropayment router for autonomous agents. A single async HTTP client —
+`await routeweiler.get(url)` — that transparently handles `402 Payment Required` across
+x402 (EVM), L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
+
 <p align="center">
   <img src="assets/diagram.png" alt="Routeweiler flow diagram" width="900">
 </p>
-
-**Status:** Alpha — `0.1.0.dev0`
-
-The neutral micropayment router for autonomous agents. A single async HTTP client —
-`await client.get(url)` — that transparently handles `402 Payment Required` across
-x402, L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
-
-> **Async-only.** `Routeweiler` wraps `httpx.AsyncClient`. All methods (`get`, `post`,
-> …) are coroutines and must be awaited inside an `async` function.
 
 ## Install
 
