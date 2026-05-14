@@ -112,25 +112,26 @@ Envelopes track reserved and settled amounts with Ed25519-signed draw receipts.
 Control which rails are used, set per-call spend limits, or deny specific URLs:
 
 ```python
-from routeweiler import PolicyFile, Routeweiler
+from routeweiler import Policy, PolicyRule, RuleMatch, Routeweiler
 
 async with Routeweiler(
     funding=[...],
-    policy=PolicyFile("policy.yaml"),
+    policy=Policy(
+        rules=[
+            PolicyRule(
+                name="deny analytics",
+                when=RuleMatch(url_matches="*.tracking.io"),
+                deny=True,
+            ),
+            PolicyRule(
+                name="cap per call",
+                when=RuleMatch(url_matches="*"),
+                max_per_call_minor_units=500,  # 5 USD cents
+            ),
+        ]
+    ),
 ) as client:
     ...
-```
-
-```yaml
-# policy.yaml
-version: 1
-rules:
-  - name: "deny analytics"
-    when:
-      url_matches: "*.tracking.io"
-    deny: true
-  - name: "cap per call"
-    max_per_call_minor_units: 500  # 5 USD cents
 ```
 
 > **Note:** `max_per_call_minor_units` is inactive unless a `budget_envelope` is also
