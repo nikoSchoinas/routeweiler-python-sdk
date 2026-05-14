@@ -81,12 +81,12 @@ Enforce per-session or per-agent spend caps with local SQLite budget envelopes.
 Without a `budget_envelope`, tracing still works but **no cap is enforced**.
 
 ```python
-from routeweiler import BudgetEnvelopeSpec, Funding, Routeweiler, TraceSink
+from routeweiler import BudgetEnvelope, Funding, Routeweiler, TraceSink
 
 async with Routeweiler(
     funding=[Funding.base_usdc(wallet=signer)],
     trace_sink=TraceSink.sqlite("routeweiler.db"),
-    budget_envelope=BudgetEnvelopeSpec(
+    budget_envelope=BudgetEnvelope(
         id="session-abc",
         cap_minor_units=500,           # 5.00 USD (in cents)
         cap_currency="usd",
@@ -102,7 +102,7 @@ async with Routeweiler(
 - **`None`** (default) — no cap enforcement.
 - **`str`** — ID of a pre-existing envelope; raises `EnvelopeNotFoundError` at
   construction time if the row is missing.
-- **`BudgetEnvelopeSpec`** — declarative spec; If an envelope with the same `id` already exists it is reused unchanged.
+- **`BudgetEnvelope`** — declarative spec; If an envelope with the same `id` already exists it is reused unchanged.
 
 Envelopes track reserved and settled amounts with Ed25519-signed draw receipts.
 `BudgetExceededError` is raised if a payment would breach the cap.
