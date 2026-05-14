@@ -26,7 +26,7 @@ from routeweiler.funding.lightning import LightningFundingSource
 from routeweiler.funding.stripe import StripeFundingSource
 from routeweiler.funding.tempo import TempoFundingSource
 from routeweiler.normalized import Rail
-from routeweiler.policy.dsl import PolicyDocument, PolicyFile, compute_policy_hash, default_policy
+from routeweiler.policy.dsl import Policy
 from routeweiler.policy.engine import PolicyEngine
 from routeweiler.rails import ADAPTER_REGISTRY, RailAdapter
 from routeweiler.routing.router import Router
@@ -140,8 +140,8 @@ class Routeweiler:
 
     Args:
         funding:         One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
-        policy:          Optional policy file (``PolicyFile("policy.yaml")``). When omitted,
-                         the built-in default policy is used (prefer x402, no rules).
+        policy:          Optional ``Policy`` instance. When omitted, the built-in
+                         default is used (prefer x402, no rules).
         budget_envelope: Controls which spending envelope the client draws from.
                          Three forms are accepted:
 
@@ -172,7 +172,7 @@ class Routeweiler:
         self,
         *,
         funding: list[FundingSource],
-        policy: PolicyFile | PolicyDocument | None = None,
+        policy: Policy | None = None,
         budget_envelope: str | BudgetEnvelopeSpec | None = None,
         trace_sink: SqliteTraceSink | None = None,
         keystore_root: Path | None = None,
@@ -198,19 +198,12 @@ class Routeweiler:
             envelope_id = None
 
         # Build the policy engine and compute the hash regardless of trace_sink.
-        if isinstance(policy, PolicyFile):
-            _policy_doc = policy.document
-            _policy_hash = policy.policy_hash
-        elif isinstance(policy, PolicyDocument):
-            _policy_doc = policy
-            _policy_hash = compute_policy_hash(policy)
-        else:
-            _policy_doc = default_policy()
-            _policy_hash = compute_policy_hash(_policy_doc)
-        policy_engine = PolicyEngine(_policy_doc)
+        _policy = policy if policy is not None else Policy()
+        _policy_hash = _policy.policy_hash
+        policy_engine = PolicyEngine(_policy)
 
         if envelope_id is None and any(
-            r.max_per_call_minor_units is not None for r in _policy_doc.rules
+            r.max_per_call_minor_units is not None for r in _policy.rules
         ):
             _log.warning(
                 "Policy contains max_per_call_minor_units rules but no budget_envelope was set. "
