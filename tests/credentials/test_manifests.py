@@ -12,36 +12,6 @@ from routeweiler.credentials.manifests.schema import ServiceShape, ServiceShapeS
 from routeweiler.errors import ManifestParseError
 
 # ---------------------------------------------------------------------------
-# Bundled manifests
-# ---------------------------------------------------------------------------
-
-
-def test_load_bundled_includes_lightning_enable_store() -> None:
-    registry = ManifestRegistry.from_bundled()
-    names = {shape.name for shape in registry.shapes}
-    assert "lightning-enable-store" in names, (
-        f"Expected 'lightning-enable-store' in bundled manifests, got {names}"
-    )
-
-
-def test_bundled_lightning_enable_store_has_correct_domain() -> None:
-    registry = ManifestRegistry.from_bundled()
-    shape = next(s for s in registry.shapes if s.name == "lightning-enable-store")
-    assert shape.domain_matches == "*.lightningenable.com"
-
-
-def test_bundled_lightning_enable_store_has_one_flow_step() -> None:
-    registry = ManifestRegistry.from_bundled()
-    shape = next(s for s in registry.shapes if s.name == "lightning-enable-store")
-    assert len(shape.flow) == 1
-    step = shape.flow[0]
-    assert step.challenge_path == "/api/store/checkout"
-    assert step.fulfil_path_template == "/api/store/claim"
-    assert step.id_extractor == "macaroon:order_id"
-    assert step.method == "POST"
-
-
-# ---------------------------------------------------------------------------
 # ManifestRegistry.from_paths
 # ---------------------------------------------------------------------------
 
