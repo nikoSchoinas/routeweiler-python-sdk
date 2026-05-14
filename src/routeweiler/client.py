@@ -179,7 +179,6 @@ class Routeweiler:
         agent_id: str | None = None,
         session_id: str | None = None,
         recovery_strategy: RecoveryStrategy | None = None,
-        manifest_paths: list[Path] | None = None,
         fmv_provider: FmvProvider | None = None,
         ecb_provider: EcbRateProvider | None = None,
     ) -> None:
@@ -262,26 +261,15 @@ class Routeweiler:
             credential_store = CredentialStore(trace_sink.db_path)
 
             # Build the recovery strategy: user-supplied takes precedence.
-            # Default: ManifestRecoveryStrategy with bundled manifests (or overridden paths).
             # A separate plain httpx.AsyncClient is used so recovery calls never trigger
             # Routeweiler's own auth flow (we're replaying an existing credential, not paying).
-            if recovery_strategy is not None and manifest_paths is not None:
-                raise ValueError(
-                    "Specify either 'recovery_strategy' or 'manifest_paths', not both. "
-                    "When 'recovery_strategy' is provided, 'manifest_paths' is ignored."
-                )
             _effective_strategy: RecoveryStrategy
             if recovery_strategy is not None:
                 _effective_strategy = recovery_strategy
             else:
                 self._recovery_http = httpx.AsyncClient()
-                registry = (
-                    ManifestRegistry.from_paths(manifest_paths)
-                    if manifest_paths
-                    else ManifestRegistry.from_bundled()
-                )
                 _effective_strategy = ManifestRecoveryStrategy(
-                    registry=registry,
+                    registry=ManifestRegistry.from_bundled(),
                     client=self._recovery_http,
                 )
 
