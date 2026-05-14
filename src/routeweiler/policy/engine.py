@@ -6,7 +6,7 @@ import fnmatch
 from dataclasses import dataclass
 
 from routeweiler.normalized import NormalizedChallenge, Rail, X402RailRaw
-from routeweiler.policy.dsl import PolicyDocument, RuleMatch
+from routeweiler.policy.dsl import Policy, RuleMatch
 
 
 @dataclass(frozen=True)
@@ -26,12 +26,6 @@ class PolicyDecision:
 
 
 def _default_decision() -> PolicyDecision:
-    """Return the allow-all decision used when no rule matches.
-
-    `prefer` is empty so all capable adapters are considered; the router gives
-    preferred rails a score boost, not a hard filter. Only `deny`
-    performs hard exclusion.
-    """
     return PolicyDecision(
         rule_name=None,
         deny=False,
@@ -42,18 +36,18 @@ def _default_decision() -> PolicyDecision:
 
 
 class PolicyEngine:
-    """Evaluates a NormalizedChallenge against a PolicyDocument (first-match wins)."""
+    """Evaluates a NormalizedChallenge against a Policy (first-match wins)."""
 
-    def __init__(self, document: PolicyDocument) -> None:
-        self._doc = document
+    def __init__(self, policy: Policy) -> None:
+        self._policy = policy
 
     @property
     def default_rail(self) -> Rail:
-        """The `default.rail` from the policy document — used as a routing tie-breaker."""
-        return self._doc.default.rail
+        """The ``default_rail`` from the policy — used as a routing tie-breaker."""
+        return self._policy.default_rail
 
     def evaluate(self, challenge: NormalizedChallenge) -> PolicyDecision:
-        for rule in self._doc.rules:
+        for rule in self._policy.rules:
             if _matches(rule.when, challenge):
                 return PolicyDecision(
                     rule_name=rule.name,
@@ -72,22 +66,18 @@ class PolicyEngine:
 
 def _matches(when: RuleMatch, challenge: NormalizedChallenge) -> bool:
     """Return True if all non-None conditions in `when` match `challenge`."""
-    # `any` condition — short-circuit OR of nested RuleMatches.
     if when.any is not None:
         if not any(_matches(sub, challenge) for sub in when.any):
             return False
 
-    # `url_matches` — fnmatch glob against the challenge URL.
     if when.url_matches is not None:
         if not fnmatch.fnmatch(challenge.resource.url, when.url_matches):
             return False
 
-    # `scheme` — exact equality.
     if when.scheme is not None:
         if challenge.scheme != when.scheme:
             return False
 
-    # `network` — x402-only: match any entry in the accepts array.
     if when.network is not None:
         if not _network_matches(when.network, challenge):
             return False
