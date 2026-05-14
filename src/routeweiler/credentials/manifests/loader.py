@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import fnmatch
 import urllib.parse
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
+from routeweiler.credentials.manifests._bundled import BUNDLED_SHAPES
 from routeweiler.credentials.manifests.schema import ServiceShape
 from routeweiler.errors import ManifestParseError
 
@@ -18,8 +18,8 @@ from routeweiler.errors import ManifestParseError
 class ManifestRegistry:
     """Immutable collection of ServiceShape objects.
 
-    Build via :meth:`from_bundled` (loads all ``*.yaml`` files packaged under
-    ``routeweiler.credentials.manifests``) or :meth:`from_paths` (user-supplied files).
+    Build via :meth:`from_bundled` (returns canonical shapes shipped with Routeweiler)
+    or :meth:`from_paths` (user-supplied YAML files).
     Combine both with ``ManifestRegistry.from_bundled() + ManifestRegistry.from_paths(...)``.
 
     Lookup is O(n) over shapes — at MVP only one bundled shape exists.
@@ -36,14 +36,8 @@ class ManifestRegistry:
 
     @classmethod
     def from_bundled(cls) -> ManifestRegistry:
-        """Load all ``*.yaml`` manifests bundled inside ``routeweiler.credentials.manifests``."""
-        pkg = files("routeweiler.credentials.manifests")
-        shapes: list[ServiceShape] = []
-        for resource in pkg.iterdir():
-            if resource.name.endswith(".yaml") or resource.name.endswith(".yml"):
-                raw = resource.read_text(encoding="utf-8")
-                shapes.append(_parse_manifest(raw, source=resource.name))
-        return cls(tuple(shapes))
+        """Return a registry containing all canonical shapes shipped with Routeweiler."""
+        return cls(BUNDLED_SHAPES)
 
     @classmethod
     def from_paths(cls, paths: list[Path]) -> ManifestRegistry:
