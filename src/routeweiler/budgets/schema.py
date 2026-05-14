@@ -1,4 +1,4 @@
-"""BudgetEnvelope and DrawReceipt Pydantic models."""
+"""BudgetEnvelope (declarative input), BudgetEnvelopeRecord (persisted), and DrawReceipt models."""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ EnvelopeStatus = Literal["active", "frozen", "expired", "revoked"]
 DrawState = Literal["reserved", "settled", "rolled_back"]
 
 # ---------------------------------------------------------------------------
-# BudgetEnvelope
+# BudgetEnvelopeRecord
 # ---------------------------------------------------------------------------
 
 
-class BudgetEnvelope(RouteweilerModel):
-    """Per-agent spending envelope.
+class BudgetEnvelopeRecord(RouteweilerModel):
+    """Persisted spending envelope — the DB-row shape returned by BudgetStore.
 
     Caps are in minor units of `cap_currency` (USD cents, EUR cents, JPY whole yen,
     GBP pence). Budget enforcement always runs locally via SQLite at MVP.
@@ -41,7 +41,12 @@ class BudgetEnvelope(RouteweilerModel):
     counter_public_key: str = ""
 
 
-class BudgetEnvelopeSpec(RouteweilerModel):
+# ---------------------------------------------------------------------------
+# BudgetEnvelope
+# ---------------------------------------------------------------------------
+
+
+class BudgetEnvelope(RouteweilerModel):
     """Declarative spec for creating a spending envelope inside ``Routeweiler.__aenter__``.
 
     Pass an instance as ``budget_envelope`` to ``Routeweiler(...)`` to have the
@@ -51,7 +56,7 @@ class BudgetEnvelopeSpec(RouteweilerModel):
         async with Routeweiler(
             funding=[Funding.base_usdc(wallet=signer)],
             trace_sink=TraceSink.sqlite("rw.db"),
-            budget_envelope=BudgetEnvelopeSpec(
+            budget_envelope=BudgetEnvelope(
                 id="session-abc",
                 cap_minor_units=500,
                 cap_currency="usd",
