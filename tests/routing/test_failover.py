@@ -23,7 +23,7 @@ from eth_account import Account
 from routeweiler._auth import RouteweilerAuth, _make_idempotency_key
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
-from routeweiler.budgets.schema import BudgetEnvelopeSpec
+from routeweiler.budgets.schema import BudgetEnvelope
 from routeweiler.errors import NoFeasibleRailError
 from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
@@ -107,7 +107,7 @@ def _draw_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     return [dict(r) for r in rows]
 
 
-_FAILOVER_ENVELOPE = BudgetEnvelopeSpec(
+_FAILOVER_ENVELOPE = BudgetEnvelope(
     id="failover_env",
     cap_minor_units=100_000,
     cap_currency="usd",

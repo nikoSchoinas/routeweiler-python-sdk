@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from routeweiler import Routeweiler
-from routeweiler.budgets.schema import BudgetEnvelopeSpec
+from routeweiler.budgets.schema import BudgetEnvelope
 from routeweiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
 from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
@@ -41,7 +41,7 @@ def _trace_rows(db_path: Path) -> list[dict]:  # type: ignore[type-arg]
     return [dict(r) for r in rows]
 
 
-_POLICY_TEST_ENVELOPE = BudgetEnvelopeSpec(
+_POLICY_TEST_ENVELOPE = BudgetEnvelope(
     id="policy_test_env",
     cap_minor_units=100_000,
     cap_currency="usd",
@@ -56,7 +56,7 @@ def _make_client(
     db_path: Path,
     *,
     policy: Policy | None = None,
-    budget_envelope: BudgetEnvelopeSpec | str | None = None,
+    budget_envelope: BudgetEnvelope | str | None = None,
     keystore_root: Path | None = None,
 ) -> Routeweiler:
     sink = TraceSink.sqlite(db_path, url_mode="raw")

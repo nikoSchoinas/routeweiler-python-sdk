@@ -13,7 +13,7 @@ from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.receipts import canonical_payload
 from routeweiler.budgets.receipts import verify as verify_receipt
-from routeweiler.budgets.schema import BudgetEnvelopeSpec, DrawReceipt
+from routeweiler.budgets.schema import BudgetEnvelope, DrawReceipt
 from routeweiler.errors import (
     BudgetExceededError,
     EnvelopeExpiredError,
@@ -105,7 +105,7 @@ async def test_create_envelope_duplicate_raises(tmp_budget_store: BudgetStore) -
 async def test_create_envelope_if_absent_creates_new(
     tmp_budget_store: BudgetStore, tmp_trace_db_path: Path
 ) -> None:
-    spec = BudgetEnvelopeSpec(
+    spec = BudgetEnvelope(
         id="spec-new",
         cap_minor_units=500,
         cap_currency="usd",
@@ -124,7 +124,7 @@ async def test_create_envelope_if_absent_creates_new(
 async def test_create_envelope_if_absent_is_noop_when_exists(
     tmp_budget_store: BudgetStore,
 ) -> None:
-    spec = BudgetEnvelopeSpec(
+    spec = BudgetEnvelope(
         id="spec-existing",
         cap_minor_units=500,
         cap_currency="usd",

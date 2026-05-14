@@ -1,6 +1,6 @@
-"""Tests for the BudgetEnvelopeSpec declarative construction path.
+"""Tests for the BudgetEnvelope declarative construction path.
 
-Verifies that a caller can pass a BudgetEnvelopeSpec as budget_envelope and
+Verifies that a caller can pass a BudgetEnvelope as budget_envelope and
 the client creates (or reuses) the envelope inside __aenter__ — without a
 separate client.envelopes.create() call or two-step construction.
 """
@@ -16,7 +16,7 @@ import httpx
 import pytest
 from eth_account.signers.local import LocalAccount
 
-from routeweiler import BudgetEnvelopeSpec, EnvelopeNotFoundError, Funding, Routeweiler
+from routeweiler import BudgetEnvelope, EnvelopeNotFoundError, Funding, Routeweiler
 from routeweiler.trace.sink_sqlite import TraceSink
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def _make_client(
     test_account: LocalAccount,
     transport: httpx.ASGITransport,
     db_path: Path,
-    budget_envelope: BudgetEnvelopeSpec | str | None,
+    budget_envelope: BudgetEnvelope | str | None,
     keystore_root: Path | None = None,
 ) -> Routeweiler:
     sink = TraceSink.sqlite(db_path, url_mode="raw")
@@ -90,7 +90,7 @@ def _make_client(
     return client
 
 
-_SPEC = BudgetEnvelopeSpec(
+_SPEC = BudgetEnvelope(
     id="session-spec",
     cap_minor_units=10_000,
     cap_currency="usd",
@@ -110,7 +110,7 @@ async def test_spec_creates_envelope_on_aenter(
     tmp_trace_db_path: Path,
     tmp_path: Path,
 ) -> None:
-    """Entering the client context with a BudgetEnvelopeSpec must create the envelope row."""
+    """Entering the client context with a BudgetEnvelope must create the envelope row."""
     client = _make_client(test_account, mock_x402_app, tmp_trace_db_path, _SPEC, tmp_path / "keys")
     assert _envelope_row(tmp_trace_db_path, "session-spec") is None  # not yet
 

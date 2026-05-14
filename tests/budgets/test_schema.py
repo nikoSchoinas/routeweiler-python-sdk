@@ -1,11 +1,11 @@
-"""Tests for BudgetEnvelope and DrawReceipt."""
+"""Tests for BudgetEnvelopeRecord and DrawReceipt."""
 
 from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from routeweiler.budgets.schema import BudgetEnvelope, DrawReceipt
+from routeweiler.budgets.schema import BudgetEnvelopeRecord, DrawReceipt
 
 NOW = datetime(2026, 4, 27, 12, 0, 0, tzinfo=UTC)
 EXPIRES = datetime(2026, 4, 27, 23, 59, 59, tzinfo=UTC)
@@ -44,18 +44,18 @@ def _receipt_data(**overrides) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# BudgetEnvelope
+# BudgetEnvelopeRecord
 # ---------------------------------------------------------------------------
 
 
 def test_envelope_defaults():
-    env = BudgetEnvelope.model_validate(_envelope_data())
+    env = BudgetEnvelopeRecord.model_validate(_envelope_data())
     assert env.status == "active"
     assert env.owner_agent_id is None
 
 
 def test_envelope_snake_case_construction():
-    env = BudgetEnvelope(
+    env = BudgetEnvelopeRecord(
         id="env_01HW",
         cap_minor_units=10_000,
         cap_currency="eur",
@@ -69,7 +69,7 @@ def test_envelope_snake_case_construction():
 
 
 def test_envelope_camel_roundtrip():
-    env = BudgetEnvelope.model_validate(_envelope_data())
+    env = BudgetEnvelopeRecord.model_validate(_envelope_data())
     dumped = env.model_dump(by_alias=True)
     assert dumped["capMinorUnits"] == 500_00
     assert dumped["capCurrency"] == "usd"
@@ -78,27 +78,27 @@ def test_envelope_camel_roundtrip():
 
 
 def test_envelope_with_owner_agent():
-    env = BudgetEnvelope.model_validate(_envelope_data(ownerAgentId="erc8004:1:42"))
+    env = BudgetEnvelopeRecord.model_validate(_envelope_data(ownerAgentId="erc8004:1:42"))
     assert env.owner_agent_id == "erc8004:1:42"
 
 
 def test_envelope_invalid_currency():
     with pytest.raises(ValidationError):
-        BudgetEnvelope.model_validate(_envelope_data(capCurrency="chf"))
+        BudgetEnvelopeRecord.model_validate(_envelope_data(capCurrency="chf"))
 
 
 def test_envelope_invalid_status():
     with pytest.raises(ValidationError):
-        BudgetEnvelope.model_validate(_envelope_data(status="paused"))
+        BudgetEnvelopeRecord.model_validate(_envelope_data(status="paused"))
 
 
 def test_envelope_extra_field_forbidden():
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        BudgetEnvelope.model_validate(_envelope_data(hackField="bad"))
+        BudgetEnvelopeRecord.model_validate(_envelope_data(hackField="bad"))
 
 
 def test_envelope_frozen_status():
-    env = BudgetEnvelope.model_validate(_envelope_data(status="frozen"))
+    env = BudgetEnvelopeRecord.model_validate(_envelope_data(status="frozen"))
     assert env.status == "frozen"
 
 

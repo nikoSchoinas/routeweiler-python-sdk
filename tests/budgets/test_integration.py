@@ -26,7 +26,7 @@ from starlette.routing import Route
 from routeweiler import BudgetExceededError, Funding, Routeweiler
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
-from routeweiler.budgets.schema import BudgetEnvelopeSpec
+from routeweiler.budgets.schema import BudgetEnvelope
 from routeweiler.errors import FmvUnavailableError
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -63,7 +63,7 @@ def _make_client(
     test_account: LocalAccount,
     transport: httpx.ASGITransport,
     db_path: Path,
-    budget_envelope: str | BudgetEnvelopeSpec | None = None,
+    budget_envelope: str | BudgetEnvelope | None = None,
     keystore_root: Path | None = None,
 ) -> Routeweiler:
     """Build a Routeweiler client backed by the given ASGI transport and DB.
@@ -110,7 +110,7 @@ def _make_client(
     return client
 
 
-_TEST_ENVELOPE = BudgetEnvelopeSpec(
+_TEST_ENVELOPE = BudgetEnvelope(
     id="test_env",
     cap_minor_units=10_000,
     cap_currency="usd",
