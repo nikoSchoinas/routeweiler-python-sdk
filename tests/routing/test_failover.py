@@ -26,7 +26,7 @@ from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.schema import BudgetEnvelopeSpec
 from routeweiler.errors import NoFeasibleRailError
 from routeweiler.funding.evm import EvmFundingSource
-from routeweiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
+from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 from routeweiler.policy.engine import PolicyEngine
 from routeweiler.routing.router import Router
 from routeweiler.routing.sticky import StickyCache, StickyKey
@@ -42,9 +42,8 @@ def _x402_first_policy() -> PolicyEngine:
     so x402 wins on latency+reliability in the primary attempt.  On failover
     (x402 excluded) l402 is still in the prefer list and wins.
     """
-    doc = PolicyDocument(
-        version=1,
-        default=DefaultBlock(rail="x402"),
+    policy = Policy(
+        default_rail="x402",
         rules=[
             PolicyRule(
                 name="x402-then-l402",
@@ -53,7 +52,7 @@ def _x402_first_policy() -> PolicyEngine:
             )
         ],
     )
-    return PolicyEngine(doc)
+    return PolicyEngine(policy)
 
 
 # ---------------------------------------------------------------------------

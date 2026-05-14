@@ -14,7 +14,7 @@ from routeweiler.normalized import (
     X402PaymentRequirements,
     X402RailRaw,
 )
-from routeweiler.policy.dsl import PolicyDocument, default_policy
+from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 from routeweiler.policy.engine import PolicyEngine
 
 # ---------------------------------------------------------------------------
@@ -84,12 +84,10 @@ def _mpp_exact_challenge(url: str = "https://api.inference.com/chat") -> Normali
 
 
 def test_default_when_no_rules_match():
-    engine = PolicyEngine(default_policy())
+    engine = PolicyEngine(Policy())
     decision = engine.evaluate(_x402_challenge())
     assert decision.rule_name is None
     assert decision.deny is False
-    # Default block sets no hard prefer filter; all capable adapters are eligible.
-    # Hard filtering only applies when a rule explicitly sets prefer.
     assert decision.prefer == ()
     assert decision.max_per_call_minor_units is None
 
@@ -100,66 +98,58 @@ def test_default_when_no_rules_match():
 
 
 def test_url_matches_first_match_wins():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {
-                    "name": "first",
-                    "when": {"url_matches": "https://api.example.com/*"},
-                    "prefer": ["l402"],
-                },
-                {
-                    "name": "second",
-                    "when": {"url_matches": "https://api.example.com/*"},
-                    "prefer": ["mpp-tempo"],
-                },
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="first",
+                when=RuleMatch(url_matches="https://api.example.com/*"),
+                prefer=["l402"],
+            ),
+            PolicyRule(
+                name="second",
+                when=RuleMatch(url_matches="https://api.example.com/*"),
+                prefer=["mpp-tempo"],
+            ),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_x402_challenge("https://api.example.com/data"))
     assert decision.rule_name == "first"
     assert decision.prefer == ("l402",)
 
 
 def test_url_matches_no_match_falls_through():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {"name": "other", "when": {"url_matches": "https://other.com/*"}, "deny": True},
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="other",
+                when=RuleMatch(url_matches="https://other.com/*"),
+                deny=True,
+            ),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_x402_challenge("https://api.example.com/data"))
     assert decision.rule_name is None
     assert decision.deny is False
 
 
 def test_any_or_short_circuit():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {
-                    "name": "privacy",
-                    "when": {
-                        "any": [
-                            {"url_matches": "*.competitorapi.com/*"},
-                            {"url_matches": "*/sensitive/*"},
-                        ]
-                    },
-                    "prefer": ["l402"],
-                }
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="privacy",
+                when=RuleMatch(
+                    any=[
+                        RuleMatch(url_matches="*.competitorapi.com/*"),
+                        RuleMatch(url_matches="*/sensitive/*"),
+                    ]
+                ),
+                prefer=["l402"],
+            )
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     # Second branch matches
     assert (
         engine.evaluate(_x402_challenge("https://api.example.com/sensitive/data")).rule_name
@@ -174,63 +164,41 @@ def test_any_or_short_circuit():
 
 
 def test_scheme_match_exact():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {"name": "mpp-exact", "when": {"scheme": "exact"}, "prefer": ["mpp-tempo"]},
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(name="mpp-exact", when=RuleMatch(scheme="exact"), prefer=["mpp-tempo"]),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     assert engine.evaluate(_mpp_exact_challenge()).rule_name == "mpp-exact"
     assert engine.evaluate(_x402_challenge()).rule_name == "mpp-exact"
 
 
 def test_network_match_x402_only():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {"name": "testnet", "when": {"network": "base-sepolia"}, "deny": True},
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(name="testnet", when=RuleMatch(network="base-sepolia"), deny=True),
+        ]
     )
-    engine = PolicyEngine(doc)
-    # x402 challenge on base-sepolia → matches
+    engine = PolicyEngine(policy)
     assert engine.evaluate(_x402_challenge(network="base-sepolia")).rule_name == "testnet"
-    # x402 challenge on mainnet → no match
     assert engine.evaluate(_x402_challenge(network="base")).rule_name is None
-    # L402 challenge → network condition returns False (not x402 raw)
     assert engine.evaluate(_l402_challenge()).rule_name is None
 
 
 def test_and_conditions_all_must_match():
     """Multiple conditions at the same level combine with AND."""
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {
-                    "name": "testnet-exact",
-                    "when": {
-                        "network": "base-sepolia",
-                        "scheme": "exact",
-                    },
-                    "deny": True,
-                }
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="testnet-exact",
+                when=RuleMatch(network="base-sepolia", scheme="exact"),
+                deny=True,
+            )
+        ]
     )
-    engine = PolicyEngine(doc)
-    # Both conditions match
+    engine = PolicyEngine(policy)
     assert engine.evaluate(_x402_challenge(network="base-sepolia")).rule_name == "testnet-exact"
-    # Only scheme matches (network mismatch)
-    assert engine.evaluate(_x402_challenge(network="base")).rule_name is None
-    # Only scheme matches
     assert engine.evaluate(_x402_challenge(network="base")).rule_name is None
 
 
@@ -240,71 +208,59 @@ def test_and_conditions_all_must_match():
 
 
 def test_deny_rule():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {"name": "no-testnet", "when": {"network": "base-sepolia"}, "deny": True},
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(name="no-testnet", when=RuleMatch(network="base-sepolia"), deny=True),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_x402_challenge(network="base-sepolia"))
     assert decision.deny is True
     assert decision.rule_name == "no-testnet"
 
 
 def test_max_per_call_captured():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {"name": "capped", "when": {"scheme": "exact"}, "max_per_call_minor_units": 500},
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="capped",
+                when=RuleMatch(scheme="exact"),
+                max_per_call_minor_units=500,
+            ),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_mpp_exact_challenge())
     assert decision.max_per_call_minor_units == 500
     assert decision.deny is False
 
 
 def test_prefer_captured():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {
-                    "name": "priv",
-                    "when": {"url_matches": "*/sensitive/*"},
-                    "prefer": ["l402", "mpp-spt"],
-                },
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="priv",
+                when=RuleMatch(url_matches="*/sensitive/*"),
+                prefer=["l402", "mpp-spt"],
+            ),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_x402_challenge("https://api.example.com/sensitive/q"))
     assert decision.prefer == ("l402", "mpp-spt")
 
 
 def test_reason_captured():
-    doc = PolicyDocument.model_validate(
-        {
-            "version": 1,
-            "default": {"rail": "x402"},
-            "rules": [
-                {
-                    "name": "priv",
-                    "when": {"url_matches": "*/sensitive/*"},
-                    "deny": True,
-                    "reason": "privacy",
-                },
-            ],
-        }
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="priv",
+                when=RuleMatch(url_matches="*/sensitive/*"),
+                deny=True,
+                reason="privacy",
+            ),
+        ]
     )
-    engine = PolicyEngine(doc)
+    engine = PolicyEngine(policy)
     decision = engine.evaluate(_x402_challenge("https://api.example.com/sensitive/q"))
     assert decision.reason == "privacy"

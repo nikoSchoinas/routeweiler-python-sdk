@@ -18,7 +18,7 @@ from routeweiler import Routeweiler
 from routeweiler.budgets.schema import BudgetEnvelopeSpec
 from routeweiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
 from routeweiler.funding.evm import EvmFundingSource
-from routeweiler.policy.dsl import PolicyFile
+from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 from routeweiler.trace.sink_sqlite import TraceSink
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ def _make_client(
     transport: httpx.ASGITransport,
     db_path: Path,
     *,
-    policy: PolicyFile | None = None,
+    policy: Policy | None = None,
     budget_envelope: BudgetEnvelopeSpec | str | None = None,
     keystore_root: Path | None = None,
 ) -> Routeweiler:
@@ -112,19 +112,16 @@ async def test_deny_rule_blocks_payment_and_emits_error_trace(
     tmp_path: Path,
 ) -> None:
     """A deny rule raises PolicyDeniedError; no draw is inserted."""
-    policy_path = tmp_path / "deny_policy.yaml"
-    policy_path.write_text("""
-version: 1
-default:
-  rail: x402
-rules:
-  - name: deny-mock
-    when:
-      url_matches: "http://mock/*"
-    deny: true
-    reason: "test deny"
-""")
-    policy = PolicyFile(policy_path)
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="deny-mock",
+                when=RuleMatch(url_matches="http://mock/*"),
+                deny=True,
+                reason="test deny",
+            )
+        ]
+    )
     client = _make_client(test_account, mock_x402_app, tmp_trace_db_path, policy=policy)
 
     with pytest.raises(PolicyDeniedError) as exc_info:
@@ -133,10 +130,8 @@ rules:
 
     assert "test deny" in str(exc_info.value)
 
-    # No draw should have been attempted.
     assert _draw_count(tmp_trace_db_path) == 0
 
-    # An error trace must have been emitted.
     rows = _trace_rows(tmp_trace_db_path)
     assert len(rows) == 1
     assert rows[0]["http_status"] == 402
@@ -154,19 +149,16 @@ async def test_max_per_call_blocks_oversized_payment(
     tmp_trace_db_path: Path,
     tmp_path: Path,
 ) -> None:
-    """max_per_call_minor_units=1 rejects the 1000-unit USDC challenge."""
-    policy_path = tmp_path / "max_policy.yaml"
-    policy_path.write_text("""
-version: 1
-default:
-  rail: x402
-rules:
-  - name: tiny-cap
-    when:
-      url_matches: "http://mock/*"
-    max_per_call_minor_units: 0
-""")
-    policy = PolicyFile(policy_path)
+    """max_per_call_minor_units=0 rejects the 1000-unit USDC challenge."""
+    policy = Policy(
+        rules=[
+            PolicyRule(
+                name="tiny-cap",
+                when=RuleMatch(url_matches="http://mock/*"),
+                max_per_call_minor_units=0,
+            )
+        ]
+    )
     client = _make_client(
         test_account,
         mock_x402_app,
@@ -180,14 +172,11 @@ rules:
         with pytest.raises(PolicyMaxPerCallExceededError) as exc_info:
             await client.get("http://mock/protected")
 
-    # The mock challenge is 1000 USDC base units = 0.001 USDC = 1 USD cent (ceiling).
     assert exc_info.value.limit == 0
     assert exc_info.value.requested > 0
 
-    # No draw inserted.
     assert _draw_count(tmp_trace_db_path) == 0
 
-    # Error trace emitted.
     rows = _trace_rows(tmp_trace_db_path)
     assert len(rows) == 1
     assert rows[0]["service_delivered"] == 0
@@ -198,20 +187,14 @@ rules:
 # ---------------------------------------------------------------------------
 
 
-async def test_policy_hash_in_trace_matches_file(
+async def test_policy_hash_in_trace_matches_class(
     test_account,
     mock_x402_app: httpx.ASGITransport,
     tmp_trace_db_path: Path,
     tmp_path: Path,
 ) -> None:
-    """The policy_hash in the emitted trace matches the loaded file's hash."""
-    policy_path = tmp_path / "hash_policy.yaml"
-    policy_path.write_text("""
-version: 1
-default:
-  rail: x402
-""")
-    policy = PolicyFile(policy_path)
+    """The policy_hash in the emitted trace matches the Policy instance's hash."""
+    policy = Policy(default_rail="x402")
     expected_hash = policy.policy_hash
     assert expected_hash.startswith("sha256:")
 

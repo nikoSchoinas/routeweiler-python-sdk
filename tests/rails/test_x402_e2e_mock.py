@@ -21,11 +21,11 @@ import respx
 
 from routeweiler import Funding, Routeweiler
 from routeweiler.errors import RailNotSupportedError
-from routeweiler.policy.dsl import compute_policy_hash, default_policy
+from routeweiler.policy.dsl import Policy
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.x402_mock_server import MOCK_TX_HASH
 
-_DEFAULT_POLICY_HASH = compute_policy_hash(default_policy())
+_DEFAULT_POLICY_HASH = Policy().policy_hash
 
 # ---------------------------------------------------------------------------
 # Helpers

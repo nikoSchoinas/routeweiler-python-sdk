@@ -15,7 +15,7 @@ import respx
 
 from routeweiler import Funding, Routeweiler
 from routeweiler.errors import RailNotSupportedError
-from routeweiler.policy.dsl import DefaultBlock, PolicyDocument, PolicyRule, RuleMatch
+from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 from routeweiler.trace.sink_sqlite import TraceSink
 
 
@@ -221,16 +221,14 @@ def test_policy_max_per_call_without_envelope_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A policy with max_per_call_minor_units but no envelope logs a warning."""
-    policy = PolicyDocument(
-        version=1,
-        default=DefaultBlock(rail="x402"),
+    policy = Policy(
         rules=[
             PolicyRule(
                 name="cap-calls",
                 when=RuleMatch(url_matches="*"),
                 max_per_call_minor_units=100,
             )
-        ],
+        ]
     )
     with caplog.at_level(logging.WARNING, logger="routeweiler.client"):
         Routeweiler(

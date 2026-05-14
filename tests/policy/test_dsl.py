@@ -1,111 +1,95 @@
-"""Tests for policy/dsl.py — document model, loader, and hash."""
+"""Tests for policy/dsl.py — Policy model and hash."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from routeweiler.policy.dsl import (
-    PolicyDocument,
-    PolicyFile,
-    compute_policy_hash,
-    default_policy,
-)
-
-_FIXTURES = Path(__file__).parent / "fixtures"
-
+from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 
 # ---------------------------------------------------------------------------
-# Loading and validation
+# Construction and defaults
 # ---------------------------------------------------------------------------
 
 
-def test_load_minimal_policy():
-    pf = PolicyFile(_FIXTURES / "policy_minimal.yaml")
-    assert pf.document.version == 1
-    assert pf.document.default.rail == "x402"
-    assert pf.document.rules == []
+def test_default_policy():
+    policy = Policy()
+    assert policy.default_rail == "x402"
+    assert policy.rules == []
 
 
-def test_load_three_rules_policy():
-    pf = PolicyFile(_FIXTURES / "policy_three_rules.yaml")
-    doc = pf.document
-    assert doc.version == 1
-    assert doc.default.rail == "x402"
-    assert len(doc.rules) == 3
-    names = [r.name for r in doc.rules]
-    assert names == ["privacy-sensitive", "llm-inference-exact", "deny-testnet"]
+def test_explicit_default_rail():
+    policy = Policy(default_rail="l402")
+    assert policy.default_rail == "l402"
 
-    privacy_rule = doc.rules[0]
-    assert privacy_rule.prefer == ["l402", "mpp-spt"]
-    assert privacy_rule.reason == "on-chain payment leak unacceptable"
-    assert privacy_rule.when.any is not None
 
-    exact_rule = doc.rules[1]
-    assert exact_rule.when.scheme == "exact"
-    assert exact_rule.max_per_call_minor_units == 500
+def test_policy_with_rules():
+    policy = Policy(
+        default_rail="x402",
+        rules=[
+            PolicyRule(
+                name="privacy-sensitive",
+                when=RuleMatch(
+                    any=[
+                        RuleMatch(url_matches="*.competitorapi.com/*"),
+                        RuleMatch(url_matches="*.rival.io/*"),
+                    ]
+                ),
+                prefer=["l402", "mpp-spt"],
+                reason="on-chain payment leak unacceptable",
+            ),
+            PolicyRule(
+                name="llm-inference-exact",
+                when=RuleMatch(scheme="exact"),
+                max_per_call_minor_units=500,
+            ),
+            PolicyRule(
+                name="deny-testnet",
+                when=RuleMatch(network="base-sepolia"),
+                deny=True,
+            ),
+        ],
+    )
+    assert len(policy.rules) == 3
+    assert policy.rules[0].name == "privacy-sensitive"
+    assert policy.rules[0].prefer == ["l402", "mpp-spt"]
+    assert policy.rules[1].max_per_call_minor_units == 500
+    assert policy.rules[2].deny is True
 
-    deny_rule = doc.rules[2]
-    assert deny_rule.when.network == "base-sepolia"
-    assert deny_rule.deny is True
+
+# ---------------------------------------------------------------------------
+# Validation errors
+# ---------------------------------------------------------------------------
 
 
 def test_unknown_field_in_rule_rejected():
-    """tag: is not supported at W6 — should fail validation."""
-    raw = {
-        "version": 1,
-        "default": {"rail": "x402"},
-        "rules": [
+    with pytest.raises(ValidationError):
+        PolicyRule.model_validate(
             {
                 "name": "tagged",
-                "when": {"tag": "sensitive"},
+                "when": {"url_matches": "*.example.com"},
+                "extra_field": True,
             }
-        ],
-    }
-    with pytest.raises(ValidationError):
-        PolicyDocument.model_validate(raw)
-
-
-def test_unknown_top_level_field_rejected():
-    raw = {"version": 1, "default": {"rail": "x402"}, "extra_field": True}
-    with pytest.raises(ValidationError):
-        PolicyDocument.model_validate(raw)
+        )
 
 
 def test_invalid_rail_in_prefer_rejected():
-    """x402-base-usdc-style aliases are W7 work; not valid at W6."""
-    raw = {
-        "version": 1,
-        "default": {"rail": "x402"},
-        "rules": [
-            {
-                "name": "aliased",
-                "when": {"scheme": "exact"},
-                "prefer": ["x402-base-usdc"],
-            }
-        ],
-    }
     with pytest.raises(ValidationError):
-        PolicyDocument.model_validate(raw)
+        PolicyRule(
+            name="aliased",
+            when=RuleMatch(scheme="exact"),
+            prefer=["x402-base-usdc"],  # type: ignore[list-item]
+        )
 
 
 def test_empty_when_block_rejected():
-    raw = {
-        "version": 1,
-        "default": {"rail": "x402"},
-        "rules": [{"name": "empty-when", "when": {}}],
-    }
     with pytest.raises(ValidationError):
-        PolicyDocument.model_validate(raw)
+        PolicyRule(name="empty-when", when=RuleMatch.model_validate({}))
 
 
-def test_default_policy_structure():
-    doc = default_policy()
-    assert doc.version == 1
-    assert doc.default.rail == "x402"
-    assert doc.rules == []
+def test_unknown_top_level_field_rejected():
+    with pytest.raises(ValidationError):
+        Policy.model_validate({"extra_field": True})
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +98,7 @@ def test_default_policy_structure():
 
 
 def test_hash_format():
-    h = compute_policy_hash(default_policy())
+    h = Policy().policy_hash
     assert h.startswith("sha256:")
     suffix = h[len("sha256:") :]
     assert len(suffix) == 64
@@ -122,37 +106,23 @@ def test_hash_format():
 
 
 def test_hash_stable_same_policy():
-    doc = default_policy()
-    assert compute_policy_hash(doc) == compute_policy_hash(doc)
+    policy = Policy()
+    assert policy.policy_hash == policy.policy_hash
 
 
-def test_hash_stable_across_whitespace():
-    """Same semantic content, different YAML whitespace → same hash."""
-    h1 = PolicyFile(_FIXTURES / "policy_three_rules.yaml").policy_hash
-    h2 = PolicyFile(_FIXTURES / "policy_whitespace_variant.yaml").policy_hash
-    assert h1 == h2
+def test_hash_same_for_equivalent_policies():
+    p1 = Policy(default_rail="x402", rules=[])
+    p2 = Policy(default_rail="x402")
+    assert p1.policy_hash == p2.policy_hash
 
 
 def test_hash_changes_when_rule_added():
-    base = default_policy()
-    raw = base.model_dump(mode="python")
-    raw["rules"].append(
-        {
-            "name": "extra",
-            "when": {"scheme": "exact"},
-            "deny": False,
-        }
-    )
-    modified = PolicyDocument.model_validate(raw)
-    assert compute_policy_hash(base) != compute_policy_hash(modified)
+    base = Policy()
+    with_rule = Policy(rules=[PolicyRule(name="extra", when=RuleMatch(scheme="exact"), deny=False)])
+    assert base.policy_hash != with_rule.policy_hash
 
 
 def test_hash_changes_when_default_rail_changes():
-    doc_x402 = PolicyDocument.model_validate({"version": 1, "default": {"rail": "x402"}})
-    doc_l402 = PolicyDocument.model_validate({"version": 1, "default": {"rail": "l402"}})
-    assert compute_policy_hash(doc_x402) != compute_policy_hash(doc_l402)
-
-
-def test_policy_file_hash_equals_compute_policy_hash():
-    pf = PolicyFile(_FIXTURES / "policy_three_rules.yaml")
-    assert pf.policy_hash == compute_policy_hash(pf.document)
+    p_x402 = Policy(default_rail="x402")
+    p_l402 = Policy(default_rail="l402")
+    assert p_x402.policy_hash != p_l402.policy_hash

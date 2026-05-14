@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from routeweiler.errors import NoFeasibleRailError, PolicyDeniedError, RailNotSupportedError
-from routeweiler.policy.dsl import DefaultBlock, PolicyDocument
+from routeweiler.policy.dsl import Policy
 from routeweiler.policy.engine import PolicyDecision, PolicyEngine
 from routeweiler.routing.router import Router
 from tests.fixtures.mock_rail import MockRailAdapter, make_mock_challenge
@@ -28,9 +28,7 @@ def _request(url: str = "http://mock/resource") -> httpx.Request:
 
 def _policy_engine_prefer(*rails: str) -> PolicyEngine:
     """Build a PolicyEngine that returns prefer=rails for any challenge."""
-    doc = PolicyDocument(
-        version=1, default=DefaultBlock(rail=rails[0] if rails else "x402"), rules=[]
-    )
+    policy = Policy(default_rail=rails[0] if rails else "x402")
 
     class _Fixed(PolicyEngine):
         def evaluate(self, challenge):  # type: ignore[override]
@@ -42,11 +40,11 @@ def _policy_engine_prefer(*rails: str) -> PolicyEngine:
                 reason=None,
             )
 
-    return _Fixed(doc)
+    return _Fixed(policy)
 
 
 def _deny_engine() -> PolicyEngine:
-    doc = PolicyDocument(version=1, default=DefaultBlock(rail="x402"), rules=[])
+    policy = Policy()
 
     class _Deny(PolicyEngine):
         def evaluate(self, challenge):  # type: ignore[override]
@@ -58,7 +56,7 @@ def _deny_engine() -> PolicyEngine:
                 reason="test deny",
             )
 
-    return _Deny(doc)
+    return _Deny(policy)
 
 
 class TestRouterSingleRail:
@@ -307,12 +305,7 @@ class TestDefaultRailTieBreak:
     """The policy's `default.rail` breaks cost ties."""
 
     def _build_engine(self, default_rail: str) -> PolicyEngine:
-        doc = PolicyDocument(
-            version=1,
-            default=DefaultBlock(rail=default_rail),
-            rules=[],  # type: ignore[arg-type]
-        )
-        return PolicyEngine(doc)
+        return PolicyEngine(Policy(default_rail=default_rail))
 
     @pytest.mark.anyio
     async def test_default_rail_wins_on_cost_tie_second_adapter(self) -> None:
