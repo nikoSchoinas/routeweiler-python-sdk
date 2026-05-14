@@ -31,3 +31,6 @@ jobs:
 
       - name: Test
         run: hatch run test
+
+      - name: Agent-framework tests
+        run: hatch run test-agent-frameworks
