@@ -51,6 +51,10 @@ dev = [
     "mypy>=1.15",
     "python-dotenv>=1",
     "types-protobuf",
+    "langgraph>=1.0",
+    "langchain-core>=0.3",
+    "crewai>=0.11.0; python_version < '3.14'",
+    "openai-agents>=0.0.10",
 ]
 
 [project.urls]
@@ -89,12 +93,13 @@ path = ".venv"
 features = ["dev"]
 
 [tool.hatch.envs.default.scripts]
-lint      = ["ruff check src tests", "ruff format --check src tests"]
-format    = ["ruff format src tests", "ruff check --fix src tests"]
-typecheck = "mypy src"
-test      = "pytest {args:tests}"
-cov       = "pytest --cov=routeweiler --cov-report=term-missing {args:tests}"
-test-live = "pytest --run-live {args:tests}"
+lint                 = ["ruff check src tests", "ruff format --check src tests"]
+format               = ["ruff format src tests", "ruff check --fix src tests"]
+typecheck            = "mypy src"
+test                 = "pytest {args:tests}"
+cov                  = "pytest --cov=routeweiler --cov-report=term-missing {args:tests}"
+test-live            = "pytest --run-live {args:tests}"
+test-agent-frameworks = "pytest --run-agent-frameworks {args:tests/agent_frameworks}"
 
 # ---------------------------------------------------------------------------
 # Ruff — linter + formatter
@@ -169,6 +174,10 @@ namespace_packages  = true
 module = "tests.*"
 disallow_untyped_defs = false  # test helpers may omit return annotations
 
+[[tool.mypy.overrides]]
+module = "tests.agent_frameworks.*"
+ignore_missing_imports = true  # framework packages may not be installed in the default env
+
 # ---------------------------------------------------------------------------
 # Pytest
 # ---------------------------------------------------------------------------
@@ -180,4 +189,5 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "live: requires --run-live flag and env-var-funded wallet (Base-Sepolia for x402, Polar for L402, Tempo Moderato for MPP-Tempo, sk_test_* for MPP-SPT)",
+    "agent_frameworks: requires --run-agent-frameworks flag and the agent-frameworks optional-dependency group installed",
 ]
