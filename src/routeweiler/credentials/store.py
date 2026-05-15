@@ -194,6 +194,8 @@ class CredentialStore:
     ) -> CredentialRecord:
         conn = self._conn
         now = datetime.now(UTC)
+        # On the idempotent path (INSERT OR IGNORE silently skips) this id is discarded;
+        # the SELECT below returns the pre-existing row's credential_id instead.
         credential_id = uuid4().hex
 
         # INSERT OR IGNORE provides idempotency; the UNIQUE index on
