@@ -117,6 +117,7 @@ from routeweiler import Policy, PolicyRule, RuleMatch, Routeweiler
 async with Routeweiler(
     funding=[...],
     policy=Policy(
+        currency="usd",          # reference currency for max_per_call_minor_units
         rules=[
             PolicyRule(
                 name="deny analytics",
@@ -134,8 +135,11 @@ async with Routeweiler(
     ...
 ```
 
-> **Note:** `max_per_call_minor_units` is inactive unless a `budget_envelope` is also
-> configured. Routeweiler logs a warning at construction time if this combination is detected.
+`max_per_call_minor_units` requires a reference currency to compare rail-native quotes
+against. Set `Policy(currency="usd")` (or any supported currency) when no
+`budget_envelope` is configured — the envelope's `cap_currency` takes precedence when
+both are present. If neither is provided and a rule uses `max_per_call_minor_units`,
+`Routeweiler` raises `ValueError` at construction time.
 
 ## License
 

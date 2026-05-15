@@ -16,7 +16,7 @@ import pytest
 
 from routeweiler import Routeweiler
 from routeweiler.budgets.schema import BudgetEnvelope
-from routeweiler.errors import PolicyDeniedError, PolicyMaxPerCallExceededError
+from routeweiler.errors import FmvUnavailableError, PolicyDeniedError, PolicyMaxPerCallExceededError
 from routeweiler.funding.evm import EvmFundingSource
 from routeweiler.policy.dsl import Policy, PolicyRule, RuleMatch
 from routeweiler.trace.sink_sqlite import TraceSink
@@ -180,6 +180,87 @@ async def test_max_per_call_blocks_oversized_payment(
     rows = _trace_rows(tmp_trace_db_path)
     assert len(rows) == 1
     assert rows[0]["service_delivered"] == 0
+
+
+# ---------------------------------------------------------------------------
+# max_per_call_minor_units without budget_envelope (policy.currency path)
+# ---------------------------------------------------------------------------
+
+
+async def test_max_per_call_blocks_without_envelope(
+    test_account,
+    mock_x402_app: httpx.ASGITransport,
+    tmp_trace_db_path: Path,
+    tmp_path: Path,
+) -> None:
+    """max_per_call_minor_units=0 rejects payment even without a budget_envelope."""
+    policy = Policy(
+        currency="usd",
+        rules=[
+            PolicyRule(
+                name="tiny-cap-no-envelope",
+                when=RuleMatch(url_matches="http://mock/*"),
+                max_per_call_minor_units=0,
+            )
+        ],
+    )
+    # No budget_envelope — policy.currency="usd" is the reference currency.
+    client = _make_client(
+        test_account,
+        mock_x402_app,
+        tmp_trace_db_path,
+        policy=policy,
+        budget_envelope=None,
+    )
+
+    async with client:
+        with pytest.raises(PolicyMaxPerCallExceededError) as exc_info:
+            await client.get("http://mock/protected")
+
+    assert exc_info.value.limit == 0
+    assert exc_info.value.requested > 0
+
+    # No draws possible without an envelope.
+    assert _draw_count(tmp_trace_db_path) == 0
+
+    rows = _trace_rows(tmp_trace_db_path)
+    assert len(rows) == 1
+    assert rows[0]["service_delivered"] == 0
+
+
+async def test_max_per_call_fmv_unavailable_fails_closed(
+    test_account,
+    mock_x402_app: httpx.ASGITransport,
+    tmp_trace_db_path: Path,
+    tmp_path: Path,
+) -> None:
+    """FMV unavailable for a capped rail raises FmvUnavailableError (fail closed)."""
+    policy = Policy(
+        currency="usd",
+        rules=[
+            PolicyRule(
+                name="cap-with-fmv-fail",
+                when=RuleMatch(url_matches="http://mock/*"),
+                max_per_call_minor_units=9999,
+            )
+        ],
+    )
+    client = _make_client(
+        test_account,
+        mock_x402_app,
+        tmp_trace_db_path,
+        policy=policy,
+        budget_envelope=None,
+    )
+
+    # Patch _fmv_quote to return None (simulates FMV conversion failure).
+    with patch(
+        "routeweiler.routing.router._fmv_quote",
+        return_value=None,
+    ):
+        async with client:
+            with pytest.raises(FmvUnavailableError):
+                await client.get("http://mock/protected")
 
 
 # ---------------------------------------------------------------------------
