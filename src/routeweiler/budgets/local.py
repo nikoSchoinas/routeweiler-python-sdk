@@ -14,48 +14,43 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from routeweiler._constants import (
-    CLOCK_SKEW_BUFFER_SECONDS,
     FMV_REFRESH_INTERVAL_BTC_SECONDS,
     FMV_REFRESH_INTERVAL_ECB_SECONDS,
     REAPER_INTERVAL_SECONDS,
 )
 from routeweiler._storage import ensure_schema as _ensure_schema
 from routeweiler._storage import open_connection as _open_connection
+from routeweiler.budgets._draw import confirm_sync as _confirm_sync_fn
+from routeweiler.budgets._draw import draw_sync as _draw_sync_fn
+from routeweiler.budgets._draw import rollback_sync as _rollback_sync_fn
+from routeweiler.budgets._reaper import reap_sync as _reap_sync_fn
+from routeweiler.budgets._snapshot import load_fmv_snapshot_sync as _load_fmv_snapshot_sync_fn
+from routeweiler.budgets._snapshot import upsert_snapshot_sync as _upsert_snapshot_sync_fn
+from routeweiler.budgets._sync_reads import envelope_exists_sync as _envelope_exists_sync_fn
+from routeweiler.budgets._sync_reads import (
+    get_envelope_allowed_rails_sync as _get_envelope_allowed_rails_sync_fn,
+)
+from routeweiler.budgets._sync_reads import (
+    get_envelope_currency_sync as _get_envelope_currency_sync_fn,
+)
 from routeweiler.budgets.ecb_provider import EcbRateProvider
 from routeweiler.budgets.fmv import capture_fmv_snapshot as _capture_fmv_snapshot
 from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
-from routeweiler.budgets.receipts import issue as _issue_receipt
-from routeweiler.budgets.receipts import uuid7
-from routeweiler.budgets.receipts import verify_against_envelope as _verify_against_envelope
 from routeweiler.budgets.schema import (
     BudgetEnvelope,
     DrawReceipt,
-    DrawState,
     EnvelopeCurrency,
     EnvelopeStatus,
 )
 from routeweiler.errors import (
-    BudgetError,
-    BudgetExceededError,
-    EnvelopeExpiredError,
-    EnvelopeFrozenError,
-    EnvelopeNotFoundError,
     FmvUnavailableError,
-    ReceiptVerificationError,
 )
 from routeweiler.normalized import Rail
 
 _log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Closed-set state constants — type-checked at assignment, safe to embed in SQL.
-# ---------------------------------------------------------------------------
-
 _STATUS_ACTIVE: EnvelopeStatus = "active"
-_DRAW_STATE_RESERVED: DrawState = "reserved"
-_DRAW_STATE_SETTLED: DrawState = "settled"
-_DRAW_STATE_ROLLED_BACK: DrawState = "rolled_back"
 
 # ---------------------------------------------------------------------------
 # _EnvelopeRow — typed dict for SQLite envelope INSERT parameters.
@@ -161,13 +156,7 @@ class BudgetStore:
                 _log.exception("Reaper iteration failed; will retry.")
 
     def _reap_sync(self) -> int:
-        """Transition all expired reserved draws to rolled_back. Returns rowcount."""
-        now = datetime.now(UTC).isoformat()
-        cursor = self._conn.execute(
-            "UPDATE draws SET state=? WHERE state=? AND expires_at < ?",
-            (_DRAW_STATE_ROLLED_BACK, _DRAW_STATE_RESERVED, now),
-        )
-        return cursor.rowcount
+        return _reap_sync_fn(self._conn)
 
     async def _btc_refresh_loop(self) -> None:
         """Re-fetch BTC/sats rates every btc_refresh_interval_seconds for L402 envelopes."""
@@ -323,15 +312,8 @@ class BudgetStore:
         snapshot_rates: dict[str, Decimal],
         snapshot_quality: dict[str, str],
     ) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO envelope_fmv_snapshots "
-            "(envelope_id, captured_at, rates_json, quality_json) VALUES (?, ?, ?, ?)",
-            (
-                envelope_id,
-                captured_at,
-                json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
-                json.dumps(snapshot_quality),
-            ),
+        _upsert_snapshot_sync_fn(
+            self._conn, envelope_id, captured_at, snapshot_rates, snapshot_quality
         )
 
     async def aclose(self) -> None:
@@ -362,43 +344,25 @@ class BudgetStore:
     # ------------------------------------------------------------------
 
     def envelope_exists_sync(self, envelope_id: str) -> bool:
-        row = self._conn.execute("SELECT 1 FROM envelopes WHERE id = ?", (envelope_id,)).fetchone()
-        return row is not None
+        return _envelope_exists_sync_fn(self._conn, envelope_id)
 
     def get_envelope_currency_sync(self, envelope_id: str) -> EnvelopeCurrency | None:
         """Return the cap_currency for an envelope, or None if not found.
 
-        Synchronous — runs on the already-open connection so it is safe to call
-        from the Routeweiler constructor before the event loop is available.
-        This is the one permitted sync DB read in the constructor path.
+        Synchronous — safe to call from the Routeweiler constructor and start().
         """
-        row = self._conn.execute(
-            "SELECT cap_currency FROM envelopes WHERE id = ?", (envelope_id,)
-        ).fetchone()
-        return cast(EnvelopeCurrency, str(row[0])) if row else None
+        return _get_envelope_currency_sync_fn(self._conn, envelope_id)
 
     def get_envelope_allowed_rails_sync(self, envelope_id: str) -> list[Rail]:
         """Return the allowed_rails list for an envelope (empty list if not found).
 
-        Synchronous — safe to call from the Routeweiler constructor.
+        Synchronous — safe to call from the Routeweiler constructor and start().
         """
-        row = self._conn.execute(
-            "SELECT allowed_rails FROM envelopes WHERE id = ?", (envelope_id,)
-        ).fetchone()
-        if row is None:
-            return []
-        return cast(list[Rail], json.loads(str(row[0])))
+        return _get_envelope_allowed_rails_sync_fn(self._conn, envelope_id)
 
     def load_fmv_snapshot_sync(self, envelope_id: str) -> dict[str, Decimal] | None:
         """Return the stored FMV snapshot rates for an envelope, or None if absent."""
-        row = self._conn.execute(
-            "SELECT rates_json FROM envelope_fmv_snapshots WHERE envelope_id = ?",
-            (envelope_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        raw: dict[str, str] = json.loads(str(row[0]))
-        return {k: Decimal(v) for k, v in raw.items()}
+        return _load_fmv_snapshot_sync_fn(self._conn, envelope_id)
 
     # ------------------------------------------------------------------
     # Async public API
@@ -544,18 +508,8 @@ class BudgetStore:
             """,
             row,
         )
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO envelope_fmv_snapshots
-                (envelope_id, captured_at, rates_json, quality_json)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                row["id"],
-                captured_at,
-                json.dumps({k: str(v) for k, v in snapshot_rates.items()}),
-                json.dumps(snapshot_quality),
-            ),
+        _upsert_snapshot_sync_fn(
+            self._conn, row["id"], captured_at, snapshot_rates, snapshot_quality
         )
 
     async def draw(
@@ -595,138 +549,16 @@ class BudgetStore:
         rail_quoted: Rail,
         ttl_seconds: int,
     ) -> DrawReceipt:
-        conn = self._conn
-        now = datetime.now(UTC)
-        # Include clock-skew buffer so the reaper doesn't fire before the
-        # active path can confirm/rollback.
-        expires = now + timedelta(seconds=ttl_seconds + CLOCK_SKEW_BUFFER_SECONDS)
-
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            # Load envelope (cap, status, expiry, public key).
-            env_row = conn.execute(
-                "SELECT cap_minor_units, status, expires_at, cap_currency, counter_public_key "
-                "FROM envelopes WHERE id = ?",
-                (envelope_id,),
-            ).fetchone()
-            if env_row is None:
-                raise EnvelopeNotFoundError(f"Envelope '{envelope_id}' not found.")
-            cap, status, env_expires_raw, cap_currency, pub_key_b64 = env_row
-
-            if status != _STATUS_ACTIVE:
-                raise EnvelopeFrozenError(
-                    f"Envelope '{envelope_id}' has status '{status}' (expected 'active')."
-                )
-
-            env_expires = datetime.fromisoformat(env_expires_raw)
-            if now >= env_expires:
-                raise EnvelopeExpiredError(
-                    f"Envelope '{envelope_id}' expired at {env_expires_raw}."
-                )
-
-            # Idempotency short-circuit — return a re-signed receipt for the same draw.
-            # request_id is re-read from the stored row so the receipt is byte-identical
-            # to the one returned on the original call ("return the existing receipt
-            # unchanged").
-            existing = conn.execute(
-                "SELECT id, request_id, amount_reserved_minor_units, rail_quoted, "
-                "issued_at, expires_at "
-                "FROM draws WHERE envelope_id = ? AND idempotency_key = ?",
-                (envelope_id, idempotency_key),
-            ).fetchone()
-            if existing is not None:
-                conn.execute("COMMIT")
-                ex_id, ex_req_id, ex_amt, ex_rail, ex_issued, ex_exp = existing
-                private_key = self._keystore.load(envelope_id)
-                return _issue_receipt(
-                    private_key=private_key,
-                    public_key_b64=str(pub_key_b64),
-                    receipt_id=str(ex_id),
-                    envelope_id=envelope_id,
-                    request_id=str(ex_req_id),
-                    idempotency_key=idempotency_key,
-                    amount_reserved_minor_units=int(ex_amt),
-                    amount_reserved_currency=cap_currency,
-                    rail_quoted=cast(Rail, str(ex_rail)),
-                    issued_at=datetime.fromisoformat(str(ex_issued)),
-                    expires_at=datetime.fromisoformat(str(ex_exp)),
-                )
-
-            # Cap check: reserved + settled must not exceed cap after this draw.
-            reserved: int = conn.execute(
-                "SELECT COALESCE(SUM(amount_reserved_minor_units), 0) FROM draws "
-                "WHERE envelope_id = ? AND state = ?",
-                (envelope_id, _DRAW_STATE_RESERVED),
-            ).fetchone()[0]
-            settled: int = conn.execute(
-                "SELECT COALESCE(SUM(amount_settled_minor_units), 0) FROM draws "
-                "WHERE envelope_id = ? AND state = ?",
-                (envelope_id, _DRAW_STATE_SETTLED),
-            ).fetchone()[0]
-
-            available = int(cap) - int(reserved) - int(settled)
-            if amount_reserved_minor_units > available:
-                raise BudgetExceededError(
-                    envelope_id=envelope_id,
-                    requested_minor_units=amount_reserved_minor_units,
-                    available_minor_units=available,
-                )
-
-            draw_id = uuid7()
-            conn.execute(
-                """
-                INSERT INTO draws (
-                    id, envelope_id, request_id, idempotency_key,
-                    amount_reserved_minor_units, rail_quoted, state,
-                    issued_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    draw_id,
-                    envelope_id,
-                    request_id,
-                    idempotency_key,
-                    amount_reserved_minor_units,
-                    rail_quoted,
-                    _DRAW_STATE_RESERVED,
-                    now.isoformat(),
-                    expires.isoformat(),
-                ),
-            )
-            conn.execute("COMMIT")
-
-            private_key = self._keystore.load(envelope_id)
-            receipt = _issue_receipt(
-                private_key=private_key,
-                public_key_b64=str(pub_key_b64),
-                receipt_id=draw_id,
-                envelope_id=envelope_id,
-                request_id=request_id,
-                idempotency_key=idempotency_key,
-                amount_reserved_minor_units=amount_reserved_minor_units,
-                amount_reserved_currency=cap_currency,
-                rail_quoted=rail_quoted,
-                issued_at=now,
-                expires_at=expires,
-            )
-            # Defense-in-depth: verify the receipt against the trusted key in the DB
-            # to catch key-swap attacks before returning the receipt to the caller.
-            try:
-                _verify_against_envelope(receipt, conn)
-            except ReceiptVerificationError:
-                _log.error(
-                    "Receipt '%s' failed key verification; rolling back draw.",
-                    draw_id,
-                )
-                self._rollback_sync(draw_id)
-                raise
-            return receipt
-        except Exception:
-            try:
-                conn.execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
+        return _draw_sync_fn(
+            self._conn,
+            self._keystore,
+            envelope_id=envelope_id,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            amount_reserved_minor_units=amount_reserved_minor_units,
+            rail_quoted=rail_quoted,
+            ttl_seconds=ttl_seconds,
+        )
 
     async def confirm(self, draw_id: str, amount_settled_minor_units: int) -> None:
         """Transition a reserved draw to settled with the actual settled amount."""
@@ -734,24 +566,7 @@ class BudgetStore:
             await asyncio.to_thread(self._confirm_sync, draw_id, amount_settled_minor_units)
 
     def _confirm_sync(self, draw_id: str, amount_settled_minor_units: int) -> None:
-        now = datetime.now(UTC)
-        cursor = self._conn.execute(
-            "UPDATE draws SET state=?, amount_settled_minor_units=?, "
-            "settled_at=? WHERE id=? AND state=?",
-            (
-                _DRAW_STATE_SETTLED,
-                amount_settled_minor_units,
-                now.isoformat(),
-                draw_id,
-                _DRAW_STATE_RESERVED,
-            ),
-        )
-        if cursor.rowcount == 0:
-            row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
-            if row is None:
-                raise BudgetError(f"confirm: draw '{draw_id}' not found.")
-            # Draw already in a terminal state (settled or rolled_back) — either an idempotent
-            # re-confirm or the losing side of a concurrent rollback+confirm race. Both are safe.
+        _confirm_sync_fn(self._conn, draw_id, amount_settled_minor_units)
 
     async def rollback(self, draw_id: str) -> None:
         """Transition a reserved draw to rolled_back, freeing its reserved capacity."""
@@ -759,13 +574,4 @@ class BudgetStore:
             await asyncio.to_thread(self._rollback_sync, draw_id)
 
     def _rollback_sync(self, draw_id: str) -> None:
-        cursor = self._conn.execute(
-            "UPDATE draws SET state=? WHERE id=? AND state=?",
-            (_DRAW_STATE_ROLLED_BACK, draw_id, _DRAW_STATE_RESERVED),
-        )
-        if cursor.rowcount == 0:
-            row = self._conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
-            if row is None:
-                raise BudgetError(f"rollback: draw '{draw_id}' not found.")
-            # Draw already in a terminal state (settled or rolled_back) — either an idempotent
-            # re-rollback or the losing side of a concurrent rollback+confirm race. Both are safe.
+        _rollback_sync_fn(self._conn, draw_id)
