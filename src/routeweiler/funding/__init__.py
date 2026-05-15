@@ -111,19 +111,12 @@ class Funding:
                             ``StripeSptCreator(api_key)``.
                             Pass a ``FakeSptCreator`` in tests to avoid hitting Stripe.
         """
-        if spt_creator is not None:
-            return StripeFundingSource(
-                api_key=api_key,
-                customer=customer,
-                payment_method=payment_method,
-                currency=currency,
-                spt_creator=spt_creator,
-            )
         return StripeFundingSource(
             api_key=api_key,
             customer=customer,
             payment_method=payment_method,
             currency=currency,
+            spt_creator=spt_creator,  # type: ignore[arg-type]  # __post_init__ handles None
         )
 
     @staticmethod
