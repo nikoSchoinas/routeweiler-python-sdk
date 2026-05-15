@@ -117,11 +117,7 @@ class X402Adapter:
 
         x402_version: int = int(data.get("x402Version", 1))
 
-        if "accepts" in data:
-            accepts_raw = data["accepts"]
-        else:
-            accepts_raw = None
-
+        accepts_raw = data.get("accepts")
         if accepts_raw is None:
             raise ChallengeParseError("PAYMENT-REQUIRED payload has no 'accepts' field")
         if not isinstance(accepts_raw, list):
