@@ -1,4 +1,6 @@
-__version__ = "0.1.0.dev0"
+from importlib.metadata import version as _metadata_version
+
+__version__ = _metadata_version("routeweiler")
 
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.schema import BudgetEnvelope, BudgetEnvelopeRecord, DrawReceipt
