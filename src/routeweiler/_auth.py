@@ -184,19 +184,14 @@ class RouteweilerAuth(httpx.Auth):
                     attempt=state.attempt,
                 )
             except (RailNotSupportedError, PolicyDeniedError, NoFeasibleRailError) as err:
-                if self._emitter:
-                    try:
-                        await self._emitter.emit_error(
-                            request=request,
-                            response=response,
-                            error=err,
-                            challenge=None,
-                            ts_start=ts_start,
-                            ts_end=datetime.now(UTC),
-                            fallback_from=state.prior_rail,
-                        )
-                    except Exception:
-                        _log.exception("Trace emit failed.")
+                await self._safe_emit_error(
+                    error=err,
+                    request=request,
+                    response=response,
+                    challenge=None,
+                    ts_start=ts_start,
+                    fallback_from=state.prior_rail,
+                )
                 raise
 
             challenge = choice.candidate.challenge
@@ -218,19 +213,14 @@ class RouteweilerAuth(httpx.Auth):
                         f"FMV conversion failed for {request.url}; "
                         "refusing to pay an uncapped amount when max_per_call_minor_units is set."
                     )
-                    if self._emitter:
-                        try:
-                            await self._emitter.emit_error(
-                                request=request,
-                                response=response,
-                                error=fmv_err,
-                                challenge=challenge,
-                                ts_start=ts_start,
-                                ts_end=datetime.now(UTC),
-                                fallback_from=choice.fallback_from,
-                            )
-                        except Exception:
-                            _log.exception("Trace emit failed.")
+                    await self._safe_emit_error(
+                        error=fmv_err,
+                        request=request,
+                        response=response,
+                        challenge=challenge,
+                        ts_start=ts_start,
+                        fallback_from=choice.fallback_from,
+                    )
                     raise fmv_err
                 if quote > decision.max_per_call_minor_units:
                     exc = PolicyMaxPerCallExceededError(
@@ -238,19 +228,14 @@ class RouteweilerAuth(httpx.Auth):
                         requested=quote,
                         limit=decision.max_per_call_minor_units,
                     )
-                    if self._emitter:
-                        try:
-                            await self._emitter.emit_error(
-                                request=request,
-                                response=response,
-                                error=exc,
-                                challenge=challenge,
-                                ts_start=ts_start,
-                                ts_end=datetime.now(UTC),
-                                fallback_from=choice.fallback_from,
-                            )
-                        except Exception:
-                            _log.exception("Trace emit failed.")
+                    await self._safe_emit_error(
+                        error=exc,
+                        request=request,
+                        response=response,
+                        challenge=challenge,
+                        ts_start=ts_start,
+                        fallback_from=choice.fallback_from,
+                    )
                     raise exc
 
             # -----------------------------------------------------------------
@@ -270,19 +255,14 @@ class RouteweilerAuth(httpx.Auth):
                             f"FMV conversion failed for all candidate rails on {request.url}; "
                             "refusing to pay uncapped."
                         )
-                        if self._emitter:
-                            try:
-                                await self._emitter.emit_error(
-                                    request=request,
-                                    response=response,
-                                    error=fmv_err,
-                                    challenge=challenge,
-                                    ts_start=ts_start,
-                                    ts_end=datetime.now(UTC),
-                                    fallback_from=choice.fallback_from,
-                                )
-                            except Exception:
-                                _log.exception("Trace emit failed.")
+                        await self._safe_emit_error(
+                            error=fmv_err,
+                            request=request,
+                            response=response,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            fallback_from=choice.fallback_from,
+                        )
                         raise fmv_err
                     # Rail not in envelope's allowed_rails — skip draw, no enforcement.
                 else:
@@ -296,19 +276,14 @@ class RouteweilerAuth(httpx.Auth):
                             rail_quoted=adapter.rail,
                         )
                     except Exception as exc:
-                        if self._emitter:
-                            try:
-                                await self._emitter.emit_error(
-                                    request=request,
-                                    response=response,
-                                    error=exc,
-                                    challenge=challenge,
-                                    ts_start=ts_start,
-                                    ts_end=datetime.now(UTC),
-                                    fallback_from=choice.fallback_from,
-                                )
-                            except Exception:
-                                _log.exception("Trace emit failed.")
+                        await self._safe_emit_error(
+                            error=exc,
+                            request=request,
+                            response=response,
+                            challenge=challenge,
+                            ts_start=ts_start,
+                            fallback_from=choice.fallback_from,
+                        )
                         raise  # budget errors are not failover-able
 
             # -----------------------------------------------------------------
@@ -322,19 +297,14 @@ class RouteweilerAuth(httpx.Auth):
                 payment_result = await adapter.pay(challenge)
             except PostCommitPaymentError as exc:
                 await self._confirm_draw_safe(receipt)
-                if self._emitter:
-                    try:
-                        await self._emitter.emit_error(
-                            request=request,
-                            response=response,
-                            error=exc,
-                            challenge=challenge,
-                            ts_start=ts_start,
-                            ts_end=datetime.now(UTC),
-                            fallback_from=choice.fallback_from,
-                        )
-                    except Exception:
-                        _log.exception("Trace emit failed.")
+                await self._safe_emit_error(
+                    error=exc,
+                    request=request,
+                    response=response,
+                    challenge=challenge,
+                    ts_start=ts_start,
+                    fallback_from=choice.fallback_from,
+                )
                 self._sticky_cache.forget(sticky_key)
                 raise
             except Exception:
@@ -370,19 +340,14 @@ class RouteweilerAuth(httpx.Auth):
             except Exception as exc:
                 await self._confirm_draw_safe(receipt)
                 await self._attempt_recovery_safe(credential_record, last_response=None)
-                if self._emitter:
-                    try:
-                        await self._emitter.emit_error(
-                            request=request,
-                            response=response,
-                            error=exc,
-                            challenge=challenge,
-                            ts_start=ts_start,
-                            ts_end=datetime.now(UTC),
-                            fallback_from=choice.fallback_from,
-                        )
-                    except Exception:
-                        _log.exception("Trace emit failed.")
+                await self._safe_emit_error(
+                    error=exc,
+                    request=request,
+                    response=response,
+                    challenge=challenge,
+                    ts_start=ts_start,
+                    fallback_from=choice.fallback_from,
+                )
                 self._sticky_cache.forget(sticky_key)
                 state.advance(adapter.rail)
                 continue
@@ -432,6 +397,31 @@ class RouteweilerAuth(httpx.Auth):
     # ---------------------------------------------------------------------------
     # Private helpers
     # ---------------------------------------------------------------------------
+
+    async def _safe_emit_error(
+        self,
+        *,
+        error: Exception,
+        request: httpx.Request,
+        response: httpx.Response,
+        challenge: NormalizedChallenge | None,
+        ts_start: datetime,
+        fallback_from: Rail | None,
+    ) -> None:
+        """Emit an error trace event, swallowing any emission failure."""
+        if self._emitter:
+            try:
+                await self._emitter.emit_error(
+                    request=request,
+                    response=response,
+                    error=error,
+                    challenge=challenge,
+                    ts_start=ts_start,
+                    ts_end=datetime.now(UTC),
+                    fallback_from=fallback_from,
+                )
+            except Exception:
+                _log.exception("Trace emit failed.")
 
     async def _load_fmv_snapshot(self) -> dict[str, Decimal] | None:
         if self._budget_store is not None and self._envelope_id is not None:
