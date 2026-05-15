@@ -141,6 +141,18 @@ against. Set `Policy(currency="usd")` (or any supported currency) when no
 both are present. If neither is provided and a rule uses `max_per_call_minor_units`,
 `Routeweiler` raises `ValueError` at construction time.
 
+## Releases
+
+Releases follow [SemVer](https://semver.org). Pre-1.0 minors (`0.1.0 → 0.2.0`) may include breaking changes.
+
+| Tag format | Channel | Install |
+|---|---|---|
+| `python/v0.2.0` | Stable | `pip install routeweiler` |
+| `python/v0.2.0b1` | Beta | `pip install --pre routeweiler` |
+| `python/v0.2.0rc1` | Release candidate | `pip install --pre routeweiler` |
+
+A release is a git tag, not a merge. Merges to `main` run CI but don't publish. Pushing `python/vX.Y.Z` (or `python/vX.Y.ZbN` / `python/vX.Y.ZrcN`) triggers the release workflow, which builds the wheel + sdist, attaches artefacts to the GitHub Release, and — once the package is public — publishes to PyPI.
+
 ## License
 
 Apache 2.0 — see [LICENSE](../../LICENSE).
