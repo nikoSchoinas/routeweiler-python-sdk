@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 # Deterministic fake signed transaction — valid hex, not a real Tempo Transaction
 FAKE_SIGNED_TX = "0x76" + "aa" * 100
 
@@ -56,6 +54,3 @@ class FakeTempoSigner:
         if self._should_fail:
             raise RuntimeError("FakeTempoSigner: forced failure")
         return self._signed_tx
-
-    async def sign_typed_data_v4(self, typed_data: dict[str, Any]) -> str:
-        return "0x" + "cc" * 65

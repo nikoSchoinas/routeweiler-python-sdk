@@ -11,7 +11,7 @@ signing primitive so the adapter can be tested without a live chain.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from eth_account.signers.local import LocalAccount
 
@@ -68,13 +68,6 @@ class TempoSigner(Protocol):
             max_priority_fee_per_gas: EIP-1559 priority fee (wei).
             max_fee_per_gas:          EIP-1559 max fee (wei).
             gas_limit:                Gas limit for the transaction.
-        """
-        ...
-
-    async def sign_typed_data_v4(self, typed_data: dict[str, Any]) -> str:
-        """Sign EIP-712 typed data (used for zero-amount proof credentials).
-
-        Returns the 65-byte signature as a ``0x``-prefixed hex string.
         """
         ...
 
@@ -163,12 +156,3 @@ class EthAccountTempoSigner:
             max_fee_per_gas=max_fee_per_gas,
             gas_limit=gas_limit,
         )
-
-    async def sign_typed_data_v4(self, typed_data: dict[str, Any]) -> str:
-        from eth_account import Account  # noqa: PLC0415
-        from eth_account.messages import encode_typed_data  # noqa: PLC0415
-
-        signable = encode_typed_data(full_message=typed_data)
-        signed = Account.sign_message(signable, private_key=self._wallet.key)
-        sig: str = "0x" + signed.signature.hex()
-        return sig
