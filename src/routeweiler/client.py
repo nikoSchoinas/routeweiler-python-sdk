@@ -201,14 +201,6 @@ class Routeweiler:
         _policy_hash = _policy.policy_hash
         policy_engine = PolicyEngine(_policy)
 
-        if envelope_id is None and any(
-            r.max_per_call_minor_units is not None for r in _policy.rules
-        ):
-            _log.warning(
-                "Policy contains max_per_call_minor_units rules but no budget_envelope was set. "
-                "Per-call monetary caps are inactive without an envelope."
-            )
-
         emitter: TraceEmitter | None = None
         budget_store: BudgetStore | None = None
         envelope_currency: EnvelopeCurrency | None = None
@@ -279,6 +271,31 @@ class Routeweiler:
                 emitter=emitter,
             )
 
+        # Resolve the reference currency for FMV / max_per_call enforcement.
+        # Precedence: envelope cap_currency > policy.currency > None.
+        # For deferred BudgetEnvelope specs the envelope currency comes from the spec
+        # directly (the row doesn't exist yet); bind_envelope() will confirm it in start().
+        _spec_currency: EnvelopeCurrency | None = (
+            self._pending_envelope_spec.cap_currency
+            if self._pending_envelope_spec is not None
+            else None
+        )
+        reference_currency: EnvelopeCurrency | None = (
+            envelope_currency or _spec_currency or _policy.currency
+        )
+
+        # Guard: if any rule declares max_per_call_minor_units we need a reference
+        # currency to evaluate the limit.  Fail at construction rather than silently
+        # paying uncapped amounts at runtime.
+        if reference_currency is None and any(
+            r.max_per_call_minor_units is not None for r in _policy.rules
+        ):
+            raise ValueError(
+                "Policy contains max_per_call_minor_units rules but no reference currency "
+                "is available. Set Policy(currency='usd') or configure a budget_envelope "
+                "so Routeweiler knows what unit max_per_call_minor_units is measured in."
+            )
+
         self._budget_store = budget_store
         self._envelopes = _EnvelopesNamespace(budget_store)
         self._credential_store = credential_store
@@ -297,6 +314,7 @@ class Routeweiler:
             envelope_id=envelope_id,
             envelope_currency=envelope_currency,
             envelope_allowed_rails=envelope_allowed_rails,
+            reference_currency=reference_currency,
             policy_engine=policy_engine,
             credential_store=credential_store,
             recoverer=recoverer,

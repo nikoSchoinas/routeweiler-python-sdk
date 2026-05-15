@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -216,11 +215,10 @@ async def test_no_budget_envelope_no_envelopes_table_row(
     assert env_count == 0
 
 
-def test_policy_max_per_call_without_envelope_warns(
+def test_policy_max_per_call_without_currency_or_envelope_raises(
     test_account,  # type: ignore[no-untyped-def]
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A policy with max_per_call_minor_units but no envelope logs a warning."""
+    """max_per_call_minor_units with no currency source raises ValueError at construction."""
     policy = Policy(
         rules=[
             PolicyRule(
@@ -230,10 +228,31 @@ def test_policy_max_per_call_without_envelope_warns(
             )
         ]
     )
-    with caplog.at_level(logging.WARNING, logger="routeweiler.client"):
+    with pytest.raises(ValueError, match="max_per_call_minor_units"):
         Routeweiler(
             funding=[Funding.base_usdc(wallet=test_account)],
             policy=policy,
-            # budget_envelope deliberately omitted
+            # no budget_envelope and no policy.currency
         )
-    assert any("max_per_call_minor_units" in m for m in caplog.messages)
+
+
+async def test_policy_max_per_call_with_policy_currency_constructs(
+    test_account,  # type: ignore[no-untyped-def]
+) -> None:
+    """max_per_call_minor_units with policy.currency='usd' constructs without error."""
+    policy = Policy(
+        currency="usd",
+        rules=[
+            PolicyRule(
+                name="cap-calls",
+                when=RuleMatch(url_matches="*"),
+                max_per_call_minor_units=100,
+            )
+        ],
+    )
+    client = Routeweiler(
+        funding=[Funding.base_usdc(wallet=test_account)],
+        policy=policy,
+        # no budget_envelope — policy.currency provides the reference
+    )
+    await client.aclose()

@@ -141,6 +141,7 @@ async def _build_auth(
     account = Account.from_key("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
     funding = [EvmFundingSource(wallet=account, network="base-sepolia", asset="usdc")]
 
+    resolved_currency = currency or "usd"
     auth = RouteweilerAuth(
         router=router,
         sticky_cache=sticky,
@@ -148,7 +149,8 @@ async def _build_auth(
         emitter=emitter,
         budget_store=store,
         envelope_id=_FAILOVER_ENVELOPE.id,
-        envelope_currency=currency or "usd",
+        envelope_currency=resolved_currency,
+        reference_currency=resolved_currency,
         policy_engine=policy_engine,
     )
     return auth, sticky
