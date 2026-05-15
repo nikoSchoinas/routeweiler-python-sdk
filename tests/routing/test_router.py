@@ -69,7 +69,7 @@ class TestRouterSingleRail:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is adapter
@@ -85,7 +85,7 @@ class TestRouterSingleRail:
                 response=_402_response(),
                 policy_engine=None,
                 funding=[],
-                envelope_currency=None,
+                reference_currency=None,
                 fmv_snapshot=None,
             )
 
@@ -99,7 +99,7 @@ class TestRouterSingleRail:
                 response=_402_response(),
                 policy_engine=None,
                 funding=[],
-                envelope_currency=None,
+                reference_currency=None,
                 fmv_snapshot=None,
             )
 
@@ -122,7 +122,7 @@ class TestRouterScoring:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency="usd",
+            reference_currency="usd",
             fmv_snapshot={
                 "usd->usd": Decimal("1"),
             },
@@ -142,7 +142,7 @@ class TestRouterPolicyFiltering:
             response=_402_response(),
             policy_engine=_policy_engine_prefer("l402"),
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is l402
@@ -157,7 +157,7 @@ class TestRouterPolicyFiltering:
                 response=_402_response(),
                 policy_engine=_deny_engine(),
                 funding=[],
-                envelope_currency=None,
+                reference_currency=None,
                 fmv_snapshot=None,
             )
 
@@ -171,7 +171,7 @@ class TestRouterPolicyFiltering:
             response=_402_response(),
             policy_engine=_policy_engine_prefer("x402"),
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is x402
@@ -187,7 +187,7 @@ class TestRouterPolicyFiltering:
             response=_402_response(),
             policy_engine=_policy_engine_prefer("l402"),  # prefer l402, but only x402 exists
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is x402  # falls back gracefully
@@ -204,7 +204,7 @@ class TestRouterFundingFilter:
                 response=_402_response(),
                 policy_engine=None,
                 funding=[],
-                envelope_currency=None,
+                reference_currency=None,
                 fmv_snapshot=None,
             )
 
@@ -220,7 +220,7 @@ class TestRouterExcludedRails:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
             excluded_rails=frozenset(["x402"]),
         )
@@ -236,7 +236,7 @@ class TestRouterExcludedRails:
                 response=_402_response(),
                 policy_engine=None,
                 funding=[],
-                envelope_currency=None,
+                reference_currency=None,
                 fmv_snapshot=None,
                 excluded_rails=frozenset(["x402"]),
             )
@@ -250,7 +250,7 @@ class TestRouterExcludedRails:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
             excluded_rails=frozenset(["x402"]),
             prior_rail="x402",
@@ -278,7 +278,7 @@ class TestRouterSticky:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
             sticky_rail="x402",
         )
@@ -294,7 +294,7 @@ class TestRouterSticky:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
             sticky_rail="l402",  # stale sticky; l402 not available
         )
@@ -319,7 +319,7 @@ class TestDefaultRailTieBreak:
             response=_402_response(),
             policy_engine=engine,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is second
@@ -336,7 +336,7 @@ class TestDefaultRailTieBreak:
             response=_402_response(),
             policy_engine=engine,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is first
@@ -360,7 +360,7 @@ class TestDefaultRailTieBreak:
             response=_402_response(),
             policy_engine=engine,
             funding=[],
-            envelope_currency="usd",
+            reference_currency="usd",
             fmv_snapshot={"usd->usd": __import__("decimal").Decimal("1")},
         )
         assert choice.candidate.adapter is cheap
@@ -376,7 +376,7 @@ class TestDefaultRailTieBreak:
             response=_402_response(),
             policy_engine=None,
             funding=[],
-            envelope_currency=None,
+            reference_currency=None,
             fmv_snapshot=None,
         )
         assert choice.candidate.adapter is first

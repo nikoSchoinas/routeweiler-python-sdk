@@ -105,7 +105,7 @@ class Router:
         response: httpx.Response,
         policy_engine: PolicyEngine | None,
         funding: Sequence[FundingSource],
-        envelope_currency: EnvelopeCurrency | None,
+        reference_currency: EnvelopeCurrency | None,
         fmv_snapshot: dict[str, Decimal] | None,
         excluded_rails: frozenset[Rail] = frozenset(),
         sticky_rail: Rail | None = None,
@@ -195,7 +195,7 @@ class Router:
         for adapter, challenge, decision in funded:
             quote = _fmv_quote(
                 challenge=challenge,
-                envelope_currency=envelope_currency,
+                reference_currency=reference_currency,
                 fmv_snapshot=fmv_snapshot,
             )
             candidates.append(
@@ -282,24 +282,24 @@ def _parse_candidates(
 
 def _fmv_quote(
     challenge: NormalizedChallenge,
-    envelope_currency: EnvelopeCurrency | None,
+    reference_currency: EnvelopeCurrency | None,
     fmv_snapshot: dict[str, Decimal] | None,
 ) -> int | None:
-    """Convert the challenge price to envelope minor units.
+    """Convert the challenge price to reference currency minor units.
 
     Returns:
-        0       — budget enforcement is not active (no envelope_currency); all
-                  candidates are cost-equal and fall through to other tiebreakers.
+        0       — no reference currency; all candidates are cost-equal and fall
+                  through to other tiebreakers.
         int > 0 — successful FMV conversion.
         None    — FMV conversion failed; caller ranks this candidate worst on cost.
     """
-    if envelope_currency is None:
+    if reference_currency is None:
         return 0
     try:
         quote, _quality = amount_to_envelope_minor_units(
             challenge.price.currency,
             challenge.price.amount,
-            envelope_currency,
+            reference_currency,
             snapshot_rates=fmv_snapshot,
         )
         return quote
@@ -307,6 +307,6 @@ def _fmv_quote(
         _log.debug(
             "FMV conversion failed for %s→%s; candidate will be ranked worst on cost.",
             challenge.price.currency,
-            envelope_currency,
+            reference_currency,
         )
         return None
