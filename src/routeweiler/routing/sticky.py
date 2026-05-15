@@ -25,7 +25,7 @@ class StickyKey:
     session_id: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class _StickyEntry:
     rail: Rail
     expires_at: datetime

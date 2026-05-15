@@ -250,6 +250,8 @@ def _select_winner(
             if candidate.adapter.rail == sticky_rail:
                 return candidate
 
+    order_map = {id(item): i for i, item in enumerate(candidates)}
+
     def _key(item: tuple[Candidate, PolicyDecision]) -> tuple[float, int, int, int]:
         candidate, decision = item
         rail = candidate.adapter.rail
@@ -257,7 +259,7 @@ def _select_winner(
         cost_rank = float(q) if q is not None else _INF
         prefer_rank = 0 if rail in decision.prefer else 1
         default_rank = 0 if rail == default_rail else 1
-        order_rank = candidates.index(item)
+        order_rank = order_map[id(item)]
         return (cost_rank, prefer_rank, default_rank, order_rank)
 
     return min(candidates, key=_key)[0]
