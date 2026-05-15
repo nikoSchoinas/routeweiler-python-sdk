@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,8 +32,6 @@ from routeweiler.routing.router import Router
 from routeweiler.routing.sticky import StickyCache
 from routeweiler.trace.emitter import TraceEmitter
 from routeweiler.trace.sink_sqlite import SqliteTraceSink
-
-_log = logging.getLogger(__name__)
 
 
 class _EnvelopesNamespace:
@@ -420,7 +417,10 @@ class Routeweiler:
                 await self._budget_store.create_envelope_if_absent(spec)
                 currency = self._budget_store.get_envelope_currency_sync(spec.id)
                 allowed_rails = self._budget_store.get_envelope_allowed_rails_sync(spec.id)
-                assert currency is not None  # just created or pre-existing
+                if currency is None:  # pragma: no cover
+                    raise RuntimeError(
+                        f"Envelope '{spec.id}' was just created but currency could not be read."
+                    )
                 self._auth.bind_envelope(currency=currency, allowed_rails=allowed_rails)
                 if self._emitter is not None:
                     self._emitter.bind_envelope_currency(currency)
