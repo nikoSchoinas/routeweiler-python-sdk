@@ -102,6 +102,7 @@ class RouteweilerAuth(httpx.Auth):
         envelope_id: str | None = None,
         envelope_currency: EnvelopeCurrency | None = None,
         envelope_allowed_rails: list[Rail] | None = None,
+        reference_currency: EnvelopeCurrency | None = None,
         policy_engine: PolicyEngine | None = None,
         credential_store: CredentialStore | None = None,
         recoverer: CredentialRecoverer | None = None,
@@ -116,6 +117,7 @@ class RouteweilerAuth(httpx.Auth):
         self._envelope_id = envelope_id
         self._envelope_currency = envelope_currency
         self._envelope_allowed_rails: frozenset[Rail] = frozenset(envelope_allowed_rails or [])
+        self._reference_currency = reference_currency
         self._policy_engine = policy_engine
         self._credential_store = credential_store
         self._recoverer = recoverer
@@ -123,6 +125,7 @@ class RouteweilerAuth(httpx.Auth):
     def bind_envelope(self, *, currency: EnvelopeCurrency, allowed_rails: list[Rail]) -> None:
         """Update envelope currency and allowed-rails after deferred spec creation."""
         self._envelope_currency = currency
+        self._reference_currency = currency
         self._envelope_allowed_rails = frozenset(allowed_rails)
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
@@ -173,7 +176,7 @@ class RouteweilerAuth(httpx.Auth):
                     response=response,
                     policy_engine=self._policy_engine,
                     funding=self._funding,
-                    envelope_currency=self._envelope_currency,
+                    reference_currency=self._reference_currency,
                     fmv_snapshot=fmv_snapshot,
                     excluded_rails=state.excluded_rails,
                     sticky_rail=sticky_rail,
@@ -202,32 +205,53 @@ class RouteweilerAuth(httpx.Auth):
 
             # -----------------------------------------------------------------
             # Policy max_per_call gate (post-routing, amount-based).
+            # Requires a reference_currency (from envelope or policy.currency).
             # -----------------------------------------------------------------
             if (
                 decision.max_per_call_minor_units is not None
-                and self._envelope_currency is not None
-                and choice.candidate.quote_envelope_minor_units is not None
-                and choice.candidate.quote_envelope_minor_units > decision.max_per_call_minor_units
+                and self._reference_currency is not None
             ):
-                exc = PolicyMaxPerCallExceededError(
-                    rule_name=decision.rule_name,
-                    requested=choice.candidate.quote_envelope_minor_units,
-                    limit=decision.max_per_call_minor_units,
-                )
-                if self._emitter:
-                    try:
-                        await self._emitter.emit_error(
-                            request=request,
-                            response=response,
-                            error=exc,
-                            challenge=challenge,
-                            ts_start=ts_start,
-                            ts_end=datetime.now(UTC),
-                            fallback_from=choice.fallback_from,
-                        )
-                    except Exception:
-                        _log.exception("Trace emit failed.")
-                raise exc
+                quote = choice.candidate.quote_envelope_minor_units
+                if quote is None:
+                    # FMV unavailable for a rail covered by a per-call cap — fail closed.
+                    fmv_err = FmvUnavailableError(
+                        f"FMV conversion failed for {request.url}; "
+                        "refusing to pay an uncapped amount when max_per_call_minor_units is set."
+                    )
+                    if self._emitter:
+                        try:
+                            await self._emitter.emit_error(
+                                request=request,
+                                response=response,
+                                error=fmv_err,
+                                challenge=challenge,
+                                ts_start=ts_start,
+                                ts_end=datetime.now(UTC),
+                                fallback_from=choice.fallback_from,
+                            )
+                        except Exception:
+                            _log.exception("Trace emit failed.")
+                    raise fmv_err
+                if quote > decision.max_per_call_minor_units:
+                    exc = PolicyMaxPerCallExceededError(
+                        rule_name=decision.rule_name,
+                        requested=quote,
+                        limit=decision.max_per_call_minor_units,
+                    )
+                    if self._emitter:
+                        try:
+                            await self._emitter.emit_error(
+                                request=request,
+                                response=response,
+                                error=exc,
+                                challenge=challenge,
+                                ts_start=ts_start,
+                                ts_end=datetime.now(UTC),
+                                fallback_from=choice.fallback_from,
+                            )
+                        except Exception:
+                            _log.exception("Trace emit failed.")
+                    raise exc
 
             # -----------------------------------------------------------------
             # Budget draw phase — reserve capacity before committing to payment.
