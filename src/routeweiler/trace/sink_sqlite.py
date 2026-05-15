@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,29 +51,26 @@ class SqliteTraceSink:
             await asyncio.to_thread(self._insert, row, payload)
 
     def _insert(self, row: dict[str, object], payload: str) -> None:
-        try:
-            self._conn.execute(
-                """
-                INSERT OR IGNORE INTO trace_events (
-                    request_id, envelope_id, selected_rail, fallback_from, facilitator,
-                    http_status, service_delivered,
-                    amount_native, amount_native_currency,
-                    amount_envelope, amount_envelope_currency, fmv_quality,
-                    ts_start, ts_end, shipped_at, payload
-                ) VALUES (
-                    :request_id, :envelope_id, :selected_rail, :fallback_from, :facilitator,
-                    :http_status, :service_delivered,
-                    :amount_native, :amount_native_currency,
-                    :amount_envelope, :amount_envelope_currency, :fmv_quality,
-                    :ts_start, :ts_end, NULL, :payload
-                )
-                """,
-                {**row, "payload": payload},
+        # The connection uses isolation_level=None (autocommit); INSERT OR IGNORE is
+        # atomic per-statement, so no explicit BEGIN/COMMIT is needed here.
+        self._conn.execute(
+            """
+            INSERT OR IGNORE INTO trace_events (
+                request_id, envelope_id, selected_rail, fallback_from, facilitator,
+                http_status, service_delivered,
+                amount_native, amount_native_currency,
+                amount_envelope, amount_envelope_currency, fmv_quality,
+                ts_start, ts_end, shipped_at, payload
+            ) VALUES (
+                :request_id, :envelope_id, :selected_rail, :fallback_from, :facilitator,
+                :http_status, :service_delivered,
+                :amount_native, :amount_native_currency,
+                :amount_envelope, :amount_envelope_currency, :fmv_quality,
+                :ts_start, :ts_end, NULL, :payload
             )
-            self._conn.commit()
-        except sqlite3.Error:
-            self._conn.rollback()
-            raise
+            """,
+            {**row, "payload": payload},
+        )
 
     async def aclose(self) -> None:
         async with self._lock:
