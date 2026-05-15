@@ -10,6 +10,7 @@ from typing import Annotated
 from pydantic import Field, model_validator
 
 from routeweiler._base import RouteweilerModel
+from routeweiler.budgets.schema import EnvelopeCurrency
 from routeweiler.normalized import Rail, Scheme
 
 # ---------------------------------------------------------------------------
@@ -66,11 +67,12 @@ class Policy(RouteweilerModel):
 
         policy = Policy(
             default_rail="x402",
+            currency="usd",
             rules=[
                 PolicyRule(
-                    name="deny-testnet",
-                    when=RuleMatch(network="base-sepolia"),
-                    deny=True,
+                    name="cap-per-call",
+                    when=RuleMatch(url_matches="*"),
+                    max_per_call_minor_units=500,
                 ),
             ],
         )
@@ -80,9 +82,17 @@ class Policy(RouteweilerModel):
 
     Rules are evaluated first-match-wins, top to bottom.
     ``policy_hash`` is a stable SHA-256 fingerprint used in trace events.
+
+    ``currency`` declares the reference currency for ``max_per_call_minor_units``
+    rules when no ``budget_envelope`` is configured on the client.  When a
+    ``budget_envelope`` is set, its ``cap_currency`` takes precedence.  If any
+    rule declares ``max_per_call_minor_units`` and neither ``currency`` nor a
+    ``budget_envelope`` is provided, ``Routeweiler`` raises ``ValueError`` at
+    construction time.
     """
 
     default_rail: Rail = "x402"
+    currency: EnvelopeCurrency | None = None
     rules: list[PolicyRule] = Field(default_factory=list)
 
     @cached_property

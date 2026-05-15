@@ -93,6 +93,37 @@ def test_unknown_top_level_field_rejected():
 
 
 # ---------------------------------------------------------------------------
+# Policy.currency field
+# ---------------------------------------------------------------------------
+
+
+def test_policy_currency_default_is_none():
+    policy = Policy()
+    assert policy.currency is None
+
+
+def test_policy_currency_round_trips():
+    policy = Policy(
+        currency="usd",
+        rules=[
+            PolicyRule(
+                name="cap",
+                when=RuleMatch(scheme="exact"),
+                max_per_call_minor_units=500,
+            )
+        ],
+    )
+    assert policy.currency == "usd"
+    assert policy.rules[0].max_per_call_minor_units == 500
+
+
+def test_policy_currency_included_in_hash():
+    no_cur = Policy(default_rail="x402")
+    with_cur = Policy(default_rail="x402", currency="usd")
+    assert no_cur.policy_hash != with_cur.policy_hash
+
+
+# ---------------------------------------------------------------------------
 # Hash properties
 # ---------------------------------------------------------------------------
 
