@@ -56,6 +56,70 @@ asyncio.run(main())
 | [MPP-Tempo](https://paymentauth.org) | Tempo 0x76 stablecoin tx | `TempoFundingSource` | Moderato testnet |
 | [MPP-SPT](https://docs.stripe.com/agentic-commerce) | Stripe Shared Payment Token | `StripeFundingSource` | USD, EUR, GBP |
 
+## Funding sources
+
+Each rail accepts a typed `FundingSource` holding the credentials it uses to sign or authorise payments. Key material stays in your process; Routeweiler never transmits private keys.
+
+### x402 — `EvmFundingSource`
+
+An `eth_account.LocalAccount` that signs EIP-3009 `transferWithAuthorization` for USDC on Base.
+
+```python
+from eth_account import Account
+from routeweiler import Funding
+
+wallet = Account.from_key(os.environ["PRIVATE_KEY"])  # 64-char hex secp256k1 key, 0x prefix optional
+funding = Funding.base_usdc(wallet=wallet)            # mainnet (chain 8453)
+# funding = Funding.base_sepolia_usdc(wallet=wallet)  # testnet (chain 84532)
+```
+
+### L402 — `LightningFundingSource`
+
+Wraps an LND gRPC client. Bring a running LND node and pass its admin macaroon + TLS cert; Routeweiler pays BOLT-11 invoices through it.
+
+```python
+from routeweiler.funding.lightning import LightningFundingSource, LndClient
+
+lnd = LndClient(
+    grpc_host="localhost",
+    grpc_port=10009,
+    macaroon_path="/path/to/admin.macaroon",
+    tls_cert_path="/path/to/tls.cert",
+)
+funding = await LightningFundingSource.create(lnd, network="bitcoin")
+# network: "bitcoin" | "bitcoin-testnet" | "bitcoin-regtest" | "bitcoin-signet"
+```
+
+### MPP-Tempo — `TempoFundingSource`
+
+Signs Tempo's type-0x76 charge transactions with an `eth_account.LocalAccount` — same key shape as x402, different chain. The same wallet can fund both rails.
+
+```python
+from eth_account import Account
+from routeweiler import Funding
+
+wallet = Account.from_key(os.environ["PRIVATE_KEY"])  # 64-char hex secp256k1 key, 0x prefix optional
+funding = Funding.tempo_usdc(wallet=wallet)              # mainnet, USDC
+# funding = Funding.tempo_pathusd_moderato(wallet=wallet)  # testnet, pathUSD
+```
+
+### MPP-SPT — `StripeFundingSource`
+
+No on-device signing. Stripe holds the card; you supply a secret API key, a customer id, and a saved payment method id. Routeweiler asks Stripe to mint a Shared Payment Token at pay-time.
+
+```python
+from routeweiler import Funding
+
+funding = Funding.stripe(
+    api_key=os.environ["STRIPE_API_KEY"],   # sk_live_... / sk_test_...
+    customer="cus_ABC123",                  # buyer's Stripe customer id
+    payment_method="pm_XYZ789",             # saved card / bank
+    currency="usd",                         # ISO-4217: usd | eur | gbp | ...
+)
+```
+
+Pass any combination to `Routeweiler(funding=[...])`. The router picks the best rail per challenge based on [Policy](#policy) and what the server accepts.
+
 ## SQLite trace recorder
 
 Enable local tracing with `TraceSink.sqlite`. Every call (paid or free) produces
@@ -137,7 +201,7 @@ async with Routeweiler(
 
 `max_per_call_minor_units` requires a reference currency to compare rail-native quotes
 against. Set `Policy(currency="usd")` (or any supported currency) when no
-`budget_envelope` is configured — the envelope's `cap_currency` takes precedence when
+`budget_envelope` is configured. The envelope's `cap_currency` takes precedence when
 both are present. If neither is provided and a rule uses `max_per_call_minor_units`,
 `Routeweiler` raises `ValueError` at construction time.
 
