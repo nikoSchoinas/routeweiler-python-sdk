@@ -104,7 +104,7 @@ lint                 = ["ruff check src tests", "ruff format --check src tests"]
 format               = ["ruff format src tests", "ruff check --fix src tests"]
 typecheck            = "mypy src"
 test                 = "pytest {args:tests}"
-cov                  = "pytest --cov=routeweiler --cov-report=term-missing --cov-report=xml {args:tests}"
+cov                  = "pytest --cov=routeweiler --cov-report=term-missing --cov-report=xml --junitxml=junit.xml -o junit_family=legacy {args:tests}"
 test-live            = "pytest --run-live {args:tests}"
 test-agent-frameworks = "pytest --run-agent-frameworks {args:tests/agent_frameworks}"
 
