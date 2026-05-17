@@ -1,7 +1,7 @@
 # routeweiler
 
 <p align="center">
-  <img src="assets/routeweiler.png" alt="Routeweiler" width="720">
+  <img src="https://raw.githubusercontent.com/nikoSchoinas/routeweiler-python-sdk/main/assets/routeweiler.png" alt="Routeweiler" width="720">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@ The neutral micropayment router for autonomous agents. A single async HTTP clien
 x402 (EVM), L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
 
 <p align="center">
-  <img src="assets/diagram.png" alt="Routeweiler flow diagram" width="900">
+  <img src="https://raw.githubusercontent.com/nikoSchoinas/routeweiler-python-sdk/main/assets/diagram.png" alt="Routeweiler flow diagram" width="900">
 </p>
 
 ## Install
