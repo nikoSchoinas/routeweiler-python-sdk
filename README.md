@@ -213,9 +213,8 @@ Releases follow [SemVer](https://semver.org). Pre-1.0 minors (`0.1.0 → 0.2.0`)
 |---|---|---|
 | `v0.2.0` | Stable | `pip install routeweiler` |
 | `v0.2.0b1` | Beta | `pip install --pre routeweiler` |
-| `v0.2.0rc1` | Release candidate | `pip install --pre routeweiler` |
 
-A release is a git tag, not a merge. Merges to `main` run CI but don't publish. Pushing `python/vX.Y.Z` (or `python/vX.Y.ZbN` / `python/vX.Y.ZrcN`) to the monorepo triggers the release workflow, which builds the wheel + sdist, mirrors the tag as `vX.Y.Z` to this repo, attaches artefacts to the GitHub Release here, and — once the package is public — publishes to PyPI.
+A release is a git tag, not a merge. Merges to `main` run CI but don't publish. Pushing `python/vX.Y.Z` (or `python/vX.Y.ZbN`) to the monorepo triggers the release workflow, which builds the wheel + sdist, mirrors the tag as `vX.Y.Z` to this repo, attaches artefacts to the GitHub Release here, and — once the package is public — publishes to PyPI.
 
 ## License
 
