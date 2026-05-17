@@ -30,7 +30,19 @@ jobs:
         run: hatch run typecheck
 
       - name: Test
+        if: matrix.python-version != '3.11'
         run: hatch run test
+
+      - name: Test with coverage
+        if: matrix.python-version == '3.11'
+        run: hatch run cov
 
       - name: Agent-framework tests
         run: hatch run test-agent-frameworks
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
