@@ -109,12 +109,15 @@ def _make_default_spt_creator(api_key: str) -> SptCreator:
 class StripeFundingSource:
     """A Stripe buyer profile used for MPP-SPT fiat payments.
 
+    Use ``Funding.stripe(...)`` rather than constructing directly.
+
     ``spt_creator`` defaults to a ``StripeSptCreator`` built from ``api_key``.
     Pass a ``FakeSptCreator`` (or any ``SptCreator``-conforming object) to
     override in tests without monkey-patching.
 
-    Args:
+    Attributes:
         api_key:        Buyer's Stripe secret key (``sk_live_...`` or ``sk_test_...``).
+                        Excluded from ``repr`` to avoid accidental secret leakage.
         customer:       Buyer's Stripe customer id (``cus_<id>``).
         payment_method: Buyer's saved Stripe payment method id (``pm_<id>``).
         currency:       ISO-4217 lowercase currency this source covers (``"usd"``, etc.).

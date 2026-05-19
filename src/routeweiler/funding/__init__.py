@@ -11,6 +11,10 @@ from routeweiler.funding.lightning import LightningFundingSource, LightningNodeC
 from routeweiler.funding.stripe import SptCreator, StripeFundingSource, StripeSptCreator
 from routeweiler.funding.tempo import EthAccountTempoSigner, TempoFundingSource, TempoSigner
 
+# Union of all concrete funding source types; use as a type hint for lists passed to
+# Routeweiler(funding=[...]).  Each member maps to a different payment rail:
+# EvmFundingSource → x402, LightningFundingSource → L402,
+# TempoFundingSource → MPP-Tempo, StripeFundingSource → MPP-SPT.
 FundingSource = EvmFundingSource | LightningFundingSource | TempoFundingSource | StripeFundingSource
 
 __all__ = [

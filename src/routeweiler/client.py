@@ -370,27 +370,35 @@ class Routeweiler:
     # ------------------------------------------------------------------
 
     async def get(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a GET request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.get(url, **kwargs), datetime.now(UTC))
 
     async def post(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a POST request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.post(url, **kwargs), datetime.now(UTC))
 
     async def put(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a PUT request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.put(url, **kwargs), datetime.now(UTC))
 
     async def delete(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a DELETE request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.delete(url, **kwargs), datetime.now(UTC))
 
     async def patch(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a PATCH request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.patch(url, **kwargs), datetime.now(UTC))
 
     async def head(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send a HEAD request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.head(url, **kwargs), datetime.now(UTC))
 
     async def options(self, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send an OPTIONS request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.options(url, **kwargs), datetime.now(UTC))
 
     async def request(self, method: str, url: str | httpx.URL, **kwargs: Any) -> httpx.Response:
+        """Send an arbitrary HTTP request, transparently handling any 402 Payment Required."""
         return await self._traced(self._http.request(method, url, **kwargs), datetime.now(UTC))
 
     # ------------------------------------------------------------------
@@ -398,6 +406,7 @@ class Routeweiler:
     # ------------------------------------------------------------------
 
     async def aclose(self) -> None:
+        """Close the connection pool, budget store, credential store, and trace sink."""
         await self._http.aclose()
         if self._recovery_http is not None:
             await self._recovery_http.aclose()
@@ -430,9 +439,11 @@ class Routeweiler:
             await self._trace_sink.start()
 
     async def __aenter__(self) -> Routeweiler:
+        """Enter the async context: open the connection pool and start background tasks."""
         await self._http.__aenter__()
         await self.start()
         return self
 
     async def __aexit__(self, *args: Any) -> None:
+        """Exit the async context and release all resources."""
         await self.aclose()

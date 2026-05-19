@@ -19,9 +19,11 @@ ProofType = Literal["txid", "preimage", "spt_id"]
 
 
 class Resource(RouteweilerModel):
-    method: str
-    url: str
-    url_encoding: UrlEncoding
+    """The HTTP resource that triggered the 402 challenge."""
+
+    method: str  # HTTP method of the original request (e.g. "GET", "POST")
+    url: str  # full URL of the protected resource
+    url_encoding: UrlEncoding  # how the URL is stored in traces: "raw" or "drop"
     # Reserved — only 402 today; non-402 challenges may exist post-MVP.
     original_status: int = HTTP_STATUS_PAYMENT_REQUIRED
 
@@ -39,8 +41,10 @@ class Price(RouteweilerModel):
 
 
 class Payee(RouteweilerModel):
-    identifier: str  # address, Lightning pubkey, Stripe account
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    """The payment recipient extracted from the 402 challenge."""
+
+    identifier: str  # EVM address, Lightning pubkey, Stripe connected account id, etc.
+    metadata: dict[str, Any] = Field(default_factory=dict)  # rail-specific extra data
 
 
 # x402-specific payment requirements — mirrors the wire format exactly.
@@ -63,6 +67,8 @@ class X402PaymentRequirements(RouteweilerLooseModel):
 
 
 class X402RailRaw(RouteweilerModel):
+    """Parsed x402 wire data retained on ``NormalizedChallenge.raw``."""
+
     kind: Literal["x402"]
     # Full list of payment options from the wire's `accepts` array.
     # The chosen alternative is captured in NormalizedChallenge.price at parse time.
@@ -71,24 +77,30 @@ class X402RailRaw(RouteweilerModel):
 
 
 class L402RailRaw(RouteweilerModel):
+    """Parsed L402 wire data retained on ``NormalizedChallenge.raw``."""
+
     kind: Literal["l402"]
-    macaroon: str
-    invoice: str
+    macaroon: str  # base64-encoded macaroon from the WWW-Authenticate header
+    invoice: str  # BOLT-11 payment request string
 
 
 class MppTempoRailRaw(RouteweilerModel):
+    """Parsed MPP-Tempo wire data retained on ``NormalizedChallenge.raw``."""
+
     kind: Literal["mpp-tempo"]
-    charge_id: str
-    auth_params: dict[str, str] = Field(default_factory=dict)
-    extra: dict[str, Any] = Field(default_factory=dict)
+    charge_id: str  # unique charge identifier from the Tempo server
+    auth_params: dict[str, str] = Field(default_factory=dict)  # WWW-Authenticate auth-params
+    extra: dict[str, Any] = Field(default_factory=dict)  # forward-compat extra fields
 
 
 class MppSptRailRaw(RouteweilerModel):
+    """Parsed MPP-SPT wire data retained on ``NormalizedChallenge.raw``."""
+
     kind: Literal["mpp-spt"]
-    seller_details: dict[str, Any]
-    payment_method_hint: str | None = None
-    auth_params: dict[str, str] = Field(default_factory=dict)
-    extra: dict[str, Any] = Field(default_factory=dict)
+    seller_details: dict[str, Any]  # Stripe seller_details dict from the 402 challenge
+    payment_method_hint: str | None = None  # optional payment method type hint
+    auth_params: dict[str, str] = Field(default_factory=dict)  # WWW-Authenticate auth-params
+    extra: dict[str, Any] = Field(default_factory=dict)  # forward-compat extra fields
 
 
 RailRaw = Annotated[
@@ -101,7 +113,9 @@ class NormalizedChallenge(RouteweilerModel):
     """Rail-agnostic representation of a 402 Payment Required challenge.
 
     Every rail adapter parses its wire format into this shape before the
-    routing engine and budget counter see it.
+    routing engine and budget counter see it.  The ``rail`` field acts as a
+    discriminator: ``raw`` is the corresponding ``*RailRaw`` subtype
+    (``X402RailRaw``, ``L402RailRaw``, ``MppTempoRailRaw``, or ``MppSptRailRaw``).
     """
 
     rail: Rail

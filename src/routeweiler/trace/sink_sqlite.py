@@ -32,10 +32,12 @@ class SqliteTraceSink:
 
     @property
     def db_path(self) -> Path:
+        """Filesystem path of the SQLite database file."""
         return self._db_path
 
     @property
     def url_mode(self) -> UrlEncoding:
+        """URL storage mode: ``"raw"`` stores full URLs, ``"drop"`` strips query strings."""
         return self._url_mode
 
     async def start(self) -> None:
@@ -73,6 +75,7 @@ class SqliteTraceSink:
         )
 
     async def aclose(self) -> None:
+        """Close the underlying SQLite connection. Called automatically by ``Routeweiler``."""
         async with self._lock:
             if self._closed:
                 return
@@ -101,7 +104,19 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
 
 
 class TraceSink:
-    """Factory for trace sink backends."""
+    """Factory namespace for trace sink backends.
+
+    Use ``TraceSink.sqlite(path)`` to enable local tracing::
+
+        async with Routeweiler(
+            funding=[...],
+            trace_sink=TraceSink.sqlite("./routeweiler.db"),
+        ) as client:
+            ...
+
+    Passing ``trace_sink=None`` (the default) disables tracing and budget
+    enforcement entirely.
+    """
 
     @classmethod
     def sqlite(

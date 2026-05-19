@@ -83,7 +83,13 @@ class BudgetError(PaymentError):
 
 
 class BudgetExceededError(BudgetError):
-    """Drawing this amount would breach the envelope's flat cap."""
+    """Drawing this amount would breach the envelope's flat cap.
+
+    Attributes:
+        envelope_id:           The envelope that rejected the draw.
+        requested_minor_units: Amount that was requested.
+        available_minor_units: Remaining headroom at the time of the draw.
+    """
 
     def __init__(
         self,
@@ -117,7 +123,12 @@ class PolicyError(PaymentError):
 
 
 class PolicyDeniedError(PolicyError):
-    """A policy rule with `deny: true` matched the challenge."""
+    """A policy rule with ``deny: true`` matched the challenge.
+
+    Attributes:
+        reason:    Human-readable reason string from the rule's ``reason`` field, or ``None``.
+        rule_name: Name of the matching rule, or ``None``.
+    """
 
     def __init__(self, reason: str | None = None, rule_name: str | None = None) -> None:
         detail = reason or rule_name or "policy denied this payment"
@@ -127,7 +138,13 @@ class PolicyDeniedError(PolicyError):
 
 
 class PolicyMaxPerCallExceededError(PolicyError):
-    """The challenge amount exceeds the policy's `max_per_call_minor_units` limit."""
+    """The challenge amount exceeds the policy's ``max_per_call_minor_units`` limit.
+
+    Attributes:
+        rule_name: Name of the matching rule, or ``None``.
+        requested: Challenge amount in the reference currency's minor units.
+        limit:     Per-call cap from the matching rule.
+    """
 
     def __init__(
         self,

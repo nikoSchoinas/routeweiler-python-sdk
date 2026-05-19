@@ -11,11 +11,16 @@ from routeweiler.policy.dsl import Policy, RuleMatch
 
 @dataclass(frozen=True)
 class PolicyDecision:
-    """Result of evaluating a challenge against the policy.
+    """Outcome of evaluating a ``NormalizedChallenge`` against a ``Policy``.
 
-    `prefer` gives preferred rails a score boost in the routing engine.
-    `deny` and `max_per_call_minor_units` are enforced in `_auth.py` between
-    the parse and draw phases.
+    Attributes:
+        rule_name:               Name of the rule that fired, or ``None`` when no rule
+                                 matched and the policy default applies.
+        deny:                    Whether the challenge should be rejected outright.
+        prefer:                  Rails to score-boost in the routing engine
+                                 (empty tuple when the rule did not specify ``prefer``).
+        max_per_call_minor_units: Per-call spend cap from the matching rule, or ``None``.
+        reason:                  Optional human-readable reason for a denial.
     """
 
     rule_name: str | None  # None when no rule matched and the default block applies
@@ -36,7 +41,11 @@ def _default_decision() -> PolicyDecision:
 
 
 class PolicyEngine:
-    """Evaluates a NormalizedChallenge against a Policy (first-match wins)."""
+    """Evaluates a ``NormalizedChallenge`` against a ``Policy`` (first-match wins).
+
+    Constructed automatically by ``Routeweiler``; exposed in ``__all__`` for
+    callers that build a custom orchestration layer on top of the rail adapters.
+    """
 
     def __init__(self, policy: Policy) -> None:
         self._policy = policy
@@ -47,6 +56,19 @@ class PolicyEngine:
         return self._policy.default_rail
 
     def evaluate(self, challenge: NormalizedChallenge) -> PolicyDecision:
+        """Evaluate ``challenge`` against the policy and return a decision.
+
+        Iterates ``policy.rules`` in order and returns the ``PolicyDecision`` for
+        the first rule whose ``when`` predicate matches.  Falls back to a no-op
+        default decision when no rule matches.
+
+        Args:
+            challenge: The parsed challenge to evaluate.
+
+        Returns:
+            A ``PolicyDecision`` describing the matched rule's actions, or a default
+            decision with ``deny=False`` and empty ``prefer`` when no rule fires.
+        """
         for rule in self._policy.rules:
             if _matches(rule.when, challenge):
                 return PolicyDecision(

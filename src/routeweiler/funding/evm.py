@@ -11,16 +11,19 @@ from eth_account.signers.local import LocalAccount
 class EvmFundingSource:
     """An EVM wallet plus the (network, asset) pair it can pay on.
 
-    `wallet` is an `eth_account.LocalAccount` (from `Account.from_key(...)`).
-    Future weeks will widen this to a Protocol covering Turnkey/Privy/Fireblocks.
+    Use the ``Funding`` factory methods rather than constructing directly::
 
-    `network` and `asset` identify which x402 PaymentRequirements entry this
-    source can satisfy. Examples:
-        network="base",         asset="usdc"
-        network="base-sepolia", asset="usdc"
+        from routeweiler import Funding
+        source = Funding.base_usdc(wallet=signer)          # Base mainnet USDC
+        source = Funding.base_sepolia_usdc(wallet=signer)  # Base Sepolia testnet
 
-    `asset` may be a canonical name ("usdc", "eurc") or a lowercase ERC-20
-    address. The x402 adapter resolves canonical names to on-chain addresses.
+    Attributes:
+        wallet:  An ``eth_account.LocalAccount`` (from ``Account.from_key(...)``).
+                 Signs EIP-3009 ``transferWithAuthorization`` messages in-process.
+        network: x402 network identifier (e.g. ``"base"``, ``"base-sepolia"``).
+                 Must match one of the ``network`` values in the server's ``accepts`` array.
+        asset:   Canonical token name (``"usdc"``, ``"eurc"``) or lowercase ERC-20
+                 address.  The x402 adapter resolves canonical names to on-chain addresses.
     """
 
     wallet: LocalAccount

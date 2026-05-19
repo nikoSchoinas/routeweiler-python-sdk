@@ -19,8 +19,21 @@ from routeweiler.normalized import Rail, Scheme
 
 
 class RuleMatch(RouteweilerModel):
-    """Condition for a policy rule. All non-None fields combine with AND.
-    Use `any` for boolean OR.
+    """Condition predicate for a ``PolicyRule``.
+
+    All non-``None`` fields are combined with AND.  Use ``any`` for an OR of
+    sub-conditions::
+
+        # Match any x402 request on the "base" network:
+        RuleMatch(network="base")
+
+        # Match requests to *.example.com that use the "exact" scheme:
+        RuleMatch(url_matches="*.example.com", scheme="exact")
+
+        # OR: either of the above:
+        RuleMatch(any=[RuleMatch(network="base"), RuleMatch(url_matches="*.example.com")])
+
+    At least one condition must be set; ``ValueError`` is raised otherwise.
     """
 
     url_matches: str | None = None  # fnmatch glob against challenge.resource.url
@@ -48,14 +61,34 @@ RuleMatch.model_rebuild()
 
 
 class PolicyRule(RouteweilerModel):
-    """A single first-match policy rule."""
+    """A single entry in a ``Policy.rules`` list (first-match wins).
+
+    When the ``when`` predicate matches a challenge, the rule's action fields
+    (``deny``, ``prefer``, ``max_per_call_minor_units``) are applied.  Only the
+    first matching rule takes effect — later rules are not evaluated::
+
+        PolicyRule(
+            name="cap-per-call",
+            when=RuleMatch(url_matches="*"),
+            max_per_call_minor_units=500,  # 5.00 USD in cents
+        )
+
+    Attributes:
+        name:                    Human-readable label; appears in trace events and error messages.
+        when:                    Condition that activates this rule.
+        prefer:                  Rails to prefer (score-boosted) when this rule fires.
+        deny:                    If ``True``, raise ``PolicyDeniedError`` without paying.
+        max_per_call_minor_units: Reject challenges whose amount exceeds this limit
+                                  (in the reference currency's minor units).
+        reason:                  Optional human-readable reason included in ``PolicyDeniedError``.
+    """
 
     name: str
     when: RuleMatch
-    prefer: list[Rail] | None = None
-    deny: bool = False
-    max_per_call_minor_units: int | None = None
-    reason: str | None = None
+    prefer: list[Rail] | None = None  # rails to score-boost
+    deny: bool = False  # raise PolicyDeniedError when True
+    max_per_call_minor_units: int | None = None  # per-call spend cap
+    reason: str | None = None  # included in PolicyDeniedError.reason
 
 
 class Policy(RouteweilerModel):

@@ -39,21 +39,27 @@ class PaymentDetails(RouteweilerModel):
 
 
 class OutcomeError(RouteweilerModel):
-    code: str
-    message: str
+    """Machine-readable error detail when a payment flow fails before settlement."""
+
+    code: str  # e.g. "policy_denied", "budget_exceeded", "no_feasible_rail"
+    message: str  # human-readable description
 
 
 class Outcome(RouteweilerModel):
-    http_status: int | None
-    service_delivered: bool
-    service_latency_ms: int
-    error: OutcomeError | None = None
+    """HTTP outcome of a single ``Routeweiler`` call."""
+
+    http_status: int | None  # None for pre-response errors (e.g. network timeout)
+    service_delivered: bool  # True when the caller received a 2xx response
+    service_latency_ms: int  # wall-clock ms from first send to final response
+    error: OutcomeError | None = None  # populated when service_delivered is False
 
 
 class Reconciliation(RouteweilerModel):
-    tax_category: TaxCategory | None = None
-    vat_applicable: bool
-    invoice_reference: str | None = None
+    """Optional metadata useful for tax reporting and invoice matching."""
+
+    tax_category: TaxCategory | None = None  # classify the spend for VAT/GST
+    vat_applicable: bool  # True when the merchant is a VAT-registered EU seller
+    invoice_reference: str | None = None  # merchant invoice or receipt id
 
 
 # ---------------------------------------------------------------------------
@@ -62,10 +68,14 @@ class Reconciliation(RouteweilerModel):
 
 
 class TraceEvent(RouteweilerModel):
-    """One structured event per `routeweiler.get/post/...` call.
+    """One structured audit record per ``Routeweiler`` HTTP call.
 
-    `payment` is None when the call did not reach the payment step (e.g. the
-    request succeeded without a 402, or the budget draw was rejected before
+    Emitted by ``TraceEmitter`` and persisted by ``SqliteTraceSink`` to the
+    ``trace_events`` table.  Every call — paid, free, or failed — produces
+    exactly one ``TraceEvent``.
+
+    ``payment`` is ``None`` when the call did not reach the payment step (e.g.
+    the request succeeded without a 402, or the budget draw was rejected before
     payment was attempted).
     """
 
