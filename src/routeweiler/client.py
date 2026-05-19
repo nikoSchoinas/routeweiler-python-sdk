@@ -139,23 +139,22 @@ class Routeweiler:
         funding:         One or more funding sources (e.g. ``Funding.base_usdc(wallet=...)``).
         policy:          Optional ``Policy`` instance. When omitted, the built-in
                          default is used (prefer x402, no rules).
-        budget_envelope: Controls which spending envelope the client draws from.
-                         Three forms are accepted:
+        budget_envelope:
+            Controls which spending envelope the client draws from. Three forms are accepted:
 
-                         * ``None`` (default) — no budget enforcement.  Payments are
-                           made without any cap; trace events are still written when
-                           ``trace_sink`` is set, but ``envelope_id`` will be ``None``.
-                         * ``str`` — ID of a pre-existing envelope.  The envelope must
-                           already be present in the database; ``EnvelopeNotFoundError``
-                           is raised at construction time if it is missing.
-                         * ``BudgetEnvelope`` — declarative spec.  The envelope is
-                           created idempotently inside ``__aenter__`` (i.e. the first
-                           ``async with Routeweiler(...) as client:`` call).  If an
-                           envelope with the same ``id`` already exists it is reused
-                           unchanged.
+            - ``None`` (default) — no budget enforcement. Payments are made without
+              any cap; trace events are still written when ``trace_sink`` is set, but
+              ``envelope_id`` will be ``None``.
+            - ``str`` — ID of a pre-existing envelope. The envelope must already be
+              present in the database; ``EnvelopeNotFoundError`` is raised at
+              construction time if it is missing.
+            - ``BudgetEnvelope`` — declarative spec. The envelope is created
+              idempotently inside ``__aenter__`` (i.e. the first
+              ``async with Routeweiler(...) as client:`` call). If an envelope with
+              the same ``id`` already exists it is reused unchanged.
 
-                         Budget enforcement requires a ``trace_sink``; if ``trace_sink``
-                         is ``None`` no enforcement runs regardless of this argument.
+            Budget enforcement requires a ``trace_sink``; if ``trace_sink`` is
+            ``None`` no enforcement runs regardless of this argument.
         trace_sink:      SQLite trace sink. Pass ``TraceSink.sqlite(path)`` to
                          enable local tracing. Defaults to ``None`` (no tracing).
         agent_id:        Optional identifier for the calling agent. Written into

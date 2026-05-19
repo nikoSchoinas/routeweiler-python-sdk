@@ -20,6 +20,8 @@ The neutral micropayment router for autonomous agents. A single async HTTP clien
 `await routeweiler.get(url)` — that transparently handles `402 Payment Required` across
 x402 (EVM), L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
 
+**Documentation:** [docs.routeweiler.com](https://docs.routeweiler.com)
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/nikoSchoinas/routeweiler-python-sdk/main/assets/diagram.png" alt="Routeweiler flow diagram" width="900">
 </p>
