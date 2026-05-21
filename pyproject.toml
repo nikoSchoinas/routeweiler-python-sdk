@@ -14,7 +14,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Nikolaos Schoinas", email = "schoinas.nkls@gmail.com" },
+    { name = "Nikolaos Schoinas", email = "hello@routeweiler.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
