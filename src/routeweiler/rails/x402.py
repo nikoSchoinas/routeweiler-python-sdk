@@ -72,16 +72,10 @@ def _resolve_asset(network: str, asset: str) -> str:
 def _to_caip19(network: str, asset: str) -> str:
     """Format a CAIP-19 currency identifier for the given EVM network + asset.
 
-    Accepts both legacy short names (``"base-sepolia"``) and CAIP-2 identifiers
-    (``"eip155:84532"``) which x402 v2 servers emit directly.
+    ``network`` must be a CAIP-2 identifier (e.g. ``"eip155:8453"``), as emitted
+    by x402 v2 servers.
     """
-    address = _resolve_asset(network, asset)
-    if network.startswith("eip155:"):
-        return f"{network}/erc20:{address}"
-    chain_id = CHAIN_IDS.get(network)
-    if chain_id is None:
-        return f"{network}/{address}"
-    return f"eip155:{chain_id}/erc20:{address}"
+    return f"{network}/erc20:{_resolve_asset(network, asset)}"
 
 
 def _find_match(

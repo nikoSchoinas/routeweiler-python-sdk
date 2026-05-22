@@ -27,7 +27,7 @@ _CHALLENGE: dict[str, Any] = {
     "accepts": [
         {
             "scheme": "exact",
-            "network": "base-sepolia",
+            "network": "eip155:84532",
             "amount": "1000",
             "description": "Mock x402 endpoint",
             "mimeType": "application/json",

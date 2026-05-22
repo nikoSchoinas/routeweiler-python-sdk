@@ -27,7 +27,7 @@ _CHALLENGE = {
     "accepts": [
         {
             "scheme": "exact",
-            "network": "base",
+            "network": "eip155:8453",
             "amount": "1000",
             "description": "Test endpoint",
             "mimeType": "application/json",

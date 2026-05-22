@@ -3,7 +3,7 @@
   "accepts": [
     {
       "scheme": "exact",
-      "network": "base",
+      "network": "eip155:8453",
       "amount": "1000",
       "description": "Access to data API (mainnet)",
       "mimeType": "application/json",
@@ -20,7 +20,7 @@
     },
     {
       "scheme": "exact",
-      "network": "base-sepolia",
+      "network": "eip155:84532",
       "amount": "1000",
       "description": "Access to data API (testnet)",
       "mimeType": "application/json",

@@ -3,7 +3,7 @@
   "accepts": [
     {
       "scheme": "exact",
-      "network": "base",
+      "network": "eip155:8453",
       "amount": "1000",
       "description": "Access to data API",
       "mimeType": "application/json",

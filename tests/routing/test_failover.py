@@ -66,7 +66,7 @@ def _402_response() -> httpx.Response:
         "accepts": [
             {
                 "scheme": "exact",
-                "network": "base-sepolia",
+                "network": "eip155:84532",
                 "amount": "1000",
                 "description": "",
                 "mimeType": "application/json",

@@ -82,7 +82,7 @@ def _build_merchant_app(
             "accepts": [
                 {
                     "scheme": "exact",
-                    "network": "base-sepolia",
+                    "network": "eip155:84532",
                     "amount": _PAYMENT_AMOUNT,
                     "description": "Live Routeweiler testnet smoke test",
                     "mimeType": "application/json",
