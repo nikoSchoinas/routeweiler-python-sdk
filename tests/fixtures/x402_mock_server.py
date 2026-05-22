@@ -23,12 +23,12 @@ from starlette.routing import Route
 # Challenge fixture — Base-Sepolia USDC, 1000 base units (0.001 USDC)
 # ---------------------------------------------------------------------------
 _CHALLENGE: dict[str, Any] = {
+    "x402Version": 2,
     "accepts": [
         {
             "scheme": "exact",
             "network": "base-sepolia",
-            "maxAmountRequired": "1000",
-            "resource": "http://mock/protected",
+            "amount": "1000",
             "description": "Mock x402 endpoint",
             "mimeType": "application/json",
             "payTo": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",  # Anvil account #0
@@ -42,7 +42,7 @@ _CHALLENGE: dict[str, Any] = {
                 "version": "2",
             },
         }
-    ]
+    ],
 }
 
 MOCK_TX_HASH = "0x" + "fa" * 32  # deterministic fake tx hash for assertions
@@ -80,11 +80,11 @@ async def protected(request: Request) -> Response:
     # Structural validation of the signed payload.
     try:
         outer = json.loads(base64.b64decode(sig_header))
-        assert outer.get("x402Version") == 1, "missing x402Version"
+        assert outer.get("x402Version") == 2, "missing x402Version"
         accepts_list = outer.get("payload")
         # The x402 SDK encodes the signed payment as a nested structure;
         # exact shape varies by SDK version.  We require at least that the
-        # outer JSON decoded and has x402Version == 1.
+        # outer JSON decoded and has x402Version == 2.
         _ = accepts_list  # shape checked below when we have more SDK specifics
     except Exception as exc:
         return Response(

@@ -42,14 +42,12 @@ def make_mock_challenge(
             X402PaymentRequirements(
                 scheme="exact",
                 network="base-sepolia",
-                max_amount_required=str(amount),
-                resource=url,
+                amount=str(amount),
                 pay_to="0xdeadbeef",
                 asset="0x036cbd53842c5426634e7929541ec2318f3dcf7e",
                 extra={},
             )
         ],
-        x402_version=1,
     )
     return NormalizedChallenge(
         rail=rail,

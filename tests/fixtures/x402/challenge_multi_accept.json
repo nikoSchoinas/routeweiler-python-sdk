@@ -1,10 +1,10 @@
 {
+  "x402Version": 2,
   "accepts": [
     {
       "scheme": "exact",
       "network": "base",
-      "maxAmountRequired": "1000",
-      "resource": "https://api.example.com/data",
+      "amount": "1000",
       "description": "Access to data API (mainnet)",
       "mimeType": "application/json",
       "payTo": "0x1234567890123456789012345678901234567890",
@@ -21,8 +21,7 @@
     {
       "scheme": "exact",
       "network": "base-sepolia",
-      "maxAmountRequired": "1000",
-      "resource": "https://api.example.com/data",
+      "amount": "1000",
       "description": "Access to data API (testnet)",
       "mimeType": "application/json",
       "payTo": "0x1234567890123456789012345678901234567890",
