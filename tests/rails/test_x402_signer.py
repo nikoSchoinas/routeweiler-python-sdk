@@ -17,10 +17,9 @@ from tests.fixtures.fake_x402_client import FakeX402Client
 _PR_CAMEL = {
     "scheme": "exact",
     "network": "base",
-    "maxAmountRequired": "1000",
+    "amount": "1000",
     "payTo": "0x1234567890123456789012345678901234567890",
     "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-    "resource": "https://api.example.com/data",
 }
 
 

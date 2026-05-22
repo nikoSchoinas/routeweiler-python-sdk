@@ -24,19 +24,17 @@ EXPIRES = datetime(2026, 4, 27, 12, 5, 0, tzinfo=UTC)
 _PR_SNAKE = dict(
     scheme="exact",
     network="base",
-    max_amount_required="1000",
+    amount="1000",
     pay_to="0x1234567890123456789012345678901234567890",
     asset="0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-    resource="https://api.example.com/data",
 )
 
 _PR_CAMEL = {
     "scheme": "exact",
     "network": "base",
-    "maxAmountRequired": "1000",
+    "amount": "1000",
     "payTo": "0x1234567890123456789012345678901234567890",
     "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-    "resource": "https://api.example.com/data",
 }
 
 _X402_RAW_CAMEL = {"kind": "x402", "accepts": [_PR_CAMEL]}
@@ -116,14 +114,14 @@ def test_x402_pr_snake_construction() -> None:
     pr = X402PaymentRequirements(**_PR_SNAKE)
     assert pr.scheme == "exact"
     assert pr.network == "base"
-    assert pr.max_amount_required == "1000"
+    assert pr.amount == "1000"
     assert pr.pay_to == "0x1234567890123456789012345678901234567890"
 
 
 def test_x402_pr_camel_roundtrip() -> None:
     pr = X402PaymentRequirements.model_validate(_PR_CAMEL)
     dumped = pr.model_dump(by_alias=True)
-    assert dumped["maxAmountRequired"] == "1000"
+    assert dumped["amount"] == "1000"
     assert dumped["payTo"] == "0x1234567890123456789012345678901234567890"
 
 
@@ -170,7 +168,7 @@ def test_discriminator_x402_camel() -> None:
     data = _base_challenge(_X402_RAW_CAMEL)
     c = NormalizedChallenge.model_validate(data)
     assert isinstance(c.raw, X402RailRaw)
-    assert c.raw.accepts[0].max_amount_required == "1000"
+    assert c.raw.accepts[0].amount == "1000"
 
 
 def test_discriminator_l402() -> None:

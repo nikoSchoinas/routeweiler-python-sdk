@@ -78,12 +78,12 @@ def _build_merchant_app(
 
     def _challenge_b64() -> str:
         data: dict[str, Any] = {
+            "x402Version": 2,
             "accepts": [
                 {
                     "scheme": "exact",
                     "network": "base-sepolia",
-                    "maxAmountRequired": _PAYMENT_AMOUNT,
-                    "resource": "http://testmerchant/paid",
+                    "amount": _PAYMENT_AMOUNT,
                     "description": "Live Routeweiler testnet smoke test",
                     "mimeType": "application/json",
                     "payTo": recipient,
@@ -97,7 +97,7 @@ def _build_merchant_app(
                         "version": "2",
                     },
                 }
-            ]
+            ],
         }
         return base64.b64encode(json.dumps(data).encode()).decode()
 

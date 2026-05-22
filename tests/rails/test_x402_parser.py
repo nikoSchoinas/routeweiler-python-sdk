@@ -148,14 +148,51 @@ def test_parse_invalid_json(adapter: X402Adapter) -> None:
 
 
 def test_parse_missing_accepts_field(adapter: X402Adapter) -> None:
-    payload = _encode({"error": "Payment Required"})
+    payload = _encode({"x402Version": 2, "error": "Payment Required"})
     with pytest.raises(ChallengeParseError, match="no 'accepts'"):
         adapter.parse(_make_request(), _make_402(payload))
 
 
 def test_parse_empty_accepts_list(adapter: X402Adapter) -> None:
-    payload = _encode({"accepts": []})
+    payload = _encode({"x402Version": 2, "accepts": []})
     with pytest.raises(ChallengeParseError, match="empty"):
+        adapter.parse(_make_request(), _make_402(payload))
+
+
+def test_parse_v1_challenge_raises_parse_error(adapter: X402Adapter) -> None:
+    payload = _encode(
+        {
+            "x402Version": 1,
+            "accepts": [
+                {
+                    "scheme": "exact",
+                    "network": "base",
+                    "maxAmountRequired": "1000",
+                    "payTo": "0x1234567890123456789012345678901234567890",
+                    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                }
+            ],
+        }
+    )
+    with pytest.raises(ChallengeParseError, match="v2 only"):
+        adapter.parse(_make_request(), _make_402(payload))
+
+
+def test_parse_missing_version_raises_parse_error(adapter: X402Adapter) -> None:
+    payload = _encode(
+        {
+            "accepts": [
+                {
+                    "scheme": "exact",
+                    "network": "base",
+                    "amount": "1000",
+                    "payTo": "0x1234567890123456789012345678901234567890",
+                    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                }
+            ]
+        }
+    )
+    with pytest.raises(ChallengeParseError, match="v2 only"):
         adapter.parse(_make_request(), _make_402(payload))
 
 
