@@ -36,6 +36,25 @@ from routeweiler.normalized import (
 )
 from routeweiler.rails.base import PaymentResult, SettlementInfo, resource_from_request
 
+# Reverse of CHAIN_IDS: chain_id int → short network name used by EvmFundingSource.
+_CAIP2_TO_SHORT: dict[int, str] = {v: k for k, v in CHAIN_IDS.items()}
+_X402_WIRE_VERSION = 2
+
+
+def _canonical_network(network: str) -> str:
+    """Normalise a network identifier to the short form used by EvmFundingSource.
+
+    x402 v2 servers emit CAIP-2 identifiers (``"eip155:84532"``); EvmFundingSource
+    uses short names (``"base-sepolia"``).  This converts between them.
+    """
+    if network.startswith("eip155:"):
+        try:
+            chain_id = int(network.split(":", 1)[1])
+            return _CAIP2_TO_SHORT.get(chain_id, network)
+        except (ValueError, IndexError):
+            return network
+    return network
+
 
 def _resolve_asset(network: str, asset: str) -> str:
     """Return the lowercase ERC-20 address for a given (network, asset) pair.
@@ -47,15 +66,21 @@ def _resolve_asset(network: str, asset: str) -> str:
     a = asset.lower()
     if a.startswith("0x"):
         return a
-    return CANONICAL_ADDRESSES.get((network, a), a)
+    return CANONICAL_ADDRESSES.get((_canonical_network(network), a), a)
 
 
 def _to_caip19(network: str, asset: str) -> str:
-    """Format a CAIP-19 currency identifier for the given EVM network + asset."""
+    """Format a CAIP-19 currency identifier for the given EVM network + asset.
+
+    Accepts both legacy short names (``"base-sepolia"``) and CAIP-2 identifiers
+    (``"eip155:84532"``) which x402 v2 servers emit directly.
+    """
+    address = _resolve_asset(network, asset)
+    if network.startswith("eip155:"):
+        return f"{network}/erc20:{address}"
     chain_id = CHAIN_IDS.get(network)
     if chain_id is None:
-        return f"{network}/{asset.lower()}"
-    address = _resolve_asset(network, asset)
+        return f"{network}/{address}"
     return f"eip155:{chain_id}/erc20:{address}"
 
 
@@ -65,12 +90,13 @@ def _find_match(
 ) -> EvmFundingSource | None:
     """Return the first EvmFundingSource that matches any entry in ``accepts``, or None."""
     for pr in accepts:
+        pr_network = _canonical_network(pr.network)
         for fs in funding:
             if not isinstance(fs, EvmFundingSource):
                 continue
-            if pr.network != fs.network:
+            if pr_network != _canonical_network(fs.network):
                 continue
-            if _resolve_asset(pr.network, pr.asset) == _resolve_asset(fs.network, fs.asset):
+            if _resolve_asset(pr_network, pr.asset) == _resolve_asset(fs.network, fs.asset):
                 return fs
     return None
 
@@ -115,7 +141,12 @@ class X402Adapter:
             _log.warning("x402: cannot decode PAYMENT-REQUIRED header: %s", exc)
             raise ChallengeParseError(f"Cannot decode PAYMENT-REQUIRED header: {exc}") from exc
 
-        x402_version: int = int(data.get("x402Version", 1))
+        x402_version = data.get("x402Version")
+        if x402_version != _X402_WIRE_VERSION:
+            raise ChallengeParseError(
+                f"Unsupported x402 protocol version: {x402_version!r}. "
+                "Routeweiler supports x402 v2 only."
+            )
 
         accepts_raw = data.get("accepts")
         if accepts_raw is None:
@@ -148,16 +179,9 @@ class X402Adapter:
         chosen = exact_accepts[0]
         raw = X402RailRaw(kind="x402", accepts=accepts, x402_version=x402_version)
 
-        # Nonce and expiry live in chosen.extra for EVM schemes.
-        # EIP-3009 transferWithAuthorization requires a server-assigned nonce; a
-        # client-fabricated one produces a signature the facilitator rejects.
-        raw_nonce = chosen.extra.get("nonce")
-        if not raw_nonce:
-            raise ChallengeParseError(
-                "x402 exact scheme requires a server-supplied 'nonce' in extra; "
-                "the server omitted it which would cause the facilitator to reject the signature"
-            )
-        nonce: str = raw_nonce
+        # validBefore / nonce may be pre-populated in chosen.extra by the server;
+        # the client SDK generates a nonce when absent.
+        nonce: str = chosen.extra.get("nonce", "")
         valid_before = chosen.extra.get("validBefore")
         if valid_before:
             expires_at = datetime.fromtimestamp(int(valid_before), tz=UTC)
@@ -173,9 +197,9 @@ class X402Adapter:
             rail="x402",
             resource=resource_from_request(request),
             price=Price(
-                amount=int(chosen.max_amount_required),
+                amount=int(chosen.amount),
                 currency=_to_caip19(chosen.network, chosen.asset),
-                human_amount=_human_amount_asset(chosen.asset, chosen.max_amount_required),
+                human_amount=_human_amount_asset(chosen.asset, chosen.amount),
             ),
             payee=Payee(identifier=chosen.pay_to),
             scheme="exact",
