@@ -50,12 +50,11 @@ class Payee(RouteweilerModel):
 # x402-specific payment requirements — mirrors the wire format exactly.
 # Uses RouteweilerLooseModel so future x402 spec additions don't break parsing.
 class X402PaymentRequirements(RouteweilerLooseModel):
-    """One payment option from the x402 server's `accepts` array."""
+    """One payment option from the x402 v2 server's `accepts` array."""
 
     scheme: Literal["exact", "upto", "stream"]
     network: str  # "base" | "base-sepolia" | "polygon" | "arbitrum" | "world" | "solana"
-    max_amount_required: str  # decimal string in base units (matches wire)
-    resource: str  # the URL being protected
+    amount: str  # payment amount in base units (x402 v2 wire field)
     description: str = ""
     mime_type: str = "application/json"
     pay_to: str  # recipient address
@@ -73,7 +72,7 @@ class X402RailRaw(RouteweilerModel):
     # Full list of payment options from the wire's `accepts` array.
     # The chosen alternative is captured in NormalizedChallenge.price at parse time.
     accepts: list[X402PaymentRequirements]
-    x402_version: int = 1  # round-tripped from the wire's x402Version field
+    x402_version: Literal[2] = 2  # round-tripped from the wire's x402Version field
 
 
 class L402RailRaw(RouteweilerModel):
