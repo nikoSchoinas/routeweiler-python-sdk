@@ -75,7 +75,7 @@ def _make_client(
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(
             return_value={
-                "x402Version": 1,
+                "x402Version": 2,
                 "payload": {
                     "authorization": {
                         "from": test_account.address,

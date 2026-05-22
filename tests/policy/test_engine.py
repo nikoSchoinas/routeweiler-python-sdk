@@ -31,8 +31,7 @@ def _x402_challenge(
     req = X402PaymentRequirements(
         scheme="exact",
         network=network,
-        max_amount_required="1000",
-        resource=url,
+        amount="1000",
         pay_to="0xabc",
         asset="usdc",
     )

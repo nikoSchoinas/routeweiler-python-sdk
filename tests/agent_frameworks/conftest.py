@@ -45,7 +45,7 @@ async def fw_rw_context(
     sink = TraceSink.sqlite(db_path, url_mode="raw")
 
     signed_payload: dict[str, Any] = {
-        "x402Version": 1,
+        "x402Version": 2,
         "payload": {
             "authorization": {
                 "from": test_account.address,

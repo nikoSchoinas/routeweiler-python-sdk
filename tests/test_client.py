@@ -23,12 +23,12 @@ def _encode_challenge(data: dict) -> str:  # type: ignore[type-arg]
 
 
 _CHALLENGE = {
+    "x402Version": 2,
     "accepts": [
         {
             "scheme": "exact",
             "network": "base",
-            "maxAmountRequired": "1000",
-            "resource": "https://api.example.com/data",
+            "amount": "1000",
             "description": "Test endpoint",
             "mimeType": "application/json",
             "payTo": "0x1234567890123456789012345678901234567890",
@@ -36,7 +36,7 @@ _CHALLENGE = {
             "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
             "extra": {"nonce": "0xabc", "validBefore": 9999999999, "validAfter": 0},
         }
-    ]
+    ],
 }
 _PAYMENT_REQUIRED_HEADER = _encode_challenge(_CHALLENGE)
 _SIGNED_PAYLOAD = base64.b64encode(b'{"signature":"0xtest"}').decode()
@@ -139,7 +139,7 @@ async def test_no_budget_envelope_succeeds_and_writes_trace(
         mock_instance = MagicMock()
         mock_instance.create_payment_payload = AsyncMock(
             return_value={
-                "x402Version": 1,
+                "x402Version": 2,
                 "payload": {
                     "authorization": {
                         "from": test_account.address,

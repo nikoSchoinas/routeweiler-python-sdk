@@ -62,12 +62,12 @@ def _x402_first_policy() -> PolicyEngine:
 
 def _402_response() -> httpx.Response:
     challenge = {
+        "x402Version": 2,
         "accepts": [
             {
                 "scheme": "exact",
                 "network": "base-sepolia",
-                "maxAmountRequired": "1000",
-                "resource": "http://mock/resource",
+                "amount": "1000",
                 "description": "",
                 "mimeType": "application/json",
                 "payTo": "0xdeadbeef",
@@ -75,7 +75,7 @@ def _402_response() -> httpx.Response:
                 "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
                 "extra": {"nonce": "0xabc", "validBefore": 9_999_999_999, "validAfter": 0},
             }
-        ]
+        ],
     }
     return httpx.Response(
         402,
