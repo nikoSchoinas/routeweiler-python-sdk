@@ -9,8 +9,8 @@ from typing import Any
 import httpx
 
 from routeweiler._auth import RouteweilerAuth
-from routeweiler.budgets.ecb_provider import EcbRateProvider
-from routeweiler.budgets.fmv_provider import FmvProvider
+from routeweiler.budgets.ecb_provider import EcbRateProvider, LiveEcbProvider
+from routeweiler.budgets.fmv_provider import CoinGeckoProvider, FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.schema import BudgetEnvelope, EnvelopeCurrency
@@ -213,8 +213,8 @@ class Routeweiler:
             budget_store = BudgetStore(
                 trace_sink.db_path,
                 keystore,
-                fmv_provider=fmv_provider,
-                ecb_provider=ecb_provider,
+                fmv_provider=fmv_provider if fmv_provider is not None else CoinGeckoProvider(),
+                ecb_provider=ecb_provider if ecb_provider is not None else LiveEcbProvider(),
             )
 
             # Resolve the envelope's declared currency and allowed rails from the DB.

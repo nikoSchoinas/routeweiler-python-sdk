@@ -412,10 +412,11 @@ class BudgetStore:
                         envelope_id,
                     )
             else:
-                _log.warning(
-                    "Envelope '%s' includes the l402 rail but no fmv_provider was supplied; "
-                    "draws on l402 will raise FmvUnavailableError at runtime.",
-                    envelope_id,
+                raise ValueError(
+                    f"Envelope '{envelope_id}' includes the 'l402' rail but no fmv_provider "
+                    "was supplied to BudgetStore. Pass fmv_provider=CoinGeckoProvider() (or a "
+                    "custom FmvProvider) so sats amounts can be converted to the envelope "
+                    "currency at draw time."
                 )
 
         # Pre-fetch live ECB cross-fiat rates for the snapshot.
