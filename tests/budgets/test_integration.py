@@ -27,6 +27,7 @@ from routeweiler import BudgetExceededError, Funding, Routeweiler
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.budgets.schema import BudgetEnvelope
+from routeweiler.budgets.fmv_provider import FmvProvider
 from routeweiler.errors import FmvUnavailableError
 from routeweiler.trace.sink_sqlite import TraceSink
 from tests.fixtures.fake_lnd import FakeLndClient
@@ -346,18 +347,25 @@ async def test_fmv_outage_raises_for_covered_rail(
     """When FMV conversion fails for a rail the envelope explicitly covers,
     `FmvUnavailableError` is raised rather than letting payment proceed uncapped.
 
-    Scenario: L402 envelope (allowed_rails=["l402"]) with no fmv_provider configured
-    so the FMV snapshot has no sats->usd rate.  When the L402 402 arrives,
-    _fmv_quote returns None for the sats-denominated challenge, and the auth flow
-    raises FmvUnavailableError instead of proceeding uncapped.
+    Scenario: L402 envelope (allowed_rails=["l402"]) whose BudgetStore has an fmv_provider
+    that raises FmvUnavailableError at fetch time (simulating CoinGecko being down at
+    envelope-creation time), so the snapshot ends up with no sats->usd rate.  When the
+    L402 402 arrives, _fmv_quote returns None for the sats-denominated challenge, and the
+    auth flow raises FmvUnavailableError instead of proceeding uncapped.
     """
     transport = httpx.ASGITransport(app=_mock_l402_app)  # type: ignore[arg-type]
 
-    # Build a BudgetStore with an l402 envelope but NO fmv_provider — sats->usd absent.
+    class _FailingFmvProvider:
+        async def fetch_btc_to(self, currency: str) -> None:  # type: ignore[override]
+            raise FmvUnavailableError("CoinGecko down (test outage)")
+
+    assert isinstance(_FailingFmvProvider(), FmvProvider)
+
+    # Build a BudgetStore with an fmv_provider that fails at fetch time — sats->usd absent.
     keystore = EnvelopeKeystore(root=tmp_trace_db_path.parent / "keys_fmv")
     sink = TraceSink.sqlite(tmp_trace_db_path, url_mode="raw")
     await sink.start()
-    store = BudgetStore(tmp_trace_db_path, keystore)  # no fmv_provider
+    store = BudgetStore(tmp_trace_db_path, keystore, fmv_provider=_FailingFmvProvider())
     await store.create_envelope(
         "l402-env",
         cap_minor_units=50_000,

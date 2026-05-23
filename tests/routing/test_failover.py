@@ -32,6 +32,7 @@ from routeweiler.routing.router import Router
 from routeweiler.routing.sticky import StickyCache, StickyKey
 from routeweiler.trace.emitter import TraceEmitter
 from routeweiler.trace.sink_sqlite import TraceSink
+from tests.budgets.test_fmv_provider import StubFmvProvider
 from tests.fixtures.mock_rail import MockRailAdapter
 
 
@@ -123,7 +124,7 @@ async def _build_auth(
     policy_engine: PolicyEngine | None = None,
 ) -> tuple[RouteweilerAuth, StickyCache]:
     key = EnvelopeKeystore(root=db_path.parent / "keys")
-    store = BudgetStore(db_path, key)
+    store = BudgetStore(db_path, key, fmv_provider=StubFmvProvider())
     await store.create_envelope_if_absent(_FAILOVER_ENVELOPE)
     currency = store.get_envelope_currency_sync(_FAILOVER_ENVELOPE.id)
 
