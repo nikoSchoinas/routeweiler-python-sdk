@@ -31,8 +31,8 @@ classifiers = [
 ]
 keywords = [
     "payments", "x402", "l402", "agents", "http-402",
-    "stripe", "lightning", "tempo", "micropayments",
-    "etherium", "mpp", "agentic", "commerce"
+    "agent-payments", "stripe", "stripe-spt", "lightning", "tempo",
+    "micropayments", "ethereum", "mpp", "agentic", "commerce"
 ]
 dependencies = [
     "pydantic>=2.11,<3",
