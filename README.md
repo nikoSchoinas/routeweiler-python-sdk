@@ -16,9 +16,9 @@
   <img src="https://img.shields.io/badge/type%20checked-mypy-1f5082?style=for-the-badge" alt="Type-checked with mypy">
 </p>
 
-The neutral micropayment router for autonomous agents. A single async HTTP client —
+The financial operating system for AI agent fleets. An async HTTP client —
 `await routeweiler.get(url)` — that transparently handles `402 Payment Required` across
-x402 (EVM), L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe).
+x402 (EVM), L402 (Lightning), MPP-Tempo (stablecoin), and MPP-SPT (Stripe), routes to the best rail, enforces spend caps, recovers credentials, emits audit traces, and keeps your keys entirely in your own process.
 
 **Documentation:** [docs.routeweiler.com](https://docs.routeweiler.com)
 
@@ -218,8 +218,6 @@ Releases follow [SemVer](https://semver.org). Pre-1.0 minors (`0.1.0 → 0.2.0`)
 |---|---|---|
 | `v0.2.0` | Stable | `pip install routeweiler` |
 | `v0.2.0b1` | Beta | `pip install --pre routeweiler` |
-
-A release is a git tag, not a merge. Merges to `main` run CI but don't publish. Pushing `python/vX.Y.Z` (or `python/vX.Y.ZbN`) to the monorepo triggers the release workflow, which builds the wheel + sdist, mirrors the tag as `vX.Y.Z` to this repo, attaches artefacts to the GitHub Release here, and — once the package is public — publishes to PyPI.
 
 ## License
 
