@@ -204,6 +204,10 @@ async with Routeweiler(
     ...
 ```
 
+`url_matches` patterns without a `/` are host globs matched case-insensitively against
+the URL's hostname (`*.tracking.io` matches `https://api.tracking.io/v1/events`); patterns
+containing `/` are matched against the full URL (`https://api.example.com/*`).
+
 `max_per_call_minor_units` requires a reference currency to compare rail-native quotes
 against. Set `Policy(currency="usd")` (or any supported currency) when no
 `budget_envelope` is configured. The envelope's `cap_currency` takes precedence when
