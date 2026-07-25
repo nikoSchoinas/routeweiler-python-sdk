@@ -28,6 +28,7 @@ import httpx
 from pymacaroons import Macaroon  # type: ignore[import-untyped]
 
 from routeweiler import Routeweiler
+from routeweiler._auth import PaymentRetryTransport
 from routeweiler.credentials.manifest_strategy import ManifestRecoveryStrategy
 from routeweiler.credentials.manifests.loader import ManifestRegistry
 from routeweiler.credentials.manifests.schema import ServiceShape, ServiceShapeStep
@@ -173,6 +174,44 @@ async def test_split_url_recovery_trace_records_200(
     payload = json.loads(row["payload"])
     assert payload["payment"]["proofType"] == "preimage"
     assert payload["payment"]["proofValue"] == MOCK_PREIMAGE.hex()
+
+
+async def test_split_url_recovery_after_transport_error_on_retry(
+    tmp_trace_db_path: Path,
+) -> None:
+    """Recovery still delivers the fulfilment 200 when the paid retry dies on the wire.
+
+    The retry never reaches the server (ConnectError), but the invoice was
+    already paid — Routeweiler replays the credential at the fulfilment URL and
+    the caller receives the recovered 200, not the transport error.
+    """
+    client, recovery_http = _make_split_url_client(tmp_trace_db_path)
+    asgi = httpx.ASGITransport(app=mock_split_url_app)  # type: ignore[arg-type]
+
+    class _WireCutTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.extensions.get("routeweiler_payment_retry"):
+                raise httpx.ConnectError("wire cut mid-retry", request=request)
+            return await asgi.handle_async_request(request)
+
+    client._http = httpx.AsyncClient(
+        auth=client._http.auth,
+        event_hooks=client._http.event_hooks,
+        transport=PaymentRetryTransport(_WireCutTransport()),
+    )
+
+    resp = await client.post("http://mock/api/store/checkout")
+    await client.aclose()
+    await recovery_http.aclose()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["order_id"] == MOCK_ORDER_ID
+    assert body["status"] == "fulfilled"
+
+    rows = _credential_rows(tmp_trace_db_path)
+    assert len(rows) == 1
+    assert rows[0]["state"] == "redeemed"
 
 
 async def test_split_url_recovery_no_manual_hold_trace_event(

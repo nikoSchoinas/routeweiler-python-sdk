@@ -65,7 +65,13 @@ class _FailoverState:
 
 
 def _build_retry_request(request: httpx.Request, payment_result: PaymentResult) -> httpx.Request:
-    """Build the retry request with the payment header attached."""
+    """Build the retry request with the payment header attached.
+
+    The ``routeweiler_payment_retry`` extension marks the request as post-payment
+    so ``PaymentRetryTransport`` converts transport errors into a synthetic
+    response instead of raising — funds have already left the wire, and the
+    auth flow must regain control to settle the draw and attempt recovery.
+    """
     retry_headers = dict(request.headers)
     if payment_result.header_name is not None and payment_result.header_value is not None:
         retry_headers[payment_result.header_name] = payment_result.header_value
@@ -74,8 +80,43 @@ def _build_retry_request(request: httpx.Request, payment_result: PaymentResult) 
         url=request.url,
         headers=retry_headers,
         content=request.content,
-        extensions=request.extensions,
+        extensions={**request.extensions, "routeweiler_payment_retry": True},
     )
+
+
+_SYNTHETIC_TRANSPORT_FAILURE_STATUS = 502
+
+
+class PaymentRetryTransport(httpx.AsyncBaseTransport):
+    """Transport wrapper that keeps the auth flow in control after payment.
+
+    httpx never throws transport errors into an auth-flow generator — it closes
+    the generator and propagates the error, which would skip draw settlement and
+    credential recovery for a payment that already committed.  This wrapper
+    converts a ``httpx.TransportError`` on a payment retry into a synthetic 502
+    carrying the original exception in ``extensions``; the auth flow then runs
+    its normal 4xx/5xx path (confirm draw, attempt split-URL recovery) and
+    ``Routeweiler._traced`` re-raises the original error unless recovery
+    produced a real response.  Non-payment requests are unaffected.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self._inner = inner
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await self._inner.handle_async_request(request)
+        except httpx.TransportError as exc:
+            if not request.extensions.get("routeweiler_payment_retry"):
+                raise
+            return httpx.Response(
+                _SYNTHETIC_TRANSPORT_FAILURE_STATUS,
+                request=request,
+                extensions={"routeweiler_transport_error": exc},
+            )
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 class RouteweilerAuth(httpx.Auth):
@@ -331,26 +372,13 @@ class RouteweilerAuth(httpx.Auth):
             ts_retry = datetime.now(UTC)
 
             # -----------------------------------------------------------------
-            # Yield retry — may raise on transport error.
-            # On transport error: confirm (funds left the wire), emit error
-            # trace, attempt recovery/failover.
+            # Yield retry.  Transport errors surface as a synthetic 502 from
+            # PaymentRetryTransport (httpx would otherwise close this generator
+            # without giving it control), so the 4xx/5xx path below settles the
+            # draw and attempts recovery.  Funds left the wire at pay(); a
+            # second payment is never issued (see PostCommitPaymentError above).
             # -----------------------------------------------------------------
-            try:
-                final_response = yield retry
-            except Exception as exc:
-                await self._confirm_draw_safe(receipt)
-                await self._attempt_recovery_safe(credential_record, last_response=None)
-                await self._safe_emit_error(
-                    error=exc,
-                    request=request,
-                    response=response,
-                    challenge=challenge,
-                    ts_start=ts_start,
-                    fallback_from=choice.fallback_from,
-                )
-                self._sticky_cache.forget(sticky_key)
-                state.advance(adapter.rail)
-                continue
+            final_response = yield retry
 
             ts_end = datetime.now(UTC)
 
@@ -459,21 +487,6 @@ class RouteweilerAuth(httpx.Auth):
             )
             return None
 
-    async def _attempt_recovery_safe(
-        self,
-        credential_record: CredentialRecord | None,
-        *,
-        last_response: httpx.Response | None,
-    ) -> None:
-        if credential_record is not None and self._recoverer is not None:
-            try:
-                await self._recoverer.attempt_recovery(
-                    credential_record.credential_id,
-                    last_response=last_response,
-                )
-            except Exception:
-                _log.exception("Credential recovery attempt failed.")
-
     async def _handle_credential_post_response(
         self,
         credential_record: CredentialRecord | None,
@@ -532,7 +545,11 @@ class RouteweilerAuth(httpx.Auth):
                 receipt.receipt_id, receipt.amount_reserved_minor_units
             )
         except Exception:
-            _log.exception("Confirm failed; draw will stay reserved until reaper.")
+            _log.exception(
+                "Confirm failed for receipt %s; if the reaper expires the draw the "
+                "settled spend is missing from the ledger until confirm is retried.",
+                receipt.receipt_id,
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,53 @@ async def test_unsupported_rail_raises(routeweiler_client: Routeweiler) -> None:
         await routeweiler_client.get("https://api.example.com/l402")
 
 
+@respx.mock
+async def test_transport_error_on_free_request_propagates(
+    routeweiler_client: Routeweiler,
+) -> None:
+    """Transport errors on non-payment requests propagate untouched."""
+    respx.get("https://api.example.com/free").mock(side_effect=httpx.ConnectError("down"))
+    with pytest.raises(httpx.ConnectError):
+        await routeweiler_client.get("https://api.example.com/free")
+
+
+@respx.mock
+async def test_transport_error_on_retry_raises_original_error(
+    routeweiler_client: Routeweiler,
+) -> None:
+    """A transport error on the paid retry surfaces the original exception.
+
+    The payment already committed at pay(); the client must not fail over to
+    another rail (that would be a second payment for the same resource).
+    """
+    url = "https://api.example.com/data"
+
+    with patch("routeweiler.rails.x402.x402Client") as mock_cls:
+        mock_instance = MagicMock()
+        mock_instance.create_payment_payload = AsyncMock(return_value={"signature": "0xtest"})
+        mock_cls.return_value = mock_instance
+
+        client = Routeweiler(
+            funding=[Funding.base_usdc(wallet=routeweiler_client._funding[0].wallet)]
+        )
+
+        route = respx.get(url)
+        route.side_effect = [
+            httpx.Response(
+                status_code=402,
+                headers={"PAYMENT-REQUIRED": _PAYMENT_REQUIRED_HEADER},
+                content=b"payment required",
+            ),
+            httpx.ConnectError("wire cut mid-retry"),
+        ]
+
+        with pytest.raises(httpx.ConnectError):
+            await client.get(url)
+
+    # Exactly one 402 and one paid retry — never a second payment attempt.
+    assert route.call_count == 2
+
+
 async def test_context_manager(test_account) -> None:  # type: ignore[no-untyped-def]
     async with Routeweiler(funding=[Funding.base_usdc(wallet=test_account)]) as client:
         assert client._http is not None

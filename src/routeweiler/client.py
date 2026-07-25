@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from routeweiler._auth import RouteweilerAuth
+from routeweiler._auth import PaymentRetryTransport, RouteweilerAuth
 from routeweiler.budgets.ecb_provider import EcbRateProvider, LiveEcbProvider
 from routeweiler.budgets.fmv_provider import CoinGeckoProvider, FmvProvider
 from routeweiler.budgets.keystore import EnvelopeKeystore
@@ -316,7 +316,10 @@ class Routeweiler:
             recoverer=recoverer,
         )
         self._auth = auth
-        self._http = httpx.AsyncClient(auth=auth)
+        self._http = httpx.AsyncClient(
+            auth=auth,
+            transport=PaymentRetryTransport(httpx.AsyncHTTPTransport()),
+        )
 
     # ------------------------------------------------------------------
     # Public namespace accessors
@@ -346,6 +349,12 @@ class Routeweiler:
         If split-URL recovery succeeded, the auth_flow stashes the recovered 2xx on
         ``extensions["routeweiler_recovered_response"]``.  We substitute it here so the
         caller receives the actual fulfilment response, not the original 4xx.
+
+        A transport error on the payment retry arrives as a synthetic 502 from
+        ``PaymentRetryTransport`` with the original exception in
+        ``extensions["routeweiler_transport_error"]`` — the auth flow has already
+        settled the draw and attempted recovery; if recovery did not produce a
+        real response, re-raise the original error here.
         """
         resp: httpx.Response = await coro
         # Substitute the recovered response if split-URL recovery succeeded.
@@ -354,6 +363,9 @@ class Routeweiler:
         )
         if recovered is not None:
             resp = recovered
+        transport_error: Exception | None = resp.extensions.get("routeweiler_transport_error")
+        if transport_error is not None:
+            raise transport_error
         ts_end = datetime.now(UTC)
         if self._emitter and not resp.extensions.get("routeweiler_emitted"):
             await self._emitter.emit_passthrough(

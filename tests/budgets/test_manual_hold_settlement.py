@@ -24,6 +24,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from routeweiler import BudgetExceededError, Routeweiler
+from routeweiler._auth import PaymentRetryTransport
 from routeweiler.budgets.keystore import EnvelopeKeystore
 from routeweiler.budgets.local import BudgetStore
 from routeweiler.credentials.schema import CredentialState
@@ -109,7 +110,7 @@ _ENVELOPE_ID = "l402-test-env"
 
 
 async def _make_l402_budget_client(
-    transport: httpx.ASGITransport,
+    transport: httpx.AsyncBaseTransport,
     db_path: Path,
     cap_minor_units: int = 10_000,
     lnd_client: FakeLndClient | None = None,
@@ -186,6 +187,46 @@ async def test_l402_manual_hold_consumes_cap(tmp_path: Path, tmp_trace_db_path: 
 
     assert exc_info.value.envelope_id == _ENVELOPE_ID
     assert exc_info.value.available_minor_units == 0
+
+
+async def test_transport_error_after_pay_settles_draw_and_raises(
+    tmp_path: Path, tmp_trace_db_path: Path
+) -> None:
+    """A transport error on the paid retry settles the draw and re-raises.
+
+    Funds committed at pay(); the caller gets the original transport error
+    (recovery finds no manifest for the mock host), the draw is settled, and
+    no second payment is attempted — the cap reflects exactly one payment.
+    """
+    asgi = httpx.ASGITransport(app=_l402_always_500_app())  # type: ignore[arg-type]
+
+    class _WireCutTransport(httpx.AsyncBaseTransport):
+        """Raises ConnectError for the paid retry; passes everything else through."""
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.extensions.get("routeweiler_payment_retry"):
+                raise httpx.ConnectError("wire cut mid-retry", request=request)
+            return await asgi.handle_async_request(request)
+
+    client = await _make_l402_budget_client(
+        PaymentRetryTransport(_WireCutTransport()),
+        tmp_trace_db_path,
+        cap_minor_units=_CENTS_PER_PAYMENT,
+    )
+
+    with pytest.raises(httpx.ConnectError):
+        await client.get("http://mock/protected")
+
+    draws = _draw_rows(tmp_trace_db_path)
+    assert len(draws) == 1, "Exactly one payment attempt — no failover re-pay"
+    assert draws[0]["state"] == "settled", (
+        "Wire payment committed — draw must be settled despite the transport error"
+    )
+
+    # Cap is exhausted by the settled draw — a second call must be blocked.
+    with pytest.raises(BudgetExceededError):
+        await client.get("http://mock/protected")
+    await client.aclose()
 
 
 async def test_pay_phase_failure_does_not_consume_cap(
