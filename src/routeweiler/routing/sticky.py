@@ -50,9 +50,12 @@ class StickyCache:
         """Record a successful rail for this key.
 
         The entry expires at the earlier of ``now + ttl`` and the challenge's
-        own expiry.
+        own expiry.  Expired entries are swept here so keys that are never
+        looked up again don't accumulate.
         """
-        effective = min(challenge_expires_at, datetime.now(UTC) + self._ttl)
+        now = datetime.now(UTC)
+        self._entries = {k: e for k, e in self._entries.items() if e.expires_at > now}
+        effective = min(challenge_expires_at, now + self._ttl)
         self._entries[key] = _StickyEntry(rail=rail, expires_at=effective)
 
     def lookup(self, key: StickyKey) -> Rail | None:

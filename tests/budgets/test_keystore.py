@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from routeweiler.budgets.keystore import EnvelopeKeystore
-from routeweiler.errors import KeystoreAlreadyExistsError, KeystoreNotFoundError
+from routeweiler.errors import KeystoreAlreadyExistsError, KeystoreError, KeystoreNotFoundError
 
 
 @pytest.fixture
@@ -46,6 +46,18 @@ def test_create_duplicate_raises(ks: EnvelopeKeystore) -> None:
 def test_load_missing_raises(ks: EnvelopeKeystore) -> None:
     with pytest.raises(KeystoreNotFoundError, match="env_missing"):
         ks.load("env_missing")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file permissions only")
+def test_load_rejects_group_readable_key(ks: EnvelopeKeystore) -> None:
+    """A key file readable by group/other must be refused (fail closed)."""
+    ks.create("env_loose")
+    os.chmod(ks._key_path("env_loose"), 0o640)
+    with pytest.raises(KeystoreError, match="chmod 600"):
+        ks.load("env_loose")
+    # Tightening the permissions makes the key loadable again.
+    os.chmod(ks._key_path("env_loose"), 0o600)
+    ks.load("env_loose")
 
 
 def test_exists_false_before_create(ks: EnvelopeKeystore) -> None:

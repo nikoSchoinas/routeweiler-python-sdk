@@ -17,7 +17,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
-from routeweiler.errors import KeystoreAlreadyExistsError, KeystoreNotFoundError
+from routeweiler.errors import KeystoreAlreadyExistsError, KeystoreError, KeystoreNotFoundError
 
 _DEFAULT_KEYSTORE_ROOT = Path.home() / ".routeweiler" / "keys"
 
@@ -69,15 +69,22 @@ class EnvelopeKeystore:
 
         Raises:
             KeystoreNotFoundError: No key file exists for this envelope id.
+            KeystoreError: The key file is readable by group/other (POSIX only) —
+                fail closed rather than sign receipts with a possibly leaked key.
         """
         path = self._key_path(envelope_id)
         try:
-            raw_bytes = path.read_bytes()
+            mode = path.stat().st_mode
         except FileNotFoundError as exc:
             raise KeystoreNotFoundError(
                 f"No key found for envelope '{envelope_id}' at {path}."
             ) from exc
-        return Ed25519PrivateKey.from_private_bytes(raw_bytes)
+        if os.name == "posix" and mode & 0o077:
+            raise KeystoreError(
+                f"Key file {path} has permissions {mode & 0o777:o}; refusing to load. "
+                "Restrict it to the owner: chmod 600."
+            )
+        return Ed25519PrivateKey.from_private_bytes(path.read_bytes())
 
     def delete(self, envelope_id: str) -> None:
         """Delete the private key file for the given envelope. Idempotent."""

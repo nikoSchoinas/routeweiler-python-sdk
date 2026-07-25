@@ -8,6 +8,10 @@ unusual edge cases (e.g. minimal installs).
 
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 
 def parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
     """Deserialise a base64 macaroon and return its first-party caveat key→value pairs.
@@ -24,7 +28,13 @@ def parse_macaroon_caveats(macaroon_b64: str) -> dict[str, str]:
         m = Macaroon.deserialize(macaroon_b64)
     except Exception:
         # pymacaroons raises its own exception hierarchy; catch broadly since
-        # this is optional third-party code.
+        # this is optional third-party code.  Warn: callers lose caveat-based
+        # checks (e.g. valid_until expiry) when deserialisation fails.
+        _log.warning(
+            "Macaroon deserialisation failed; caveats (including any expiry) "
+            "are unavailable for this credential.",
+            exc_info=True,
+        )
         return {}
 
     caveats: dict[str, str] = {}
