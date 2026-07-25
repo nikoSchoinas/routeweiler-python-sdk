@@ -4,7 +4,7 @@ Verifies:
   1. A 50-sat invoice is paid and the draw is settled.
   2. The FMV conversion (5000 sats x 0.00065 USD/sat x 1.05 buffer = 342 cents) is
      applied correctly during cap enforcement.
-  3. The trace event records ``amount_envelope`` and ``fmv_quality="coingecko_simple"``.
+  3. The trace event records ``amount_envelope_minor_units`` and ``fmv_quality="coingecko_simple"``.
 
 No real Lightning node or CoinGecko call is needed — ``FakeLndClient`` provides
 the preimage and ``_StubFmvProvider`` returns a fixed rate.
@@ -161,7 +161,8 @@ async def test_l402_usd_envelope_draw_settled_with_correct_amount(
 async def test_l402_usd_envelope_trace_has_fmv_quality(
     tmp_path: Path, tmp_trace_db_path: Path
 ) -> None:
-    """Trace event records ``fmv_quality='coingecko_simple'`` and a non-null ``amount_envelope``."""
+    """Trace event records ``fmv_quality='coingecko_simple'`` and a non-null
+    ``amount_envelope_minor_units``."""
     transport = httpx.ASGITransport(app=mock_l402_app)  # type: ignore[arg-type]
     client = await _make_usd_envelope_client(transport, tmp_trace_db_path, tmp_path / "keys")
 
@@ -177,9 +178,8 @@ async def test_l402_usd_envelope_trace_has_fmv_quality(
 
     assert payment["amountEnvelopeCurrency"] == "usd"
     assert payment["fmvQuality"] == "coingecko_simple"
-    assert payment["amountEnvelope"] is not None
-    # 5000 sats x 0.00065 USD/sat = 3.25 USD (no buffer on trace, informational only)
-    assert abs(payment["amountEnvelope"] - 3.25) < 1e-9
+    # 5000 sats x 0.00065 USD/sat = 3.25 USD = 325 cents (no buffer on trace, informational only)
+    assert payment["amountEnvelopeMinorUnits"] == 325
 
 
 async def test_l402_usd_envelope_trace_proof_matches_preimage(

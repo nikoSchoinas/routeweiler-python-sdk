@@ -22,7 +22,7 @@ a warning is emitted whenever it is consulted at draw time.
 from __future__ import annotations
 
 import logging
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_EVEN, Decimal
 from typing import TYPE_CHECKING
 
 from routeweiler._constants import FMV_BUFFER
@@ -214,11 +214,13 @@ def fmv_for_trace(
     amount_native: int,
     envelope_currency: EnvelopeCurrency,
     snapshot_rates: dict[str, Decimal] | None = None,
-) -> tuple[float | None, FmvQuality]:
-    """Compute FMV for trace emission — never blocks a payment.
+) -> tuple[int | None, FmvQuality]:
+    """Compute FMV in envelope minor units for trace emission — never blocks a payment.
 
-    Returns ``(amount_envelope_float, fmv_quality)``.  On any failure returns
-    ``(None, "unavailable")`` rather than raising.
+    Returns ``(amount_envelope_minor_units, fmv_quality)``.  On any failure
+    returns ``(None, "unavailable")`` rather than raising.  Unlike the
+    cap-enforcement path, no 5% buffer is applied (post-settlement,
+    informational) and rounding is half-even rather than ceiling.
     """
     env_cur = envelope_currency.lower()
 
@@ -226,45 +228,45 @@ def fmv_for_trace(
     if caip19_currency.endswith("-fiat"):
         src = caip19_currency[: -len("-fiat")]
         if src == env_cur:
-            return float(amount_native), "stablecoin_peg"
-        if snapshot_rates:
-            key = f"{src}->{env_cur}"
-            rate = snapshot_rates.get(key)
-            if rate is None:
-                rate = ecb_rate(src, env_cur)
-            if rate is not None:
-                return float(Decimal(str(amount_native)) * rate), "fx_leg"
-        rate = ecb_rate(src, env_cur)
+            return amount_native, "stablecoin_peg"
+        rate = snapshot_rates.get(f"{src}->{env_cur}") if snapshot_rates else None
+        if rate is None:
+            rate = ecb_rate(src, env_cur)
         if rate is not None:
-            return float(Decimal(str(amount_native)) * rate), "fx_leg"
+            return _round_minor(Decimal(amount_native) * rate), "fx_leg"
         return None, "unavailable"
 
     address = _erc20_address(caip19_currency) or _tip20_address(caip19_currency)
 
     if address and address in STABLECOIN_PEG:
         peg = STABLECOIN_PEG[address]
+        minor_per_major = MINOR_PER_MAJOR[env_cur]
         meta = ASSETS_BY_ADDRESS.get(address)
         decimals = meta.decimals if meta is not None else 6
-        divisor = 10**decimals
+        amount_major = Decimal(amount_native) / Decimal(10**decimals)
         if peg == env_cur:
-            return amount_native / divisor, "stablecoin_peg"
+            return _round_minor(amount_major * minor_per_major), "stablecoin_peg"
         # Cross-currency stablecoin — try snapshot rate.
         if snapshot_rates:
-            key = f"{peg}->{env_cur}"
-            rate = snapshot_rates.get(key)
+            rate = snapshot_rates.get(f"{peg}->{env_cur}")
             if rate is not None:
-                amount_major = amount_native / divisor
-                return float(Decimal(str(amount_major)) * rate), "fx_leg"
+                return _round_minor(amount_major * rate * minor_per_major), "fx_leg"
 
     # Sats / native BTC (e.g. "btc-lightning") — informational only, no 5% buffer.
     if "sats" in caip19_currency.lower() or "btc" in caip19_currency.lower():
         if snapshot_rates:
-            key = f"sats->{env_cur}"
-            rate = snapshot_rates.get(key)
+            rate = snapshot_rates.get(f"sats->{env_cur}")
             if rate is not None:
-                return float(Decimal(str(amount_native)) * rate), "coingecko_simple"
+                minor_per_major = MINOR_PER_MAJOR[env_cur]
+                converted = Decimal(amount_native) * rate * minor_per_major
+                return _round_minor(converted), "coingecko_simple"
 
     return None, "unavailable"
+
+
+def _round_minor(value: Decimal) -> int:
+    """Round a minor-unit Decimal to the nearest integer (half-even)."""
+    return int(value.to_integral_value(rounding=ROUND_HALF_EVEN))
 
 
 # ---------------------------------------------------------------------------

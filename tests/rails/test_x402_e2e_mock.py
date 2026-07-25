@@ -116,7 +116,7 @@ async def test_happy_path_returns_200_and_writes_trace(
         "usdc" in row["amount_native_currency"].lower() or "erc20" in row["amount_native_currency"]
     )
     # No budget envelope → envelope-denominated fields are NULL and FMV quality is "unavailable".
-    assert row["amount_envelope"] is None
+    assert row["amount_envelope_minor_units"] is None
     assert row["amount_envelope_currency"] is None
     assert row["fmv_quality"] == "unavailable"
 

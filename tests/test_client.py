@@ -130,7 +130,7 @@ async def test_no_budget_envelope_succeeds_and_writes_trace(
     - 402 → 200 succeeds.
     - Exactly one trace row written with envelope_id IS NULL.
     - No draw row created.
-    - amount_envelope is NULL; fmv_quality is "unavailable".
+    - amount_envelope_minor_units is NULL; fmv_quality is "unavailable".
     """
     db_path = tmp_path / "traces.db"
     sink = TraceSink.sqlite(db_path, url_mode="raw")
@@ -183,7 +183,7 @@ async def test_no_budget_envelope_succeeds_and_writes_trace(
     assert len(trace_rows) == 1
     row = dict(trace_rows[0])
     assert row["envelope_id"] is None
-    assert row["amount_envelope"] is None
+    assert row["amount_envelope_minor_units"] is None
     assert row["amount_envelope_currency"] is None
     assert row["fmv_quality"] == "unavailable"
 

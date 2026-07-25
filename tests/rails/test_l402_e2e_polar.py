@@ -232,7 +232,7 @@ class TestL402LivePolar:
         assert draws[0]["state"] == "settled"
         assert draws[0]["amount_reserved_minor_units"] > 0
 
-        # Verify the trace event records a non-null amount_envelope with coingecko_simple quality.
+        # Verify the trace records a non-null amount_envelope_minor_units (coingecko_simple).
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         traces = conn.execute("SELECT * FROM trace_events WHERE selected_rail = 'l402'").fetchall()
@@ -240,5 +240,5 @@ class TestL402LivePolar:
         assert len(traces) == 1
         payload = json.loads(traces[0]["payload"])
         assert payload["payment"]["fmvQuality"] == "coingecko_simple"
-        assert payload["payment"]["amountEnvelope"] is not None
+        assert payload["payment"]["amountEnvelopeMinorUnits"] is not None
         assert payload["payment"]["amountEnvelopeCurrency"] == "usd"

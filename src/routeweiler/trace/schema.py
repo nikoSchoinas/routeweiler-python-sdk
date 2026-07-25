@@ -32,7 +32,7 @@ class PaymentDetails(RouteweilerModel):
     proof_value: str | None  # None when facilitator omits the on-chain proof (mock/testnet)
     amount_native: int  # rail-native base units (wei, sats, cents)
     amount_native_currency: str  # CAIP-19 / "btc-lightning" / "<iso4217>-fiat"
-    amount_envelope: float | None  # None when FMV is unavailable or no envelope
+    amount_envelope_minor_units: int | None  # None when FMV is unavailable or no envelope
     amount_envelope_currency: EnvelopeCurrency | None  # None when no envelope is configured
     fmv_quality: FmvQuality
     settlement_latency_ms: int

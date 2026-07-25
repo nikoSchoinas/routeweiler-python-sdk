@@ -259,13 +259,13 @@ def _build_payment(
             proof_value=proof_value,
             amount_native=amount_native,
             amount_native_currency=currency,
-            amount_envelope=None,
+            amount_envelope_minor_units=None,
             amount_envelope_currency=None,
             fmv_quality="unavailable",
             settlement_latency_ms=settlement_latency_ms,
         )
 
-    amount_envelope, fmv_quality = _fmv_for_trace(
+    amount_envelope_minor_units, fmv_quality = _fmv_for_trace(
         currency, amount_native, envelope_currency, snapshot_rates
     )
 
@@ -274,7 +274,7 @@ def _build_payment(
         proof_value=proof_value,
         amount_native=amount_native,
         amount_native_currency=currency,
-        amount_envelope=amount_envelope,
+        amount_envelope_minor_units=amount_envelope_minor_units,
         amount_envelope_currency=envelope_currency,
         fmv_quality=fmv_quality,
         settlement_latency_ms=settlement_latency_ms,

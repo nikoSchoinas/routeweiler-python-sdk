@@ -61,13 +61,13 @@ class SqliteTraceSink:
                 request_id, envelope_id, selected_rail, fallback_from, facilitator,
                 http_status, service_delivered,
                 amount_native, amount_native_currency,
-                amount_envelope, amount_envelope_currency, fmv_quality,
+                amount_envelope_minor_units, amount_envelope_currency, fmv_quality,
                 ts_start, ts_end, shipped_at, payload
             ) VALUES (
                 :request_id, :envelope_id, :selected_rail, :fallback_from, :facilitator,
                 :http_status, :service_delivered,
                 :amount_native, :amount_native_currency,
-                :amount_envelope, :amount_envelope_currency, :fmv_quality,
+                :amount_envelope_minor_units, :amount_envelope_currency, :fmv_quality,
                 :ts_start, :ts_end, NULL, :payload
             )
             """,
@@ -95,7 +95,7 @@ def _build_row(event: TraceEvent) -> dict[str, object]:
         "service_delivered": int(event.outcome.service_delivered),
         "amount_native": str(p.amount_native) if p else None,
         "amount_native_currency": p.amount_native_currency if p else None,
-        "amount_envelope": p.amount_envelope if p else None,
+        "amount_envelope_minor_units": p.amount_envelope_minor_units if p else None,
         "amount_envelope_currency": p.amount_envelope_currency if p else None,
         "fmv_quality": p.fmv_quality if p else None,
         "ts_start": event.timestamp_start.isoformat(),

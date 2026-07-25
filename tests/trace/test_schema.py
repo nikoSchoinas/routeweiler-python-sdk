@@ -42,7 +42,7 @@ def _payment() -> PaymentDetails:
         proof_value="0xdeadbeef",
         amount_native=1_000_000,
         amount_native_currency="eip155:8453/erc20:0x...",
-        amount_envelope=0.01,
+        amount_envelope_minor_units=1,
         amount_envelope_currency="usd",
         fmv_quality="stablecoin_peg",
         settlement_latency_ms=320,
@@ -128,24 +128,24 @@ def test_nested_challenge_camel():
 
 
 # ---------------------------------------------------------------------------
-# FMV outage — amount_envelope may be None
+# FMV outage — amount_envelope_minor_units may be None
 # ---------------------------------------------------------------------------
 
 
-def test_payment_amount_envelope_null():
+def test_payment_amount_envelope_minor_units_null():
     payment = PaymentDetails(
         proof_type="preimage",
         proof_value="abc123",
         amount_native=50_000,
         amount_native_currency="btc-lightning",
-        amount_envelope=None,
+        amount_envelope_minor_units=None,
         amount_envelope_currency="usd",
         fmv_quality="unavailable",
         settlement_latency_ms=1200,
     )
     ev = _event(payment=payment)
     dumped = ev.model_dump(by_alias=True)
-    assert dumped["payment"]["amountEnvelope"] is None
+    assert dumped["payment"]["amountEnvelopeMinorUnits"] is None
     assert dumped["payment"]["fmvQuality"] == "unavailable"
 
 
@@ -195,7 +195,7 @@ def test_payment_details_extra_forbidden():
             proof_value="0x",
             amount_native=100,
             amount_native_currency="usd-fiat",
-            amount_envelope=1.0,
+            amount_envelope_minor_units=100,
             amount_envelope_currency="usd",
             fmv_quality="stablecoin_peg",
             settlement_latency_ms=10,
@@ -216,7 +216,7 @@ def test_all_fmv_quality_values():
             proof_value="0x",
             amount_native=1,
             amount_native_currency="usd-fiat",
-            amount_envelope=0.01,
+            amount_envelope_minor_units=1,
             amount_envelope_currency="usd",
             fmv_quality=q,
             settlement_latency_ms=1,

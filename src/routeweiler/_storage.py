@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS trace_events (
     service_delivered       INTEGER NOT NULL,   -- 0 | 1
     amount_native           TEXT,               -- base-units as string (bigint-safe)
     amount_native_currency  TEXT,
-    amount_envelope         REAL,
+    amount_envelope_minor_units INTEGER,        -- envelope-currency minor units (never float)
     amount_envelope_currency TEXT,
     fmv_quality             TEXT,
     ts_start                TEXT    NOT NULL,   -- ISO-8601 UTC
