@@ -155,6 +155,84 @@ async def test_reap_sync_frees_capacity(tmp_path: Path, tmp_keystore: EnvelopeKe
     await store.aclose()
 
 
+async def test_late_confirm_wins_over_reaper_rollback(
+    tmp_path: Path, tmp_keystore: EnvelopeKeystore
+) -> None:
+    """A confirm that lands after the reaper rolled the draw back still settles.
+
+    The payment committed on the wire; letting the rollback stand would erase
+    real spend from the ledger and quietly free cap that was actually used.
+    """
+    db = tmp_path / "late.db"
+    store = BudgetStore(db, tmp_keystore)
+
+    await store.create_envelope(
+        "env_late",
+        cap_minor_units=100,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3600,
+    )
+    r = await store.draw(
+        envelope_id="env_late",
+        request_id="req_late",
+        idempotency_key="k_late",
+        amount_reserved_minor_units=100,
+        rail_quoted="x402",
+    )
+
+    # Slow payment: the reaper expires the draw mid-flight.
+    _set_draw_expired(db, r.receipt_id)
+    assert store._reap_sync() == 1
+    assert _draw_state(db, r.receipt_id) == "rolled_back"
+
+    # The payment then completes — the late confirm must settle the draw.
+    await store.confirm(r.receipt_id, 100)
+    assert _draw_state(db, r.receipt_id) == "settled"
+
+    # The settled spend counts against the cap again.
+    with pytest.raises(BudgetExceededError):
+        await store.draw(
+            envelope_id="env_late",
+            request_id="req_late2",
+            idempotency_key="k_late2",
+            amount_reserved_minor_units=1,
+            rail_quoted="x402",
+        )
+
+    await store.aclose()
+
+
+async def test_explicit_rollback_is_not_resurrected_by_reconfirm(
+    tmp_path: Path, tmp_keystore: EnvelopeKeystore
+) -> None:
+    """Confirm after an explicit rollback settles the draw (confirm implies the
+    payment committed) — but rollback after confirm stays settled."""
+    db = tmp_path / "order.db"
+    store = BudgetStore(db, tmp_keystore)
+
+    await store.create_envelope(
+        "env_order",
+        cap_minor_units=1000,
+        cap_currency="usd",
+        allowed_rails=["x402"],
+        ttl_seconds=3600,
+    )
+    r = await store.draw(
+        envelope_id="env_order",
+        request_id="req_o",
+        idempotency_key="k_o",
+        amount_reserved_minor_units=100,
+        rail_quoted="x402",
+    )
+    await store.confirm(r.receipt_id, 100)
+    # A stray rollback after settlement is a no-op.
+    await store.rollback(r.receipt_id)
+    assert _draw_state(db, r.receipt_id) == "settled"
+
+    await store.aclose()
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle — start() and aclose() are well-behaved
 # ---------------------------------------------------------------------------

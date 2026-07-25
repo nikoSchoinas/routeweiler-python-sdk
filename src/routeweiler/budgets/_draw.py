@@ -171,19 +171,31 @@ def draw_sync(
 
 
 def confirm_sync(conn: sqlite3.Connection, draw_id: str, amount_settled_minor_units: int) -> None:
-    """Transition a reserved draw to settled with the actual settled amount."""
+    """Transition a reserved (or reaper-rolled-back) draw to settled.
+
+    Confirm is only ever called after the payment committed on the wire, so it
+    also wins over a ``rolled_back`` state: the reaper may have expired the draw
+    while a slow payment was still in flight, and letting the rollback stand
+    would erase real spend from the ledger and free cap that was actually used.
+    Explicit ``rollback()`` (pay-phase failure) and ``confirm()`` are mutually
+    exclusive in the auth flow, so this cannot resurrect a cancelled draw.
+    """
     now = datetime.now(UTC)
+    prior = conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
+    if prior is None:
+        raise BudgetError(f"confirm: draw '{draw_id}' not found.")
     cursor = conn.execute(
         "UPDATE draws SET state='settled', amount_settled_minor_units=?, "
-        "settled_at=? WHERE id=? AND state='reserved'",
+        "settled_at=? WHERE id=? AND state IN ('reserved', 'rolled_back')",
         (amount_settled_minor_units, now.isoformat(), draw_id),
     )
-    if cursor.rowcount == 0:
-        row = conn.execute("SELECT state FROM draws WHERE id=?", (draw_id,)).fetchone()
-        if row is None:
-            raise BudgetError(f"confirm: draw '{draw_id}' not found.")
-        # Draw already in a terminal state — either an idempotent re-confirm or the
-        # losing side of a concurrent rollback+confirm race. Both are safe.
+    if cursor.rowcount > 0 and prior[0] == "rolled_back":
+        _log.warning(
+            "Draw '%s' was rolled back (reaper expired it mid-payment) but the "
+            "payment committed; settling it late to keep the ledger truthful.",
+            draw_id,
+        )
+    # rowcount == 0 means the draw is already settled — an idempotent re-confirm.
 
 
 def rollback_sync(conn: sqlite3.Connection, draw_id: str) -> None:
