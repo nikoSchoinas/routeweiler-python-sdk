@@ -27,16 +27,20 @@ class RuleMatch(RouteweilerModel):
         # Match any x402 request on the "base" network:
         RuleMatch(network="base")
 
-        # Match requests to *.example.com that use the "exact" scheme:
+        # Match requests to any *.example.com host that use the "exact" scheme:
         RuleMatch(url_matches="*.example.com", scheme="exact")
 
         # OR: either of the above:
         RuleMatch(any=[RuleMatch(network="base"), RuleMatch(url_matches="*.example.com")])
 
+    ``url_matches`` has two modes: a pattern without ``/`` is a host glob
+    matched case-insensitively against the URL's hostname; a pattern with
+    ``/`` is matched against the full URL (case-sensitive).
+
     At least one condition must be set; ``ValueError`` is raised otherwise.
     """
 
-    url_matches: str | None = None  # fnmatch glob against challenge.resource.url
+    url_matches: str | None = None  # host glob (no "/") or full-URL glob — see class docstring
     scheme: Scheme | None = None  # exact match on NormalizedChallenge.scheme
     network: str | None = None  # x402-only: match any of accepts[i].network
     any: Annotated[list[RuleMatch] | None, Field(default=None)]  # short-circuit OR

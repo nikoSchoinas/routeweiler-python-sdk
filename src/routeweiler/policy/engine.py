@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from routeweiler.normalized import NormalizedChallenge, Rail, X402RailRaw
 from routeweiler.policy.dsl import Policy, RuleMatch
@@ -93,7 +94,7 @@ def _matches(when: RuleMatch, challenge: NormalizedChallenge) -> bool:
             return False
 
     if when.url_matches is not None:
-        if not fnmatch.fnmatch(challenge.resource.url, when.url_matches):
+        if not _url_matches(challenge.resource.url, when.url_matches):
             return False
 
     if when.scheme is not None:
@@ -105,6 +106,23 @@ def _matches(when: RuleMatch, challenge: NormalizedChallenge) -> bool:
             return False
 
     return True
+
+
+def _url_matches(url: str, pattern: str) -> bool:
+    """Glob-match a challenge URL against a rule pattern.
+
+    A pattern without ``/`` is a host glob, matched case-insensitively against
+    the URL's hostname (so ``*.evil.com`` denies ``https://api.evil.com/data``).
+    A pattern containing ``/`` is matched against the full URL, case-sensitively.
+    ``fnmatchcase`` is used for both so behaviour does not vary with the
+    platform's filesystem case rules.
+    """
+    if "/" not in pattern:
+        host = urlsplit(url).hostname
+        if host is None:
+            return False
+        return fnmatch.fnmatchcase(host.lower(), pattern.lower())
+    return fnmatch.fnmatchcase(url, pattern)
 
 
 def _network_matches(network: str, challenge: NormalizedChallenge) -> bool:

@@ -162,6 +162,52 @@ def test_any_or_short_circuit():
     assert engine.evaluate(_x402_challenge("https://api.example.com/data")).rule_name is None
 
 
+def test_host_glob_denies_url_with_path():
+    """A pattern without "/" is a host glob — the documented deny idiom works."""
+    policy = Policy(
+        rules=[
+            PolicyRule(name="deny-evil", when=RuleMatch(url_matches="*.evil.com"), deny=True),
+        ]
+    )
+    engine = PolicyEngine(policy)
+    assert engine.evaluate(_x402_challenge("https://api.evil.com/data")).deny is True
+    assert engine.evaluate(_x402_challenge("https://sub.api.evil.com/v1/x?q=1")).deny is True
+
+
+def test_host_glob_does_not_match_lookalike_domains():
+    policy = Policy(
+        rules=[
+            PolicyRule(name="deny-evil", when=RuleMatch(url_matches="*.evil.com"), deny=True),
+        ]
+    )
+    engine = PolicyEngine(policy)
+    # Suffix-lookalike domain must not match.
+    assert engine.evaluate(_x402_challenge("https://evil.com.attacker.io/x")).rule_name is None
+    # Bare domain (no subdomain) does not match "*.evil.com" — standard glob semantics.
+    assert engine.evaluate(_x402_challenge("https://evil.com/x")).rule_name is None
+
+
+def test_host_glob_is_case_insensitive():
+    policy = Policy(
+        rules=[
+            PolicyRule(name="deny-evil", when=RuleMatch(url_matches="*.EVIL.com"), deny=True),
+        ]
+    )
+    engine = PolicyEngine(policy)
+    assert engine.evaluate(_x402_challenge("https://API.Evil.COM/data")).deny is True
+
+
+def test_star_pattern_matches_every_url():
+    policy = Policy(
+        rules=[
+            PolicyRule(name="deny-all", when=RuleMatch(url_matches="*"), deny=True),
+        ]
+    )
+    engine = PolicyEngine(policy)
+    assert engine.evaluate(_x402_challenge("https://api.example.com/data")).deny is True
+    assert engine.evaluate(_x402_challenge("http://localhost:8080/")).deny is True
+
+
 def test_scheme_match_exact():
     policy = Policy(
         rules=[
