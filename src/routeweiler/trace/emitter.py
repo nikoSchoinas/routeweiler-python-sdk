@@ -34,6 +34,7 @@ class TraceEmitter:
 
     def __init__(
         self,
+        *,
         sink: SqliteTraceSink,
         envelope_id: str | None,
         envelope_currency: EnvelopeCurrency | None,
@@ -75,12 +76,12 @@ class TraceEmitter:
         settlement_ms = _ms(ts_retry, ts_end)
         challenge = _apply_url_mode(challenge, self._url_mode)
         payment = _build_payment(
-            challenge,
-            payment_result,
-            settlement,
-            settlement_ms,
-            self._envelope_currency,
-            snapshot_rates,
+            challenge=challenge,
+            payment_result=payment_result,
+            settlement=settlement,
+            settlement_latency_ms=settlement_ms,
+            envelope_currency=self._envelope_currency,
+            snapshot_rates=snapshot_rates,
         )
         outcome = Outcome(
             http_status=final_response.status_code,
@@ -239,6 +240,7 @@ def _ms(start: datetime, end: datetime) -> int:
 
 
 def _build_payment(
+    *,
     challenge: NormalizedChallenge,
     payment_result: PaymentResult,
     settlement: SettlementInfo,
